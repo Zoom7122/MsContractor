@@ -1,0 +1,6 @@
+@MsContractor.Gateway.Bff_HostAddress = http://localhost:5234
+
+GET {{MsContractor.Gateway.Bff_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

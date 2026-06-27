@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "2KNH7fB4Kcg=",
+  "success": true,
+  "projectFilePath": "/home/vlad/Рабочий стол/MS_service/src/Services/MoySkladEgressService/MsContractor.MoySkladEgressService.csproj",
+  "expectedPackageFiles": [
+    "/home/vlad/.nuget/packages/microsoft.aspnetcore.openapi/10.0.9/microsoft.aspnetcore.openapi.10.0.9.nupkg.sha512",
+    "/home/vlad/.nuget/packages/microsoft.openapi/2.0.0/microsoft.openapi.2.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}

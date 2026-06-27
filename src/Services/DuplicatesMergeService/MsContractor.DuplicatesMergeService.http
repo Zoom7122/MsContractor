@@ -1,0 +1,6 @@
+@MsContractor.DuplicatesMergeService_HostAddress = http://localhost:5112
+
+GET {{MsContractor.DuplicatesMergeService_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

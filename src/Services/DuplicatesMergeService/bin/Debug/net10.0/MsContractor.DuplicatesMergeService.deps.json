@@ -9,6 +9,7 @@
       "MsContractor.DuplicatesMergeService/1.0.0": {
         "dependencies": {
           "Microsoft.AspNetCore.OpenApi": "10.0.9",
+          "MsContractor.BuildingBlocks": "1.0.0",
           "MsContractor.Contracts": "1.0.0"
         },
         "runtime": {
@@ -31,6 +32,14 @@
           "lib/net8.0/Microsoft.OpenApi.dll": {
             "assemblyVersion": "2.0.0.0",
             "fileVersion": "2.0.0.0"
+          }
+        }
+      },
+      "MsContractor.BuildingBlocks/1.0.0": {
+        "runtime": {
+          "MsContractor.BuildingBlocks.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
           }
         }
       },
@@ -63,6 +72,11 @@
       "sha512": "sha512-GGYLfzV/G/ct80OZ45JxnWP7NvMX1BCugn/lX7TH5o0lcVaviavsLMTxmFV2AybXWjbi3h6FF1vgZiTK6PXndw==",
       "path": "microsoft.openapi/2.0.0",
       "hashPath": "microsoft.openapi.2.0.0.nupkg.sha512"
+    },
+    "MsContractor.BuildingBlocks/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
     },
     "MsContractor.Contracts/1.0.0": {
       "type": "project",

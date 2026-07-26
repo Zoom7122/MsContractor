@@ -68,3 +68,6 @@
 /home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/obj/Debug/net10.0/MsContractor.Gateway.Bff.pdb
 /home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/obj/Debug/net10.0/MsContractor.Gateway.Bff.genruntimeconfig.cache
 /home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/obj/Debug/net10.0/ref/MsContractor.Gateway.Bff.dll
+/home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/bin/Debug/net10.0/MsContractor.BuildingBlocks.dll
+/home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/bin/Debug/net10.0/MsContractor.BuildingBlocks.pdb
+/home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/obj/Debug/net10.0/MsContractor.Gateway.Bff.sourcelink.json

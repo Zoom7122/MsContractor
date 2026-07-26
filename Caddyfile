@@ -1,0 +1,20 @@
+contractor.example.ru {
+	encode zstd gzip
+
+	log {
+		output stdout
+		format console
+	}
+
+	@vendorApi {
+		path /api/moysklad/vendor/1.0/*
+	}
+	reverse_proxy @vendorApi 127.0.0.1:18081
+
+	@gateway {
+		path /api /api/* /health /health/*
+	}
+	reverse_proxy @gateway 127.0.0.1:18080
+
+	reverse_proxy 127.0.0.1:5174
+}

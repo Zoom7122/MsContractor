@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Shared\MsContractor.Contracts\MsContractor.Contracts.csproj" />
+    <ProjectReference Include="..\..\Shared\MsContractor.BuildingBlocks\MsContractor.BuildingBlocks.csproj" />
   </ItemGroup>
 
 </Project>

@@ -68,3 +68,6 @@
 /home/vlad/Рабочий стол/MS_service/src/Services/DuplicatesMergeService/obj/Debug/net10.0/MsContractor.DuplicatesMergeService.pdb
 /home/vlad/Рабочий стол/MS_service/src/Services/DuplicatesMergeService/obj/Debug/net10.0/MsContractor.DuplicatesMergeService.genruntimeconfig.cache
 /home/vlad/Рабочий стол/MS_service/src/Services/DuplicatesMergeService/obj/Debug/net10.0/ref/MsContractor.DuplicatesMergeService.dll
+/home/vlad/Рабочий стол/MS_service/src/Services/DuplicatesMergeService/bin/Debug/net10.0/MsContractor.BuildingBlocks.dll
+/home/vlad/Рабочий стол/MS_service/src/Services/DuplicatesMergeService/bin/Debug/net10.0/MsContractor.BuildingBlocks.pdb
+/home/vlad/Рабочий стол/MS_service/src/Services/DuplicatesMergeService/obj/Debug/net10.0/MsContractor.DuplicatesMergeService.sourcelink.json

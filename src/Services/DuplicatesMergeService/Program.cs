@@ -1,4 +1,7 @@
+using MsContractor.BuildingBlocks.Health;
+
 var builder = WebApplication.CreateBuilder(args);
+builder.AddMsContractorHealth();
 
 // Add services to the container.
 
@@ -19,5 +22,6 @@ app.UseHttpsRedirection();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapMsContractorHealth();
 
 app.Run();

@@ -1,7 +1,10 @@
 using MsContractor.AuditService;
+using MsContractor.BuildingBlocks.Health;
 
-var builder = Host.CreateApplicationBuilder(args);
+var builder = WebApplication.CreateBuilder(args);
+builder.AddMsContractorHealth();
 builder.Services.AddHostedService<Worker>();
 
-var host = builder.Build();
-host.Run();
+var app = builder.Build();
+app.MapMsContractorHealth();
+app.Run();

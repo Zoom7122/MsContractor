@@ -1,0 +1,279 @@
+name: mscontractor
+
+x-service-env: &service-env
+  ASPNETCORE_ENVIRONMENT: Development
+  ASPNETCORE_URLS: http://+:${SERVICE_INTERNAL_PORT}
+
+  ConnectionStrings__Postgres: Host=postgres;Port=${POSTGRES_PORT};Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+  Redis__ConnectionString: redis:${REDIS_PORT}
+  Kafka__BootstrapServers: kafka:${KAFKA_INTERNAL_PORT}
+
+  Services__GatewayBff__BaseUrl: http://gateway-bff:${SERVICE_INTERNAL_PORT}
+  Services__VendorService__BaseUrl: http://vendor-service:${SERVICE_INTERNAL_PORT}
+  Services__MoySkladEgressService__BaseUrl: http://moysklad-egress-service:${SERVICE_INTERNAL_PORT}
+  Services__CatalogSyncService__BaseUrl: http://catalog-sync-service:${SERVICE_INTERNAL_PORT}
+  Services__DuplicatesMergeService__BaseUrl: http://duplicates-merge-service:${SERVICE_INTERNAL_PORT}
+  Services__NotificationService__BaseUrl: http://notification-service:${SERVICE_INTERNAL_PORT}
+  Services__AuditService__BaseUrl: http://audit-service:${SERVICE_INTERNAL_PORT}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mscontractor-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT}:${POSTGRES_PORT}"
+    volumes:
+      - mscontractor_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - mscontractor-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: mscontractor-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT}:${REDIS_PORT}"
+    volumes:
+      - mscontractor_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - mscontractor-net
+
+  kafka:
+    image: apache/kafka:4.1.2
+    container_name: mscontractor-kafka
+    restart: unless-stopped
+    ports:
+      - "${KAFKA_PORT}:${KAFKA_PORT}"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+
+      KAFKA_LISTENERS: PLAINTEXT://:${KAFKA_INTERNAL_PORT},PLAINTEXT_HOST://:${KAFKA_PORT},CONTROLLER://:${KAFKA_CONTROLLER_PORT}
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:${KAFKA_INTERNAL_PORT},PLAINTEXT_HOST://localhost:${KAFKA_PORT}
+
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:${KAFKA_CONTROLLER_PORT}
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    # volumes:
+    #   - mscontractor_kafka_data:/tmp/kafka-logs
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:${KAFKA_INTERNAL_PORT} --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 20s
+      retries: 15
+      start_period: 20s
+    networks:
+      - mscontractor-net
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: mscontractor-kafka-ui
+    restart: unless-stopped
+    ports:
+      - "${KAFKA_UI_PORT}:${KAFKA_UI_INTERNAL_PORT}"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: mscontractor-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:${KAFKA_INTERNAL_PORT}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - mscontractor-net
+
+  gateway-bff:
+    container_name: mscontractor-gateway-bff
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/Gateway.Bff/MsContractor.Gateway.Bff.csproj
+        PROJECT_DLL: MsContractor.Gateway.Bff.dll
+    ports:
+      - "${GATEWAY_BFF_PORT}:${SERVICE_INTERNAL_PORT}"
+    environment:
+      <<: *service-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - mscontractor-net
+
+  vendor-service:
+    container_name: mscontractor-vendor-service
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/VendorService/MsContractor.VendorService.csproj
+        PROJECT_DLL: MsContractor.VendorService.dll
+    ports:
+      - "${VENDOR_SERVICE_PORT}:${SERVICE_INTERNAL_PORT}"
+    environment:
+      <<: *service-env
+      Vendor__TokenEncryptionKey: ${VENDOR_TOKEN_ENCRYPTION_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - mscontractor-net
+
+  moysklad-egress-service:
+    container_name: mscontractor-moysklad-egress-service
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/MoySkladEgressService/MsContractor.MoySkladEgressService.csproj
+        PROJECT_DLL: MsContractor.MoySkladEgressService.dll
+    ports:
+      - "${MOYSKLAD_EGRESS_SERVICE_PORT}:${SERVICE_INTERNAL_PORT}"
+    environment:
+      <<: *service-env
+      MoySklad__JsonApiBaseUrl: https://api.moysklad.ru/api/remap/1.2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      vendor-service:
+        condition: service_started
+    networks:
+      - mscontractor-net
+
+  catalog-sync-service:
+    container_name: mscontractor-catalog-sync-service
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/CatalogSyncService/MsContractor.CatalogSyncService.csproj
+        PROJECT_DLL: MsContractor.CatalogSyncService.dll
+    ports:
+      - "${CATALOG_SYNC_SERVICE_PORT}:${SERVICE_INTERNAL_PORT}"
+    environment:
+      <<: *service-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      moysklad-egress-service:
+        condition: service_started
+    networks:
+      - mscontractor-net
+
+  duplicates-merge-service:
+    container_name: mscontractor-duplicates-merge-service
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/DuplicatesMergeService/MsContractor.DuplicatesMergeService.csproj
+        PROJECT_DLL: MsContractor.DuplicatesMergeService.dll
+    ports:
+      - "${DUPLICATES_MERGE_SERVICE_PORT}:${SERVICE_INTERNAL_PORT}"
+    environment:
+      <<: *service-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      moysklad-egress-service:
+        condition: service_started
+    networks:
+      - mscontractor-net
+
+  notification-service:
+    container_name: mscontractor-notification-service
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/NotificationService/MsContractor.NotificationService.csproj
+        PROJECT_DLL: MsContractor.NotificationService.dll
+    ports:
+      - "${NOTIFICATION_SERVICE_PORT}:${SERVICE_INTERNAL_PORT}"
+    environment:
+      <<: *service-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - mscontractor-net
+
+  audit-service:
+    container_name: mscontractor-audit-service
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        PROJECT_PATH: src/Services/AuditService/MsContractor.AuditService.csproj
+        PROJECT_DLL: MsContractor.AuditService.dll
+    ports:
+      - "${AUDIT_SERVICE_PORT}:${SERVICE_INTERNAL_PORT}"
+    environment:
+      <<: *service-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - mscontractor-net
+
+volumes:
+  mscontractor_postgres_data:
+  mscontractor_redis_data:
+  mscontractor_kafka_data:
+
+networks:
+  mscontractor-net:
+    driver: bridge

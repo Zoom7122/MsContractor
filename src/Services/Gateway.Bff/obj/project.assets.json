@@ -37,6 +37,19 @@
           }
         }
       },
+      "MsContractor.BuildingBlocks/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v10.0",
+        "compile": {
+          "bin/placeholder/MsContractor.BuildingBlocks.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/MsContractor.BuildingBlocks.dll": {}
+        },
+        "frameworkReferences": [
+          "Microsoft.AspNetCore.App"
+        ]
+      },
       "MsContractor.Contracts/1.0.0": {
         "type": "project",
         "framework": ".NETCoreApp,Version=v10.0",
@@ -86,6 +99,11 @@
         "microsoft.openapi.nuspec"
       ]
     },
+    "MsContractor.BuildingBlocks/1.0.0": {
+      "type": "project",
+      "path": "../../Shared/MsContractor.BuildingBlocks/MsContractor.BuildingBlocks.csproj",
+      "msbuildProject": "../../Shared/MsContractor.BuildingBlocks/MsContractor.BuildingBlocks.csproj"
+    },
     "MsContractor.Contracts/1.0.0": {
       "type": "project",
       "path": "../../Shared/MsContractor.Contracts/MsContractor.Contracts.csproj",
@@ -95,6 +113,7 @@
   "projectFileDependencyGroups": {
     "net10.0": [
       "Microsoft.AspNetCore.OpenApi >= 10.0.9",
+      "MsContractor.BuildingBlocks >= 1.0.0",
       "MsContractor.Contracts >= 1.0.0"
     ]
   },
@@ -124,6 +143,9 @@
         "net10.0": {
           "targetAlias": "net10.0",
           "projectReferences": {
+            "/home/vlad/Рабочий стол/MS_service/src/Shared/MsContractor.BuildingBlocks/MsContractor.BuildingBlocks.csproj": {
+              "projectPath": "/home/vlad/Рабочий стол/MS_service/src/Shared/MsContractor.BuildingBlocks/MsContractor.BuildingBlocks.csproj"
+            },
             "/home/vlad/Рабочий стол/MS_service/src/Shared/MsContractor.Contracts/MsContractor.Contracts.csproj": {
               "projectPath": "/home/vlad/Рабочий стол/MS_service/src/Shared/MsContractor.Contracts/MsContractor.Contracts.csproj"
             }
@@ -170,7 +192,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "/usr/lib/dotnet/sdk/10.0.109/PortableRuntimeIdentifierGraph.json",
+        "runtimeIdentifierGraphPath": "/usr/lib/dotnet/sdk/10.0.110/PortableRuntimeIdentifierGraph.json",
         "packagesToPrune": {
           "Microsoft.AspNetCore": "(,10.0.32767]",
           "Microsoft.AspNetCore.Antiforgery": "(,10.0.32767]",
@@ -587,5 +609,17 @@
         }
       }
     }
-  }
+  },
+  "logs": [
+    {
+      "code": "NU1903",
+      "level": "Warning",
+      "warningLevel": 1,
+      "message": "У пакета \"Microsoft.OpenApi\" 2.0.0 есть известная уязвимость https://github.com/advisories/GHSA-v5pm-xwqc-g5wc (уровень серьезности: высокий)",
+      "libraryId": "Microsoft.OpenApi",
+      "targetGraphs": [
+        "net10.0"
+      ]
+    }
+  ]
 }

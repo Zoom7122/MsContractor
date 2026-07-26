@@ -122,6 +122,12 @@ public sealed class VendorDbContext(DbContextOptions<VendorDbContext> options)
                 .HasColumnType("uuid")
                 .ValueGeneratedNever();
 
+            entity.Property(message => message.RequestId)
+                .HasColumnName("request_id")
+                .HasColumnType("varchar(128)")
+                .HasMaxLength(128)
+                .IsRequired();
+
             entity.Property(message => message.AccountId)
                 .HasColumnName("account_id")
                 .HasColumnType("uuid")
@@ -159,6 +165,10 @@ public sealed class VendorDbContext(DbContextOptions<VendorDbContext> options)
 
             entity.HasIndex(message => message.AccountId)
                 .HasDatabaseName("ix_outbox_messages_account_id");
+
+            entity.HasIndex(message => message.RequestId)
+                .IsUnique()
+                .HasDatabaseName("ux_outbox_messages_request_id");
 
             entity.HasIndex(message => message.CreatedAt)
                 .HasDatabaseName("ix_outbox_messages_created_at");

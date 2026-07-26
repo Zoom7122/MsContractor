@@ -153,6 +153,12 @@ namespace MsContractor.VendorService.Repo.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("published_at");
 
+                    b.Property<string>("RequestId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(128)")
+                        .HasColumnName("request_id");
+
                     b.HasKey("Id")
                         .HasName("pk_outbox_messages");
 
@@ -161,6 +167,10 @@ namespace MsContractor.VendorService.Repo.Migrations
 
                     b.HasIndex("CreatedAt")
                         .HasDatabaseName("ix_outbox_messages_created_at");
+
+                    b.HasIndex("RequestId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_outbox_messages_request_id");
 
                     b.HasIndex("PublishedAt", "CreatedAt")
                         .HasDatabaseName("ix_outbox_messages_unpublished");

@@ -53,6 +53,20 @@ services:
     networks:
       - mscontractor-net
 
+  redis-insight:
+    image: redis/redisinsight:latest
+    container_name: mscontractor-redis-insight
+    restart: unless-stopped
+    ports:
+      - "5540:5540"
+    volumes:
+      - mscontractor_redis_insight_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - mscontractor-net
+
   kafka:
     image: apache/kafka:4.1.2
     container_name: mscontractor-kafka
@@ -140,7 +154,11 @@ services:
       - "${VENDOR_SERVICE_PORT}:${SERVICE_INTERNAL_PORT}"
     environment:
       <<: *service-env
-      Vendor__TokenEncryptionKey: ${VENDOR_TOKEN_ENCRYPTION_KEY}
+      Vendor__AppId: ${MOYSKLAD_VENDOR_APP_ID}
+      Vendor__AppUid: ${MOYSKLAD_VENDOR_APP_UID}
+      Vendor__SecretKey: ${MOYSKLAD_VENDOR_SECRET}
+      Vendor__AccessTokenEncryptionKey: ${VENDOR_TOKEN_ENCRYPTION_KEY}
+      Vendor__TokenKeyVersion: 1
     depends_on:
       postgres:
         condition: service_healthy
@@ -272,6 +290,7 @@ services:
 volumes:
   mscontractor_postgres_data:
   mscontractor_redis_data:
+  mscontractor_redis_insight_data:
   mscontractor_kafka_data:
 
 networks:

@@ -6,6 +6,8 @@ public sealed class OutboxMessage
 {
     public Guid Id { get; set; }
 
+    public string RequestId { get; set; } = null!;
+
     public Guid AccountId { get; set; }
 
     public string EventType { get; set; } = null!;

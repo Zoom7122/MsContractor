@@ -160,3 +160,6 @@
 /home/vlad/Рабочий стол/MS_service/src/Services/VendorService/bin/Debug/net10.0/tr/Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
 /home/vlad/Рабочий стол/MS_service/src/Services/VendorService/bin/Debug/net10.0/zh-Hans/Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
 /home/vlad/Рабочий стол/MS_service/src/Services/VendorService/bin/Debug/net10.0/zh-Hant/Microsoft.CodeAnalysis.Workspaces.MSBuild.resources.dll
+/home/vlad/Рабочий стол/MS_service/src/Services/VendorService/bin/Debug/net10.0/Pipelines.Sockets.Unofficial.dll
+/home/vlad/Рабочий стол/MS_service/src/Services/VendorService/bin/Debug/net10.0/StackExchange.Redis.dll
+/home/vlad/Рабочий стол/MS_service/src/Services/VendorService/bin/Debug/net10.0/System.IO.Hashing.dll

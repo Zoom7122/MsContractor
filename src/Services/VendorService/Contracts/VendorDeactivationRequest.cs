@@ -1,5 +1,7 @@
 using System.Text.Json.Serialization;
 
+namespace MsContractor.VendorService.Contracts;
+
 public sealed class VendorDeactivationRequest
 {
     [JsonPropertyName("appUid")]

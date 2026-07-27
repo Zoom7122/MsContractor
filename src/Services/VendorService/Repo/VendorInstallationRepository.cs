@@ -6,10 +6,10 @@ namespace MsContractor.VendorService.Repo;
 
 public sealed record SaveVendorInstallationCommand(
     string RequestId,
-    Installation Installation,
-    OutboxMessage OutboxMessage);
+    Installation? Installation,
+    OutboxMessage? OutboxMessage);
 
-public sealed record SaveVendorInstallationResult(Installation Installation, bool IdempotentReplay);
+public sealed record SaveVendorInstallationResult(Installation? Installation, bool IdempotentReplay);
 
 public sealed class VendorInstallationRepository(VendorDbContext dbContext)
 {
@@ -21,6 +21,12 @@ public sealed class VendorInstallationRepository(VendorDbContext dbContext)
         CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        if (command.OutboxMessage is null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new SaveVendorInstallationResult(command.Installation, false);
+        }
+
         var priorMessage = await dbContext.OutboxMessages.AsNoTracking()
             .SingleOrDefaultAsync(message => message.RequestId == command.RequestId, cancellationToken);
         if (priorMessage is not null)
@@ -33,7 +39,7 @@ public sealed class VendorInstallationRepository(VendorDbContext dbContext)
 
         try
         {
-            if (dbContext.Entry(command.Installation).State == EntityState.Detached)
+            if (command.Installation is not null && dbContext.Entry(command.Installation).State == EntityState.Detached)
                 dbContext.Installations.Add(command.Installation);
             dbContext.OutboxMessages.Add(command.OutboxMessage);
             await dbContext.SaveChangesAsync(cancellationToken);

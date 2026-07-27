@@ -58,30 +58,49 @@ public sealed class VendorInstallationController(VendorInstallationService servi
         }
     }
 
-[HttpDelete("{appId:guid}/{accountId:guid}")]
-public async Task<IActionResult> DeactivateAsync(
-    [FromRoute] Guid appId,
-    [FromRoute] Guid accountId,
-    [FromBody] VendorDeactivationRequest request,
-    CancellationToken cancellationToken)
-{
-    // logger.LogInformation(
-    //     "Vendor DELETE received. AppId={AppId}, AccountId={AccountId}, Cause={Cause}",
-    //     appId,
-    //     accountId,
-    //     request.Cause);
+    [HttpDelete("{appId:guid}/{accountId:guid}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType<VendorErrorResponse>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<VendorErrorResponse>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<VendorErrorResponse>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<VendorErrorResponse>(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> DeactivateAsync(
+        Guid appId,
+        Guid accountId,
+        [FromBody] VendorDeactivationRequest? request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null)
+            return Error(StatusCodes.Status400BadRequest, "VENDOR_VALIDATION_ERROR", "A request body is required.");
 
-    // await service.DeactivateAsync(
-    //     new VendorDeactivationCommand(
-    //         appId,
-    //         accountId,
-    //         Request.Headers.Authorization.ToString(),
-    //         Request.Headers["X-Lognex-RequestId"].FirstOrDefault(),
-    //         request),
-    //     cancellationToken);
+        var requestId = Request.Headers["X-Lognex-RequestId"].FirstOrDefault()
+            ?? Request.Headers["X_Lognex_RequestId"].FirstOrDefault()
+            ?? string.Empty;
+        var authorization = Request.Headers.Authorization.FirstOrDefault() ?? string.Empty;
 
-    return Ok();
-}
+        try
+        {
+            await service.DeactivateAsync(new VendorDeactivationCommand(
+                appId, accountId, authorization, requestId, request), cancellationToken);
+            return Ok();
+        }
+        catch (VendorAuthenticationException)
+        {
+            return Error(StatusCodes.Status401Unauthorized, "VENDOR_AUTHENTICATION_ERROR", "Authentication failed.");
+        }
+        catch (VendorForbiddenException)
+        {
+            return Error(StatusCodes.Status403Forbidden, "VENDOR_FORBIDDEN", "Application is not authorized.");
+        }
+        catch (VendorConflictException)
+        {
+            return Error(StatusCodes.Status409Conflict, "VENDOR_CONFLICT", "Request conflicts with existing data.");
+        }
+        catch (VendorValidationException exception)
+        {
+            return Error(StatusCodes.Status400BadRequest, "VENDOR_VALIDATION_ERROR", exception.Message);
+        }
+    }
 
     private ObjectResult Error(int statusCode, string code, string message) =>
         StatusCode(statusCode, new VendorErrorResponse(code, message));

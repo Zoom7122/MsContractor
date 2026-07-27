@@ -131,6 +131,7 @@ services:
       - "${GATEWAY_BFF_PORT}:${SERVICE_INTERNAL_PORT}"
     environment:
       <<: *service-env
+      ReverseProxy__Clusters__vendor-service-cluster__Destinations__vendor-service__Address: http://vendor-service:${SERVICE_INTERNAL_PORT}/
     depends_on:
       postgres:
         condition: service_healthy
@@ -138,6 +139,14 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      vendor-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:${SERVICE_INTERNAL_PORT}/health/ready > /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     networks:
       - mscontractor-net
 
@@ -150,8 +159,6 @@ services:
       args:
         PROJECT_PATH: src/Services/VendorService/MsContractor.VendorService.csproj
         PROJECT_DLL: MsContractor.VendorService.dll
-    ports:
-      - "${VENDOR_SERVICE_PORT}:${SERVICE_INTERNAL_PORT}"
     environment:
       <<: *service-env
       Vendor__AppId: ${MOYSKLAD_VENDOR_APP_ID}
@@ -166,6 +173,12 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:${SERVICE_INTERNAL_PORT}/health/ready > /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
     networks:
       - mscontractor-net
 
@@ -283,6 +296,23 @@ services:
       postgres:
         condition: service_healthy
       kafka:
+        condition: service_healthy
+    networks:
+      - mscontractor-net
+
+  frontend-iframe:
+    container_name: mscontractor-frontend-iframe
+    restart: unless-stopped
+    build:
+      context: ./src
+      dockerfile: frontend-Iframe/Dockerfile.frontend-iframe
+    ports:
+      - "${FRONTEND_IFRAME_PORT:-4174}:4174"
+    environment:
+      VITE_BACKEND_PROXY_TARGET: http://gateway-bff:${SERVICE_INTERNAL_PORT}
+      VITE_ALLOWED_HOSTS: localhost,127.0.0.1
+    depends_on:
+      gateway-bff:
         condition: service_healthy
     networks:
       - mscontractor-net

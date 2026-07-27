@@ -6,6 +6,7 @@
       "dotnetRunMessages": true,
       "launchBrowser": false,
       "applicationUrl": "http://localhost:5234",
+      "commandLineArgs": "--ReverseProxy:Clusters:vendor-service-cluster:Destinations:vendor-service:Address=http://localhost:5011/",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       }
@@ -15,6 +16,7 @@
       "dotnetRunMessages": true,
       "launchBrowser": false,
       "applicationUrl": "https://localhost:7087;http://localhost:5234",
+      "commandLineArgs": "--ReverseProxy:Clusters:vendor-service-cluster:Destinations:vendor-service:Address=http://localhost:5011/",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       }

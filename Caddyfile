@@ -4,22 +4,18 @@
 		format console
 	}
 
-	# Lifecycle-запросы от МоегоСклада сразу в VendorService
-	handle /api/moysklad/vendor/1.0/* {
-		reverse_proxy 127.0.0.1:8081
-	}
-
-	# Остальное API приложения через Gateway
+	# Всё backend API, включая Vendor API
 	handle /api/* {
 		reverse_proxy 127.0.0.1:8080
 	}
 
+	# Health Gateway
 	handle /health* {
-		reverse_proxy 127.0.0.1:18080
+		reverse_proxy 127.0.0.1:8080
 	}
 
 	# Frontend
 	handle {
-		reverse_proxy 127.0.0.1:5174
+		reverse_proxy 127.0.0.1:4174
 	}
 }

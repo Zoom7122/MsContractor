@@ -11,10 +11,24 @@ public sealed record SaveVendorInstallationCommand(
 
 public sealed record SaveVendorInstallationResult(Installation? Installation, bool IdempotentReplay);
 
-public sealed class VendorInstallationRepository(VendorDbContext dbContext)
+public interface IVendorInstallationRepository
+{
+    Task<Installation?> GetByAccountIdAsync(Guid accountId, CancellationToken cancellationToken);
+
+    Task<int> SaveChangesAsync(CancellationToken cancellationToken);
+
+    Task<SaveVendorInstallationResult> SaveAsync(
+        SaveVendorInstallationCommand command,
+        CancellationToken cancellationToken);
+}
+
+public sealed class VendorInstallationRepository(VendorDbContext dbContext) : IVendorInstallationRepository
 {
     public Task<Installation?> GetByAccountIdAsync(Guid accountId, CancellationToken cancellationToken) =>
         dbContext.Installations.SingleOrDefaultAsync(item => item.AccountId == accountId, cancellationToken);
+
+    public Task<int> SaveChangesAsync(CancellationToken cancellationToken) =>
+        dbContext.SaveChangesAsync(cancellationToken);
 
     public async Task<SaveVendorInstallationResult> SaveAsync(
         SaveVendorInstallationCommand command,

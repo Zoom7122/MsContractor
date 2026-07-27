@@ -1,5 +1,7 @@
+using System.Net;
 using Microsoft.EntityFrameworkCore;
 using MsContractor.BuildingBlocks.Health;
+using MsContractor.VendorService.Middleware;
 using MsContractor.VendorService.Repo;
 using MsContractor.VendorService.Services;
 using StackExchange.Redis;
@@ -7,7 +9,15 @@ using StackExchange.Redis;
 var builder = WebApplication.CreateBuilder(args);
 builder.AddMsContractorHealth();
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = context =>
+            new Microsoft.AspNetCore.Mvc.BadRequestObjectResult(
+                new MsContractor.VendorService.Contracts.VendorErrorResponse(
+                    "VENDOR_VALIDATION_ERROR",
+                    "The request body is invalid."));
+    });
 builder.Services.AddOpenApi();
 builder.Services.AddDbContext<VendorDbContext>(options =>
 {
@@ -27,10 +37,23 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     return ConnectionMultiplexer.Connect(connectionString);
 });
 builder.Services.AddSingleton<AccessTokenProtector>();
+builder.Services.AddSingleton<MoyskladVendorJwtFactory>();
+builder.Services.AddHttpClient<IMoyskladContextClient, MoyskladContextClient>((serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<VendorOptions>>();
+    client.BaseAddress = options.Value.AppsApiBaseUrl;
+    client.Timeout = TimeSpan.FromSeconds(10);
+})
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        AutomaticDecompression = DecompressionMethods.GZip
+    });
+builder.Services.AddSingleton<IVendorSessionStore, VendorSessionStore>();
 builder.Services.AddScoped<VendorJwtValidator>();
 builder.Services.AddScoped<VendorJwtReplayStore>();
-builder.Services.AddScoped<VendorInstallationRepository>();
+builder.Services.AddScoped<IVendorInstallationRepository, VendorInstallationRepository>();
 builder.Services.AddScoped<VendorInstallationService>();
+builder.Services.AddScoped<MoyskladSessionService>();
 
 var app = builder.Build();
 
@@ -58,6 +81,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+app.UseVendorRequestLogging();
 
 app.UseAuthorization();
 

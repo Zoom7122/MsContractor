@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("MsContractor.Gateway.Bff")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+5a0ca8ed027bb7e041c1761cc821a65ec7a5df81")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f9f4e11af309c0b5ee433e0e5615437b4f0e7832")]
 [assembly: System.Reflection.AssemblyProductAttribute("MsContractor.Gateway.Bff")]
 [assembly: System.Reflection.AssemblyTitleAttribute("MsContractor.Gateway.Bff")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

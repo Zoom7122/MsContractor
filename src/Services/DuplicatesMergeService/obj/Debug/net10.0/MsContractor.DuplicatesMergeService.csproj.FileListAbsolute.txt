@@ -71,3 +71,15 @@
 /home/vlad/Рабочий стол/MS_service/src/Services/DuplicatesMergeService/bin/Debug/net10.0/MsContractor.BuildingBlocks.dll
 /home/vlad/Рабочий стол/MS_service/src/Services/DuplicatesMergeService/bin/Debug/net10.0/MsContractor.BuildingBlocks.pdb
 /home/vlad/Рабочий стол/MS_service/src/Services/DuplicatesMergeService/obj/Debug/net10.0/MsContractor.DuplicatesMergeService.sourcelink.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/DuplicatesMergeService/obj/Debug/net10.0/MsContractor.DuplicatesMergeService.csproj.AssemblyReference.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/DuplicatesMergeService/obj/Debug/net10.0/rpswa.dswa.cache.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/DuplicatesMergeService/obj/Debug/net10.0/MsContractor.DuplicatesMergeService.GeneratedMSBuildEditorConfig.editorconfig
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/DuplicatesMergeService/obj/Debug/net10.0/MsContractor.DuplicatesMergeService.AssemblyInfoInputs.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/DuplicatesMergeService/obj/Debug/net10.0/MsContractor.DuplicatesMergeService.AssemblyInfo.cs
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/DuplicatesMergeService/obj/Debug/net10.0/MsContractor.DuplicatesMergeService.csproj.CoreCompileInputs.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/DuplicatesMergeService/obj/Debug/net10.0/MsContractor.DuplicatesMergeService.MvcApplicationPartsAssemblyInfo.cs
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/DuplicatesMergeService/obj/Debug/net10.0/MsContractor.DuplicatesMergeService.MvcApplicationPartsAssemblyInfo.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/DuplicatesMergeService/obj/Debug/net10.0/MsContractor.DuplicatesMergeService.sourcelink.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/DuplicatesMergeService/obj/Debug/net10.0/MsContractor.DuplicatesMergeService.dll
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/DuplicatesMergeService/obj/Debug/net10.0/refint/MsContractor.DuplicatesMergeService.dll
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/DuplicatesMergeService/obj/Debug/net10.0/MsContractor.DuplicatesMergeService.pdb

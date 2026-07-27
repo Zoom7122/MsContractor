@@ -83,3 +83,13 @@
 /home/vlad/Рабочий стол/MS_service/src/Services/CatalogSyncService/obj/Debug/net10.0/staticwebassets.development.json
 /home/vlad/Рабочий стол/MS_service/src/Services/CatalogSyncService/obj/Debug/net10.0/staticwebassets.build.endpoints.json
 /home/vlad/Рабочий стол/MS_service/src/Services/CatalogSyncService/obj/Debug/net10.0/swae.build.ex.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/CatalogSyncService/obj/Debug/net10.0/rpswa.dswa.cache.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/CatalogSyncService/obj/Debug/net10.0/MsContractor.CatalogSyncService.GeneratedMSBuildEditorConfig.editorconfig
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/CatalogSyncService/obj/Debug/net10.0/MsContractor.CatalogSyncService.AssemblyInfoInputs.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/CatalogSyncService/obj/Debug/net10.0/MsContractor.CatalogSyncService.AssemblyInfo.cs
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/CatalogSyncService/obj/Debug/net10.0/MsContractor.CatalogSyncService.csproj.CoreCompileInputs.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/CatalogSyncService/obj/Debug/net10.0/MsContractor.CatalogSyncService.MvcApplicationPartsAssemblyInfo.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/CatalogSyncService/obj/Debug/net10.0/MsContractor.CatalogSyncService.sourcelink.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/CatalogSyncService/obj/Debug/net10.0/MsContractor.CatalogSyncService.dll
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/CatalogSyncService/obj/Debug/net10.0/refint/MsContractor.CatalogSyncService.dll
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/CatalogSyncService/obj/Debug/net10.0/MsContractor.CatalogSyncService.pdb

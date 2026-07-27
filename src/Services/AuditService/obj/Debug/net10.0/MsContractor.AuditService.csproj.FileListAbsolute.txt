@@ -83,3 +83,13 @@
 /home/vlad/Рабочий стол/MS_service/src/Services/AuditService/obj/Debug/net10.0/staticwebassets.development.json
 /home/vlad/Рабочий стол/MS_service/src/Services/AuditService/obj/Debug/net10.0/staticwebassets.build.endpoints.json
 /home/vlad/Рабочий стол/MS_service/src/Services/AuditService/obj/Debug/net10.0/swae.build.ex.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/AuditService/obj/Debug/net10.0/rpswa.dswa.cache.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/AuditService/obj/Debug/net10.0/MsContractor.AuditService.GeneratedMSBuildEditorConfig.editorconfig
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/AuditService/obj/Debug/net10.0/MsContractor.AuditService.AssemblyInfoInputs.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/AuditService/obj/Debug/net10.0/MsContractor.AuditService.AssemblyInfo.cs
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/AuditService/obj/Debug/net10.0/MsContractor.AuditService.csproj.CoreCompileInputs.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/AuditService/obj/Debug/net10.0/MsContractor.AuditService.MvcApplicationPartsAssemblyInfo.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/AuditService/obj/Debug/net10.0/MsContractor.AuditService.sourcelink.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/AuditService/obj/Debug/net10.0/MsContractor.AuditService.dll
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/AuditService/obj/Debug/net10.0/refint/MsContractor.AuditService.dll
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/AuditService/obj/Debug/net10.0/MsContractor.AuditService.pdb

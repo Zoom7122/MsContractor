@@ -163,3 +163,15 @@
 /home/vlad/Рабочий стол/MS_service/src/Services/VendorService/bin/Debug/net10.0/Pipelines.Sockets.Unofficial.dll
 /home/vlad/Рабочий стол/MS_service/src/Services/VendorService/bin/Debug/net10.0/StackExchange.Redis.dll
 /home/vlad/Рабочий стол/MS_service/src/Services/VendorService/bin/Debug/net10.0/System.IO.Hashing.dll
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/VendorService/obj/Debug/net10.0/MsContractor.VendorService.csproj.AssemblyReference.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/VendorService/obj/Debug/net10.0/rpswa.dswa.cache.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/VendorService/obj/Debug/net10.0/MsContractor.VendorService.GeneratedMSBuildEditorConfig.editorconfig
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/VendorService/obj/Debug/net10.0/MsContractor.VendorService.AssemblyInfoInputs.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/VendorService/obj/Debug/net10.0/MsContractor.VendorService.AssemblyInfo.cs
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/VendorService/obj/Debug/net10.0/MsContractor.VendorService.csproj.CoreCompileInputs.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/VendorService/obj/Debug/net10.0/MsContractor.VendorService.MvcApplicationPartsAssemblyInfo.cs
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/VendorService/obj/Debug/net10.0/MsContractor.VendorService.MvcApplicationPartsAssemblyInfo.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/VendorService/obj/Debug/net10.0/MsContractor.VendorService.sourcelink.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/VendorService/obj/Debug/net10.0/MsContractor.VendorService.dll
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/VendorService/obj/Debug/net10.0/refint/MsContractor.VendorService.dll
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/VendorService/obj/Debug/net10.0/MsContractor.VendorService.pdb

@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "MJCnYUn4umc=",
+  "dgSpecHash": "XDVdAnQE79o=",
   "success": true,
   "projectFilePath": "/home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/MsContractor.Gateway.Bff.csproj",
   "expectedPackageFiles": [
@@ -13,7 +13,7 @@
     {
       "code": "NU1903",
       "level": "Warning",
-      "message": "У пакета \"Microsoft.OpenApi\" 2.0.0 есть известная уязвимость https://github.com/advisories/GHSA-v5pm-xwqc-g5wc (уровень серьезности: высокий)",
+      "message": "Package 'Microsoft.OpenApi' 2.0.0 has a known high severity vulnerability, https://github.com/advisories/GHSA-v5pm-xwqc-g5wc",
       "projectPath": "/home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/MsContractor.Gateway.Bff.csproj",
       "warningLevel": 1,
       "filePath": "/home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/MsContractor.Gateway.Bff.csproj",

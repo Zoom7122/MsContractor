@@ -31,8 +31,9 @@ public sealed record VendorDeactivationResult(
 public sealed class VendorInstallationService(
     VendorJwtValidator jwtValidator,
     VendorJwtReplayStore replayStore,
-    VendorInstallationRepository repository,
+    IVendorInstallationRepository repository,
     AccessTokenProtector tokenProtector,
+    IVendorSessionStore sessionStore,
     IOptions<VendorOptions> options,
     TimeProvider timeProvider,
     ILogger<VendorInstallationService> logger)
@@ -143,6 +144,7 @@ public sealed class VendorInstallationService(
         var installation = await repository.GetByAccountIdAsync(command.AccountId, cancellationToken);
         if (installation is null)
         {
+            await sessionStore.RevokeAccountAsync(command.AccountId, cancellationToken);
             await repository.SaveAsync(
                 new SaveVendorInstallationCommand(command.RequestId, null, null), cancellationToken);
             logger.LogInformation("Vendor deactivation completed. RequestId={RequestId}, AccountId={AccountId}, AppId={AppId}, Cause={Cause}, InstallationFound={InstallationFound}, IdempotentReplay={IdempotentReplay}, Status={Status}",
@@ -172,6 +174,7 @@ public sealed class VendorInstallationService(
         };
         var saved = await repository.SaveAsync(
             new SaveVendorInstallationCommand(command.RequestId, installation, outbox), cancellationToken);
+        await sessionStore.RevokeAccountAsync(command.AccountId, cancellationToken);
         logger.LogInformation("Vendor deactivation completed. RequestId={RequestId}, AccountId={AccountId}, AppId={AppId}, Cause={Cause}, InstallationFound={InstallationFound}, IdempotentReplay={IdempotentReplay}, Status={Status}",
             command.RequestId, command.AccountId, command.AppId, cause, true, saved.IdempotentReplay, installation.Status);
         return new VendorDeactivationResult(installation.Status, command.AccountId, true, saved.IdempotentReplay);

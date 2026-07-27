@@ -10,13 +10,15 @@ public sealed class VendorRequestCorrelationMiddleware(
 {
     public const string CorrelationIdHeaderName = "X-Correlation-Id";
     public const string CorrelationIdItemName = "CorrelationId";
-    private const string VendorPathPrefix = "/api/moysklad/vendor/";
-    private const string VendorPathTemplate = "/api/moysklad/vendor/{**catch-all}";
+    private const string MoyskladPathPrefix = "/api/moysklad/";
+    private const string MoyskladPathTemplate = "/api/moysklad/{**catch-all}";
 
     public async Task InvokeAsync(HttpContext context)
     {
         var correlationId = GetCorrelationId(context.Request.Headers[CorrelationIdHeaderName]);
         context.Items[CorrelationIdItemName] = correlationId;
+        // YARP copies request headers to VendorService, so propagate an id generated at the edge too.
+        context.Request.Headers[CorrelationIdHeaderName] = correlationId;
         context.Response.OnStarting(() =>
         {
             context.Response.Headers[CorrelationIdHeaderName] = correlationId;
@@ -28,13 +30,17 @@ public sealed class VendorRequestCorrelationMiddleware(
             ["correlation_id"] = correlationId
         }))
         {
-            if (!context.Request.Path.StartsWithSegments(VendorPathPrefix, StringComparison.OrdinalIgnoreCase))
-            {
-                await next(context);
-                return;
-            }
-
+            var startedAtUtc = DateTimeOffset.UtcNow;
             var stopwatch = Stopwatch.StartNew();
+            var isMoyskladRequest = context.Request.Path.StartsWithSegments(
+                MoyskladPathPrefix,
+                StringComparison.OrdinalIgnoreCase);
+            logger.LogInformation(
+                "Gateway request started at {StartedAtUtc}: {Method} {Path} with correlation {CorrelationId}",
+                startedAtUtc,
+                context.Request.Method,
+                context.Request.Path,
+                correlationId);
             try
             {
                 await next(context);
@@ -42,12 +48,13 @@ public sealed class VendorRequestCorrelationMiddleware(
             finally
             {
                 logger.LogInformation(
-                    "Vendor API request proxied: {Method} {PathTemplate} returned {StatusCode} in {DurationMs} ms to {DestinationService} with correlation {CorrelationId}",
+                    "Gateway request completed at {CompletedAtUtc}: {Method} {Path} returned {StatusCode} in {DurationMs} ms; proxiedToVendorService={ProxiedToVendorService}; correlation {CorrelationId}",
+                    DateTimeOffset.UtcNow,
                     context.Request.Method,
-                    VendorPathTemplate,
+                    isMoyskladRequest ? MoyskladPathTemplate : context.Request.Path,
                     context.Response.StatusCode,
                     stopwatch.Elapsed.TotalMilliseconds,
-                    "vendor-service",
+                    isMoyskladRequest,
                     correlationId);
             }
         }

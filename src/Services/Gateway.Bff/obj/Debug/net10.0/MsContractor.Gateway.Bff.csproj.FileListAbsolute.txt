@@ -71,3 +71,17 @@
 /home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/bin/Debug/net10.0/MsContractor.BuildingBlocks.dll
 /home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/bin/Debug/net10.0/MsContractor.BuildingBlocks.pdb
 /home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/obj/Debug/net10.0/MsContractor.Gateway.Bff.sourcelink.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/Gateway.Bff/obj/Debug/net10.0/MsContractor.Gateway.Bff.csproj.AssemblyReference.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/Gateway.Bff/obj/Debug/net10.0/rpswa.dswa.cache.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/Gateway.Bff/obj/Debug/net10.0/MsContractor.Gateway.Bff.GeneratedMSBuildEditorConfig.editorconfig
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/Gateway.Bff/obj/Debug/net10.0/MsContractor.Gateway.Bff.AssemblyInfoInputs.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/Gateway.Bff/obj/Debug/net10.0/MsContractor.Gateway.Bff.AssemblyInfo.cs
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/Gateway.Bff/obj/Debug/net10.0/MsContractor.Gateway.Bff.csproj.CoreCompileInputs.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/Gateway.Bff/obj/Debug/net10.0/MsContractor.Gateway.Bff.MvcApplicationPartsAssemblyInfo.cs
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/Gateway.Bff/obj/Debug/net10.0/MsContractor.Gateway.Bff.MvcApplicationPartsAssemblyInfo.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/Gateway.Bff/obj/Debug/net10.0/MsContractor.Gateway.Bff.sourcelink.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/Gateway.Bff/obj/Debug/net10.0/MsContractor.Gateway.Bff.dll
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/Gateway.Bff/obj/Debug/net10.0/refint/MsContractor.Gateway.Bff.dll
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/Gateway.Bff/obj/Debug/net10.0/MsContractor.Gateway.Bff.pdb
+/home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/bin/Debug/net10.0/System.IO.Hashing.dll
+/home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/bin/Debug/net10.0/Yarp.ReverseProxy.dll

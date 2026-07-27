@@ -71,3 +71,15 @@
 /home/vlad/Рабочий стол/MS_service/src/Services/MoySkladEgressService/bin/Debug/net10.0/MsContractor.BuildingBlocks.dll
 /home/vlad/Рабочий стол/MS_service/src/Services/MoySkladEgressService/bin/Debug/net10.0/MsContractor.BuildingBlocks.pdb
 /home/vlad/Рабочий стол/MS_service/src/Services/MoySkladEgressService/obj/Debug/net10.0/MsContractor.MoySkladEgressService.sourcelink.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/MoySkladEgressService/obj/Debug/net10.0/MsContractor.MoySkladEgressService.csproj.AssemblyReference.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/MoySkladEgressService/obj/Debug/net10.0/rpswa.dswa.cache.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/MoySkladEgressService/obj/Debug/net10.0/MsContractor.MoySkladEgressService.GeneratedMSBuildEditorConfig.editorconfig
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/MoySkladEgressService/obj/Debug/net10.0/MsContractor.MoySkladEgressService.AssemblyInfoInputs.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/MoySkladEgressService/obj/Debug/net10.0/MsContractor.MoySkladEgressService.AssemblyInfo.cs
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/MoySkladEgressService/obj/Debug/net10.0/MsContractor.MoySkladEgressService.csproj.CoreCompileInputs.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/MoySkladEgressService/obj/Debug/net10.0/MsContractor.MoySkladEgressService.MvcApplicationPartsAssemblyInfo.cs
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/MoySkladEgressService/obj/Debug/net10.0/MsContractor.MoySkladEgressService.MvcApplicationPartsAssemblyInfo.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/MoySkladEgressService/obj/Debug/net10.0/MsContractor.MoySkladEgressService.sourcelink.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/MoySkladEgressService/obj/Debug/net10.0/MsContractor.MoySkladEgressService.dll
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/MoySkladEgressService/obj/Debug/net10.0/refint/MsContractor.MoySkladEgressService.dll
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/MoySkladEgressService/obj/Debug/net10.0/MsContractor.MoySkladEgressService.pdb

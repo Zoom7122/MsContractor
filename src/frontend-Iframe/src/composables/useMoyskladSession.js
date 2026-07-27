@@ -32,6 +32,7 @@ export function useMoyskladSession() {
           appUid,
           userLocale
         })
+        removeMoyskladContextFromUrl()
 
         return session.value
       }
@@ -85,4 +86,14 @@ export function useMoyskladSession() {
     loadCurrentMoyskladSession,
     logout
   }
+}
+
+function removeMoyskladContextFromUrl() {
+  const url = new URL(window.location.href)
+  for (const parameter of ['contextKey', 'appId', 'appUid', 'userLocale']) {
+    url.searchParams.delete(parameter)
+  }
+
+  const cleanUrl = `${url.pathname}${url.search}${url.hash}`
+  window.history.replaceState(window.history.state, '', cleanUrl)
 }

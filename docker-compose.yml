@@ -310,7 +310,7 @@ services:
       - "${FRONTEND_IFRAME_PORT:-4174}:4174"
     environment:
       VITE_BACKEND_PROXY_TARGET: http://gateway-bff:${SERVICE_INTERNAL_PORT}
-      VITE_ALLOWED_HOSTS: localhost,127.0.0.1
+      VITE_ALLOWED_HOSTS: ${VITE_ALLOWED_HOSTS:-localhost,127.0.0.1}
     depends_on:
       gateway-bff:
         condition: service_healthy

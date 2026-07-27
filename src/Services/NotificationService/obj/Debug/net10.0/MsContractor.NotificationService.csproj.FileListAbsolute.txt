@@ -83,3 +83,13 @@
 /home/vlad/Рабочий стол/MS_service/src/Services/NotificationService/obj/Debug/net10.0/staticwebassets.development.json
 /home/vlad/Рабочий стол/MS_service/src/Services/NotificationService/obj/Debug/net10.0/staticwebassets.build.endpoints.json
 /home/vlad/Рабочий стол/MS_service/src/Services/NotificationService/obj/Debug/net10.0/swae.build.ex.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/NotificationService/obj/Debug/net10.0/rpswa.dswa.cache.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/NotificationService/obj/Debug/net10.0/MsContractor.NotificationService.GeneratedMSBuildEditorConfig.editorconfig
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/NotificationService/obj/Debug/net10.0/MsContractor.NotificationService.AssemblyInfoInputs.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/NotificationService/obj/Debug/net10.0/MsContractor.NotificationService.AssemblyInfo.cs
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/NotificationService/obj/Debug/net10.0/MsContractor.NotificationService.csproj.CoreCompileInputs.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/NotificationService/obj/Debug/net10.0/MsContractor.NotificationService.MvcApplicationPartsAssemblyInfo.cache
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/NotificationService/obj/Debug/net10.0/MsContractor.NotificationService.sourcelink.json
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/NotificationService/obj/Debug/net10.0/MsContractor.NotificationService.dll
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/NotificationService/obj/Debug/net10.0/refint/MsContractor.NotificationService.dll
+/home/vlad/Рабочий стол/MS_service/src/frontend-Iframe/Services/NotificationService/obj/Debug/net10.0/MsContractor.NotificationService.pdb

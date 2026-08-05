@@ -136,7 +136,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      kafka:
+      catalog-sync-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:${SERVICE_INTERNAL_PORT}/health/live > /dev/null || exit 1"]

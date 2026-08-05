@@ -1,4 +1,3 @@
-using Confluent.Kafka;
 using MsContractor.BuildingBlocks.Health;
 using MsContractor.Gateway.Bff.Middleware;
 using MsContractor.Gateway.Bff.Services;
@@ -12,28 +11,20 @@ builder.AddMsContractorHealth();
 builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
-builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     ConnectionMultiplexer.Connect(
         builder.Configuration["Redis:ConnectionString"]
         ?? builder.Configuration.GetConnectionString("Redis")
         ?? "localhost:6379"));
 builder.Services.AddSingleton<IGatewaySessionReader, GatewaySessionReader>();
-builder.Services.AddSingleton<IProducer<string, string>>(_ =>
-    new ProducerBuilder<string, string>(new ProducerConfig
-    {
-        BootstrapServers = builder.Configuration["Kafka:BootstrapServers"] ?? "localhost:9092",
-        Acks = Acks.All,
-        EnableIdempotence = true
-    }).Build());
-builder.Services.AddSingleton<IAdminClient>(_ =>
-    new AdminClientBuilder(new AdminClientConfig
-    {
-        BootstrapServers = builder.Configuration["Kafka:BootstrapServers"] ?? "localhost:9092"
-    }).Build());
-builder.Services.AddSingleton<ISyncCommandPublisher, SyncCommandPublisher>();
-builder.Services.AddHealthChecks()
-    .AddCheck<KafkaReadinessHealthCheck>("kafka", tags: ["ready"]);
+var catalogSyncBaseUrl = builder.Configuration["Services:CatalogSyncService:BaseUrl"]
+    ?? "http://localhost:5013/";
+builder.Services.AddHttpClient<ICatalogSyncClient, CatalogSyncClient>(client =>
+{
+    client.BaseAddress = new Uri(
+        catalogSyncBaseUrl.EndsWith('/') ? catalogSyncBaseUrl : $"{catalogSyncBaseUrl}/");
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
 builder.Services
     .AddReverseProxy()
     .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));

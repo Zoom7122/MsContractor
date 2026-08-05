@@ -15,13 +15,12 @@ public sealed class GatewaySyncControllerTests
     {
         var accountId = Guid.NewGuid();
         var employeeId = Guid.NewGuid();
-        var publisher = new CapturingPublisher();
+        var client = new CapturingCatalogSyncClient();
         var controller = new SyncController(
             new FakeSessionReader(new GatewaySession(accountId, employeeId)),
-            publisher,
+            client,
             new ConfigurationBuilder().AddInMemoryCollection(
-                new Dictionary<string, string?> { ["Session:CookieName"] = "mscontractor.session" }).Build(),
-            TimeProvider.System)
+                new Dictionary<string, string?> { ["Session:CookieName"] = "mscontractor.session" }).Build())
         {
             ControllerContext = new ControllerContext
             {
@@ -34,23 +33,20 @@ public sealed class GatewaySyncControllerTests
 
         var accepted = Assert.IsType<AcceptedResult>(result);
         Assert.IsType<SyncAccepted>(accepted.Value);
-        Assert.NotNull(publisher.Command);
-        Assert.Equal(accountId, publisher.Command!.AccountId);
-        Assert.Equal(employeeId, publisher.Command.RequestedByUserId);
-        Assert.NotEqual(Guid.Empty, publisher.Command.MessageId);
-        Assert.NotEqual(Guid.Empty, publisher.Command.SyncRunId);
-        Assert.Equal(SyncMode.Full, publisher.Command.Mode);
+        Assert.NotNull(client.Request);
+        Assert.Equal(accountId, client.Request!.AccountId);
+        Assert.Equal(employeeId, client.Request.RequestedByUserId);
+        Assert.Equal(SyncMode.Full, client.Request.Mode);
     }
 
     [Fact]
     public async Task CreateIncrementalAsync_PublishesIncrementalMode()
     {
-        var publisher = new CapturingPublisher();
+        var client = new CapturingCatalogSyncClient();
         var controller = new SyncController(
             new FakeSessionReader(new GatewaySession(Guid.NewGuid(), Guid.NewGuid())),
-            publisher,
-            new ConfigurationBuilder().Build(),
-            TimeProvider.System)
+            client,
+            new ConfigurationBuilder().Build())
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
@@ -58,7 +54,7 @@ public sealed class GatewaySyncControllerTests
         var result = await controller.CreateIncrementalAsync(CancellationToken.None);
 
         Assert.IsType<AcceptedResult>(result);
-        Assert.Equal(SyncMode.Incremental, publisher.Command?.Mode);
+        Assert.Equal(SyncMode.Incremental, client.Request?.Mode);
     }
 
     [Fact]
@@ -76,14 +72,14 @@ public sealed class GatewaySyncControllerTests
             Task.FromResult<GatewaySession?>(session);
     }
 
-    private sealed class CapturingPublisher : ISyncCommandPublisher
+    private sealed class CapturingCatalogSyncClient : ICatalogSyncClient
     {
-        public SyncRequested? Command { get; private set; }
+        public SyncStartRequest? Request { get; private set; }
 
-        public Task PublishAsync(SyncRequested command, CancellationToken cancellationToken)
+        public Task<SyncAccepted> StartAsync(SyncStartRequest request, CancellationToken cancellationToken)
         {
-            Command = command;
-            return Task.CompletedTask;
+            Request = request;
+            return Task.FromResult(new SyncAccepted(Guid.NewGuid(), "queued"));
         }
     }
 }

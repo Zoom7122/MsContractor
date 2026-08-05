@@ -6,6 +6,7 @@ using MsContractor.CatalogSyncService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.AddMsContractorHealth();
+builder.Services.AddControllers();
 builder.Services.AddDbContext<CatalogSyncDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")));
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
@@ -27,6 +28,7 @@ builder.Services.AddSingleton<IProducer<string, string>>(_ =>
         Acks = Acks.All,
         EnableIdempotence = true
     }).Build());
+builder.Services.AddSingleton<ISyncKafkaPublisher, SyncKafkaPublisher>();
 builder.Services.AddSingleton<IAdminClient>(_ =>
     new AdminClientBuilder(new AdminClientConfig
     {
@@ -44,4 +46,5 @@ await using (var scope = app.Services.CreateAsyncScope())
     await dbContext.Database.MigrateAsync();
 }
 app.MapMsContractorHealth();
+app.MapControllers();
 app.Run();

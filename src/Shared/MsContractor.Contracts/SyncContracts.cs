@@ -23,6 +23,11 @@ public sealed record SyncRequested(
     DateTimeOffset RequestedAt,
     SyncMode Mode = SyncMode.Full);
 
+public sealed record SyncStartRequest(
+    Guid AccountId,
+    Guid RequestedByUserId,
+    SyncMode Mode = SyncMode.Full);
+
 public sealed record SyncCompleted(
     Guid EventId,
     Guid SyncRunId,

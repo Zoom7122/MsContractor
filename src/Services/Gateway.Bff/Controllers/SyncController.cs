@@ -1,4 +1,3 @@
-using Confluent.Kafka;
 using Microsoft.AspNetCore.Mvc;
 using MsContractor.Contracts.Sync;
 using MsContractor.Gateway.Bff.Services;
@@ -9,9 +8,8 @@ namespace MsContractor.Gateway.Bff.Controllers;
 [Route("api/sync")]
 public sealed class SyncController(
     IGatewaySessionReader sessionReader,
-    ISyncCommandPublisher publisher,
-    IConfiguration configuration,
-    TimeProvider timeProvider) : ControllerBase
+    ICatalogSyncClient catalogSyncClient,
+    IConfiguration configuration) : ControllerBase
 {
     [HttpPost]
     [ProducesResponseType<SyncAccepted>(StatusCodes.Status202Accepted)]
@@ -37,25 +35,21 @@ public sealed class SyncController(
         if (session is null)
             return Unauthorized(new { code = "SESSION_UNAUTHORIZED", message = "Session is missing or expired." });
 
-        var command = new SyncRequested(
-            Guid.NewGuid(),
-            Guid.NewGuid(),
+        var request = new SyncStartRequest(
             session.AccountId,
             session.EmployeeId,
-            timeProvider.GetUtcNow(),
             mode);
 
         try
         {
-            await publisher.PublishAsync(command, cancellationToken);
+            var accepted = await catalogSyncClient.StartAsync(request, cancellationToken);
+            return Accepted(accepted);
         }
-        catch (ProduceException<string, string>)
+        catch (CatalogSyncUnavailableException)
         {
             return StatusCode(
                 StatusCodes.Status503ServiceUnavailable,
-                new { code = "KAFKA_UNAVAILABLE", message = "Synchronization queue is unavailable." });
+                new { code = "CATALOG_SYNC_UNAVAILABLE", message = "Synchronization service is unavailable." });
         }
-
-        return Accepted(new SyncAccepted(command.SyncRunId, "queued"));
     }
 }

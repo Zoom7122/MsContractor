@@ -2,18 +2,21 @@ using System.Text.Json;
 using Confluent.Kafka;
 using MsContractor.Contracts.Sync;
 
-namespace MsContractor.Gateway.Bff.Services;
+namespace MsContractor.CatalogSyncService.Services;
 
-public interface ISyncCommandPublisher
+public interface ISyncKafkaPublisher
 {
     Task PublishAsync(SyncRequested command, CancellationToken cancellationToken);
 }
 
-public sealed class SyncCommandPublisher(IProducer<string, string> producer) : ISyncCommandPublisher
+public sealed class SyncKafkaPublisher(IProducer<string, string> producer)
+    : ISyncKafkaPublisher
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public Task PublishAsync(SyncRequested command, CancellationToken cancellationToken) =>
+    public Task PublishAsync(
+        SyncRequested command,
+        CancellationToken cancellationToken) =>
         producer.ProduceAsync(
             SyncTopics.Commands,
             new Message<string, string>

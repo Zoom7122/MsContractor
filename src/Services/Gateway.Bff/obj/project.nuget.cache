@@ -1,11 +1,9 @@
 {
   "version": 2,
-  "dgSpecHash": "U1heRj6x2JM=",
+  "dgSpecHash": "vzV+2v0wfGI=",
   "success": true,
   "projectFilePath": "/home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/MsContractor.Gateway.Bff.csproj",
   "expectedPackageFiles": [
-    "/home/vlad/.nuget/packages/confluent.kafka/2.15.0/confluent.kafka.2.15.0.nupkg.sha512",
-    "/home/vlad/.nuget/packages/librdkafka.redist/2.15.0/librdkafka.redist.2.15.0.nupkg.sha512",
     "/home/vlad/.nuget/packages/microsoft.aspnetcore.openapi/10.0.9/microsoft.aspnetcore.openapi.10.0.9.nupkg.sha512",
     "/home/vlad/.nuget/packages/microsoft.openapi/2.7.5/microsoft.openapi.2.7.5.nupkg.sha512",
     "/home/vlad/.nuget/packages/pipelines.sockets.unofficial/2.2.8/pipelines.sockets.unofficial.2.2.8.nupkg.sha512",

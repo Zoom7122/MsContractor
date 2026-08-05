@@ -9,11 +9,22 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
     <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.10" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.10" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\Shared\MsContractor.Contracts\MsContractor.Contracts.csproj" />
     <ProjectReference Include="..\..\Shared\MsContractor.BuildingBlocks\MsContractor.BuildingBlocks.csproj" />
+    <ProjectReference Include="..\CatalogSyncService\MsContractor.CatalogSyncService.csproj" PrivateAssets="all" />
   </ItemGroup>
+
+  <Target Name="ExcludeCatalogSyncSettingsFromPublish" BeforeTargets="_HandleFileConflictsForPublish">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+                             Condition="$([System.String]::Copy('%(ResolvedFileToPublish.Identity)').Contains('CatalogSyncService/appsettings'))" />
+    </ItemGroup>
+  </Target>
 
 </Project>

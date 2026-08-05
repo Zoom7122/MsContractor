@@ -17,6 +17,13 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
         ?? builder.Configuration.GetConnectionString("Redis")
         ?? "localhost:6379"));
 builder.Services.AddSingleton<IGatewaySessionReader, GatewaySessionReader>();
+var duplicatesBaseUrl = builder.Configuration["Services:DuplicatesMergeService:BaseUrl"]
+    ?? "http://localhost:5014/";
+builder.Services.AddHttpClient<IDuplicatePreviewClient, DuplicatePreviewClient>(client =>
+{
+    client.BaseAddress = new Uri(duplicatesBaseUrl.EndsWith('/') ? duplicatesBaseUrl : $"{duplicatesBaseUrl}/");
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
 var catalogSyncBaseUrl = builder.Configuration["Services:CatalogSyncService:BaseUrl"]
     ?? "http://localhost:5013/";
 builder.Services.AddHttpClient<ICatalogSyncClient, CatalogSyncClient>(client =>

@@ -1,6 +1,7 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { api } from '../api/http'
 
 const props = defineProps({
   duplicatesData: {
@@ -64,7 +65,7 @@ watch(
   { immediate: true }
 )
 
-function loadDuplicateGroups() {
+async function loadDuplicateGroups() {
   if (!preserveMergeMessageOnNextLoad) {
     mergeMessage.value = null
   }
@@ -75,12 +76,27 @@ function loadDuplicateGroups() {
     return
   }
 
-  error.value = 'Раздел временно недоступен'
+  loading.value = true
+  error.value = null
+  try {
+    const params = new URLSearchParams()
+    filters.value.fields.forEach((field) => params.append('fields', field))
+    const response = await api.post('/api/merge-preview', null, {
+      params
+    })
+    applyDuplicateResponse(response)
+  } catch (requestError) {
+    error.value = requestError?.message || 'Не удалось загрузить дубликаты'
+  } finally {
+    loading.value = false
+  }
 }
 
 function applyDuplicateResponse(response) {
-  groups.value = Array.isArray(response?.groups) ? response.groups.map(normalizeGroup) : []
-  groupsTruncated.value = Boolean(response?.groupsTruncated)
+  groups.value = Array.isArray(response)
+    ? response.map((group) => normalizeApiGroup(group))
+    : Array.isArray(response?.groups) ? response.groups.map(normalizeGroup) : []
+  groupsTruncated.value = false
 
   if (Array.isArray(response?.fields) && response.fields.length) {
     filters.value.fields = response.fields.filter((field) => fieldOptions.some((item) => item.value === field))
@@ -89,6 +105,35 @@ function applyDuplicateResponse(response) {
   selectedCounterpartyIds.value = []
   selectedGroupKey.value = resolveInitialGroupKey(groups.value)
   pendingGroupKeyFromRoute = ''
+}
+
+function normalizeApiGroup(group) {
+  const items = Array.isArray(group?.counterparties) ? group.counterparties : []
+  const matchedBy = String(group?.matchedBy || '')
+  const matchValue = String(group?.matchValue || '')
+  const normalized = items.map((item) => ({
+    id: String(item?.id || ''),
+    name: String(item?.name || ''),
+    description: String(item?.description || ''),
+    email: String(item?.email || ''),
+    phone: String(item?.phone || ''),
+    archived: false,
+    updatedAt: String(item?.updatedAt || ''),
+    syncedAt: ''
+  }))
+  return {
+    key: normalized.map((item) => item.id).sort().join(':'),
+    matchCount: normalized.length,
+    itemsTruncated: false,
+    matchedBy,
+    matchValue,
+    values: {
+      name: matchedBy === 'name' ? matchValue : '',
+      email: matchedBy === 'email' ? matchValue : '',
+      phone: matchedBy === 'phone' ? matchValue : ''
+    },
+    counterparties: normalized
+  }
 }
 
 function normalizeGroup(group) {
@@ -188,6 +233,10 @@ function clearSelectedCounterparties() {
 }
 
 function groupTitle(group) {
+  if (group.matchValue) {
+    const field = fieldOptions.find((item) => item.value === group.matchedBy)
+    return `Дубликаты по ${field?.label || group.matchedBy}: ${group.matchValue}`
+  }
   return group.values.name || group.values.email || group.values.phone || group.key || 'Группа дублей'
 }
 
@@ -273,6 +322,12 @@ function normalizeQueryValue(rawValue) {
 function cloneValue(value) {
   return JSON.parse(JSON.stringify(value))
 }
+
+onMounted(() => {
+  if (!props.duplicatesData) {
+    loadDuplicateGroups()
+  }
+})
 </script>
 
 <template>
@@ -315,7 +370,12 @@ function cloneValue(value) {
       </label>
 
       <div class="duplicates-filters__actions">
-        <button class="duplicates-button duplicates-button--primary" type="button" disabled>
+        <button
+          class="duplicates-button duplicates-button--primary"
+          type="button"
+          :disabled="loading || !filters.fields.length"
+          @click="loadDuplicateGroups"
+        >
           Найти дубли
         </button>
         <button class="duplicates-button duplicates-button--outline" type="button" :disabled="loading" @click="resetFilters">

@@ -22,5 +22,6 @@
     <ProjectReference Include="../../src/Services/Gateway.Bff/MsContractor.Gateway.Bff.csproj" />
     <ProjectReference Include="../../src/Services/CatalogSyncService/MsContractor.CatalogSyncService.csproj" />
     <ProjectReference Include="../../src/Services/MoySkladEgressService/MsContractor.MoySkladEgressService.csproj" />
+    <ProjectReference Include="../../src/Services/DuplicatesMergeService/MsContractor.DuplicatesMergeService.csproj" />
   </ItemGroup>
 </Project>

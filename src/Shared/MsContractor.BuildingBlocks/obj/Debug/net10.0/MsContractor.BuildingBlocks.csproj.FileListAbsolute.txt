@@ -21,3 +21,7 @@
 /home/vlad/Рабочий стол/MS_service/src/Shared/MsContractor.BuildingBlocks/obj/Debug/net10.0/MsContractor.BuildingBlocks.pdb
 /home/vlad/Рабочий стол/MS_service/src/Shared/MsContractor.BuildingBlocks/obj/Debug/net10.0/ref/MsContractor.BuildingBlocks.dll
 /home/vlad/Рабочий стол/MS_service/src/Shared/MsContractor.BuildingBlocks/obj/Debug/net10.0/MsContractor.BuildingBlocks.sourcelink.json
+/home/vlad/Рабочий стол/MS_service/src/Shared/MsContractor.BuildingBlocks/bin/Debug/net10.0/MsContractor.Contracts.dll
+/home/vlad/Рабочий стол/MS_service/src/Shared/MsContractor.BuildingBlocks/bin/Debug/net10.0/MsContractor.Contracts.pdb
+/home/vlad/Рабочий стол/MS_service/src/Shared/MsContractor.BuildingBlocks/obj/Debug/net10.0/MsContractor.BuildingBlocks.csproj.AssemblyReference.cache
+/home/vlad/Рабочий стол/MS_service/src/Shared/MsContractor.BuildingBlocks/obj/Debug/net10.0/MsContra.CED88702.Up2Date

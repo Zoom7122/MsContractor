@@ -19,6 +19,12 @@ public sealed class VendorRequestLoggingMiddleware(
             return Task.CompletedTask;
         });
 
+        if (context.Request.Path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase))
+        {
+            await next(context);
+            return;
+        }
+
         using (logger.BeginScope(new Dictionary<string, object?>
         {
             ["correlation_id"] = correlationId

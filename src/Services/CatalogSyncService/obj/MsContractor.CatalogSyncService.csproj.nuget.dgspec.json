@@ -51,6 +51,22 @@
       "frameworks": {
         "net10.0": {
           "targetAlias": "net10.0",
+          "dependencies": {
+            "Confluent.Kafka": {
+              "target": "Package",
+              "version": "[2.15.0, )"
+            },
+            "Microsoft.EntityFrameworkCore.Design": {
+              "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[10.0.10, )"
+            },
+            "Npgsql.EntityFrameworkCore.PostgreSQL": {
+              "target": "Package",
+              "version": "[10.0.3, )"
+            }
+          },
           "imports": [
             "net461",
             "net462",
@@ -510,7 +526,11 @@
         "frameworks": {
           "net10.0": {
             "targetAlias": "net10.0",
-            "projectReferences": {}
+            "projectReferences": {
+              "/home/vlad/Рабочий стол/MS_service/src/Shared/MsContractor.Contracts/MsContractor.Contracts.csproj": {
+                "projectPath": "/home/vlad/Рабочий стол/MS_service/src/Shared/MsContractor.Contracts/MsContractor.Contracts.csproj"
+              }
+            }
           }
         },
         "warningProperties": {

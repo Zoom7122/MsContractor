@@ -7,14 +7,30 @@
   "targets": {
     ".NETCoreApp,Version=v10.0": {
       "MsContractor.BuildingBlocks/1.0.0": {
+        "dependencies": {
+          "MsContractor.Contracts": "1.0.0"
+        },
         "runtime": {
           "MsContractor.BuildingBlocks.dll": {}
+        }
+      },
+      "MsContractor.Contracts/1.0.0": {
+        "runtime": {
+          "MsContractor.Contracts.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
         }
       }
     }
   },
   "libraries": {
     "MsContractor.BuildingBlocks/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "MsContractor.Contracts/1.0.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

@@ -2,8 +2,6 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { getCounterpartyChangeHistory } from '../../api/counterpartyHistory'
-
 const filterDefaults = {
   search: '',
   entityType: '',
@@ -21,7 +19,7 @@ const filters = ref({ ...filterDefaults })
 const rows = ref([])
 const total = ref(0)
 const loading = ref(false)
-const error = ref(null)
+const error = ref('Раздел временно недоступен')
 
 const totalPages = computed(() => {
   const pages = Math.ceil(total.value / filters.value.pageSize)
@@ -45,7 +43,6 @@ watch(
   () => route.query,
   (query) => {
     filters.value = readFiltersFromRouteQuery(query)
-    void loadHistory()
   },
   { immediate: true }
 )
@@ -60,63 +57,6 @@ const hasActiveFilters = computed(() =>
     filters.value.counterpartyId
   )
 )
-
-async function loadHistory() {
-  if (loading.value) {
-    return
-  }
-
-  loading.value = true
-  error.value = null
-
-  try {
-    const response = await getCounterpartyChangeHistory(buildApiQuery())
-    rows.value = Array.isArray(response?.items) ? response.items.map(normalizeHistoryRow) : []
-    total.value = Number(response?.total || 0)
-    filters.value.page = Number(response?.page || filters.value.page || 1)
-    filters.value.pageSize = Number(response?.pageSize || filters.value.pageSize || 25)
-  } catch (requestError) {
-    error.value = requestError.message || 'Не удалось загрузить историю изменений КА'
-  } finally {
-    loading.value = false
-  }
-}
-
-function buildApiQuery() {
-  const query = {
-    page: filters.value.page,
-    pageSize: filters.value.pageSize,
-    sortBy: 'changedAt',
-    sortDirection: 'desc'
-  }
-
-  const search = filters.value.search.trim()
-  if (search) {
-    query.search = search
-  }
-
-  if (filters.value.entityType) {
-    query.entityType = filters.value.entityType
-  }
-
-  if (filters.value.changeType) {
-    query.changeType = filters.value.changeType
-  }
-
-  if (filters.value.dateFrom) {
-    query.dateFrom = `${filters.value.dateFrom}T00:00:00`
-  }
-
-  if (filters.value.dateTo) {
-    query.dateTo = `${filters.value.dateTo}T23:59:59`
-  }
-
-  if (filters.value.counterpartyId) {
-    query.counterpartyId = filters.value.counterpartyId
-  }
-
-  return query
-}
 
 function buildRouteQuery() {
   const query = {}

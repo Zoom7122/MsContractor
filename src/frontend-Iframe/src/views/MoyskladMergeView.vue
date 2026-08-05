@@ -2,12 +2,6 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import {
-  getCounterpartyAttributes,
-  runCounterpartyFullSync
-} from '../api/counterparties'
-import { getDuplicateMergePreview, mergeDuplicates, mergeMultipleDuplicates } from '../api/duplicates'
-
 const route = useRoute()
 const router = useRouter()
 
@@ -22,8 +16,6 @@ const mergeAttributes = ref([])
 const attributeSelections = ref({})
 const primaryCounterpartyId = ref('')
 const fieldSelections = ref(createEmptyFieldSelections())
-
-let previewRequestToken = 0
 
 const primaryCounterparty = computed(() => {
   return counterparties.value.find((counterparty) => counterparty.id === primaryCounterpartyId.value) || null
@@ -139,115 +131,16 @@ watch(primaryCounterpartyId, (nextId) => {
 watch(
   () => selectedCounterpartyIds.value.join(','),
   () => {
-    loadPreview()
-  },
-  { immediate: true }
-)
-
-async function loadPreview() {
-  const ids = selectedCounterpartyIds.value
-  const requestToken = ++previewRequestToken
-
-  if (ids.length < 2) {
-    error.value = 'Выберите хотя бы двух контрагентов для объединения'
+    error.value = selectedCounterpartyIds.value.length < 2
+      ? 'Выберите хотя бы двух контрагентов для объединения'
+      : 'Раздел временно недоступен'
     counterparties.value = []
     primaryCounterpartyId.value = ''
     mergeAttributes.value = []
     attributeSelections.value = {}
-    return
-  }
-
-  loading.value = true
-  previewLoading.value = true
-  error.value = null
-  successMessage.value = null
-  mergeAttributesError.value = null
-
-  try {
-    const [previewResponse, attributes] = await Promise.all([
-      getDuplicateMergePreview(ids),
-      loadMergeAttributes()
-    ])
-    if (requestToken !== previewRequestToken) {
-      return
-    }
-
-    mergeAttributes.value = attributes
-    counterparties.value = normalizeCounterparties(previewResponse?.counterparties, attributes)
-    primaryCounterpartyId.value = counterparties.value[0]?.id || ''
-    initializeFieldSelections()
-    initializeAttributeSelections()
-    void autoSyncCounterparties(requestToken)
-  } catch (requestError) {
-    error.value = requestError.message || 'Не удалось загрузить предпросмотр объединения'
-    counterparties.value = []
-    primaryCounterpartyId.value = ''
-    fieldSelections.value = createEmptyFieldSelections()
-    attributeSelections.value = {}
-  } finally {
-    loading.value = false
-    previewLoading.value = false
-  }
-}
-
-async function loadMergeAttributes() {
-  try {
-    const response = await getCounterpartyAttributes()
-    return normalizeMergeAttributes(response)
-  } catch (requestError) {
-    mergeAttributesError.value = requestError.message || 'Не удалось загрузить настройки доп. полей'
-    return []
-  }
-}
-
-async function autoSyncCounterparties(requestToken) {
-  for (const counterparty of counterparties.value) {
-    if (requestToken !== previewRequestToken) {
-      return
-    }
-
-    await syncCounterparty(counterparty.id, requestToken)
-  }
-}
-
-async function syncCounterparty(counterpartyId, requestToken = previewRequestToken) {
-  if (requestToken !== previewRequestToken) {
-    return
-  }
-
-  patchCounterparty(counterpartyId, {
-    syncState: 'loading',
-    syncMessage: 'Обновляем полную выгрузку и связанные документы...'
-  })
-
-  try {
-    const response = await runCounterpartyFullSync(counterpartyId)
-    if (requestToken !== previewRequestToken) {
-      return
-    }
-
-    patchCounterparty(counterpartyId, (current) => ({
-      syncState: response?.isPartial ? 'partial' : 'ready',
-      syncMessage: response?.message || 'Полная выгрузка обновлена',
-      fullSyncTotalDocuments: Number(response?.totalDocuments || 0),
-      fullSyncErrorsCount: Array.isArray(response?.errors) ? response.errors.length : 0,
-      exportId: Number(response?.exportId || 0),
-      latestFullExportCreatedAt: String(response?.latestFullExport?.createdAt || current.latestFullExportCreatedAt || ''),
-      latestFullExportIsPartial: Boolean(response?.latestFullExport?.isPartial ?? response?.isPartial),
-      syncedLinkedDocumentsCount: Array.isArray(response?.linkedDocuments) ? response.linkedDocuments.length : current.syncedLinkedDocumentsCount
-    }))
-  } catch (requestError) {
-    if (requestToken !== previewRequestToken) {
-      return
-    }
-
-    patchCounterparty(counterpartyId, {
-      syncState: 'error',
-      syncMessage: requestError.message || 'Не удалось обновить полную выгрузку',
-      fullSyncErrorsCount: 1
-    })
-  }
-}
+  },
+  { immediate: true }
+)
 
 function initializeFieldSelections() {
   const primaryId = primaryCounterpartyId.value
@@ -378,32 +271,9 @@ function buildMergeRequest() {
   }
 }
 
-async function handleSubmit() {
-  if (!canSubmit.value) {
-    return
-  }
-
-  submitLoading.value = true
-  error.value = null
+function handleSubmit() {
   successMessage.value = null
-
-  try {
-    const mergeRequest = buildMergeRequest()
-    const response = mergeRequest.multiple
-      ? await mergeMultipleDuplicates(mergeRequest.payload)
-      : await mergeDuplicates(mergeRequest.payload)
-    await router.push({
-      name: 'moysklad-duplicates',
-      query: buildDuplicatesReturnQuery({
-        mergeQueued: true,
-        mergeJobId: response?.id
-      })
-    })
-  } catch (requestError) {
-    error.value = requestError.message || 'Не удалось добавить объединение в очередь'
-  } finally {
-    submitLoading.value = false
-  }
+  error.value = 'Раздел временно недоступен'
 }
 
 function handleCancel() {
@@ -1009,7 +879,7 @@ function createEmptyFieldSelections() {
           <button class="merge-button merge-button--ghost" type="button" @click="handleCancel">
             Отмена
           </button>
-          <button class="merge-button merge-button--primary" type="button" :disabled="!canSubmit" @click="handleSubmit">
+          <button class="merge-button merge-button--primary" type="button" disabled>
             {{ submitLoading ? 'Добавляем...' : 'Добавить в очередь' }}
           </button>
         </div>

@@ -1,9 +1,8 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
-import { api } from '../api/http'
-import { cancelSync, getDashboardStatus, startSync } from '../api/dashboardStatus'
 import MergeQueuePanel from '../components/overview/MergeQueuePanel.vue'
+import { startFullSync, startIncrementalSync } from '../api/sync'
 import MSlogo from '../assets/MSlogo.png'
 import iconCounterpartiesCard from '../assets/icon_counterparties_card.png'
 import iconMergeQueueCard from '../assets/icon_merge_queue_card.png'
@@ -24,11 +23,10 @@ const overviewData = ref(createEmptyOverviewData())
 const dashboardStatus = ref(createEmptyDashboardStatus())
 const overviewLoading = ref(false)
 const statusLoading = ref(false)
-const statusError = ref(null)
+const statusError = ref('Раздел временно недоступен')
 const syncActionLoading = ref(false)
 const syncActionMessage = ref(null)
 const syncActionError = ref(null)
-let dashboardStatusPollingId = null
 
 watch(
   () => props.overviewData,
@@ -45,20 +43,10 @@ watch(
   (value) => {
     if (value) {
       dashboardStatus.value = normalizeDashboardStatus(value)
-      stopDashboardStatusPolling()
     }
   },
   { immediate: true }
 )
-
-onMounted(async () => {
-  await refreshDashboardData()
-  startDashboardStatusPolling()
-})
-
-onBeforeUnmount(() => {
-  stopDashboardStatusPolling()
-})
 
 const cards = computed(() => [
   {
@@ -237,113 +225,66 @@ function normalizeProgressPercent(progressPercent, processedCounterparties, tota
   return Math.round(Math.min(100, Math.max(0, percent)))
 }
 
-async function loadDashboardStatus() {
-  if (props.dashboardStatusData) {
-    return
-  }
-  if (statusLoading.value) {
-    return
-  }
-
-  statusLoading.value = true
-  statusError.value = null
-
-  try {
-    const response = await getDashboardStatus()
-    dashboardStatus.value = normalizeDashboardStatus(response)
-  } catch (error) {
-    statusError.value = error.message || 'Не удалось загрузить статус синхронизации'
-  } finally {
-    statusLoading.value = false
-  }
-}
-
-async function loadOverview() {
-  if (props.overviewData) {
-    return
-  }
-  if (overviewLoading.value) {
-    return
-  }
-
-  overviewLoading.value = true
-
-  try {
-    const response = await api.get('/api/overview')
-    overviewData.value = normalizeOverviewData(response)
-  } catch (error) {
-    overviewData.value = normalizeOverviewData({
-      ...overviewData.value,
-      connection: {
-        ok: false,
-        label: 'Не подключено',
-        description: error.message || 'Не удалось загрузить обзор',
-      },
-    })
-  } finally {
-    overviewLoading.value = false
-  }
-}
-
-async function refreshDashboardData() {
-  await Promise.all([
-    loadOverview(),
-    loadDashboardStatus(),
-  ])
-}
-
-function startDashboardStatusPolling() {
-  if (dashboardStatusPollingId || props.dashboardStatusData) {
-    return
-  }
-
-  dashboardStatusPollingId = window.setInterval(() => {
-    refreshDashboardData()
-  }, 10000)
-}
-
-function stopDashboardStatusPolling() {
-  if (!dashboardStatusPollingId) {
-    return
-  }
-
-  window.clearInterval(dashboardStatusPollingId)
-  dashboardStatusPollingId = null
-}
-
 async function handleFullSync() {
-  await runSyncAction(() => startSync('full'))
-}
-
-async function handleIncrementalSync() {
-  await runSyncAction(() => startSync('incremental'))
-}
-
-async function handleCancelSync() {
-  await runSyncAction(() => cancelSync())
-}
-
-async function runSyncAction(action) {
-  if (syncActionLoading.value) {
-    return
-  }
-
-  syncActionLoading.value = true
   syncActionMessage.value = null
   syncActionError.value = null
+  syncActionLoading.value = true
 
   try {
-    const response = props.dashboardStatusData ? { message: 'Операция выполнена' } : await action()
-    syncActionMessage.value = response.message || 'Операция выполнена'
-    if (!props.dashboardStatusData) {
-      await refreshDashboardData()
+    const result = await startFullSync()
+    syncActionMessage.value = 'Полная синхронизация поставлена в очередь'
+    dashboardStatus.value = {
+      ...dashboardStatus.value,
+      running: true,
+      status: result?.status || 'queued',
+      currentStep: 'Ожидание запуска синхронизации',
     }
   } catch (error) {
-    syncActionError.value = error.message || 'Ошибка выполнения операции'
+    if (error?.status === 401) {
+      syncActionError.value = 'Сессия истекла. Откройте приложение заново через МойСклад.'
+    } else if (error?.status === 503) {
+      syncActionError.value = 'Очередь синхронизации временно недоступна. Повторите попытку позже.'
+    } else {
+      syncActionError.value = error?.message || 'Не удалось запустить полную синхронизацию'
+    }
   } finally {
     syncActionLoading.value = false
   }
 }
+
+function markSyncUnavailable() {
+  syncActionMessage.value = null
+  syncActionError.value = 'Раздел временно недоступен'
+}
+
+async function handleIncrementalSync() {
+  syncActionMessage.value = null
+  syncActionError.value = null
+  syncActionLoading.value = true
+
+  try {
+    const result = await startIncrementalSync()
+    syncActionMessage.value = 'Инкрементная синхронизация поставлена в очередь'
+    dashboardStatus.value = {
+      ...dashboardStatus.value,
+      running: true,
+      status: result?.status || 'queued',
+      currentStep: 'Ожидание запуска синхронизации',
+    }
+  } catch (error) {
+    if (error?.status === 401) {
+      syncActionError.value = 'Сессия истекла. Откройте приложение заново через МойСклад.'
+    } else if (error?.status === 503) {
+      syncActionError.value = 'Очередь синхронизации временно недоступна. Повторите попытку позже.'
+    } else {
+      syncActionError.value = error?.message || 'Не удалось запустить инкрементную синхронизацию'
+    }
+  } finally {
+    syncActionLoading.value = false
+  }
+}
+
+const handleCancelSync = markSyncUnavailable
 
 function displayValue(value) {
   if (value === null || value === undefined || value === '') {
@@ -480,28 +421,37 @@ function cardDescription(card) {
 
     <div class="sync-panel__actions">
       <button
+        type="button"
         class="sync-panel__btn sync-panel__btn--primary"
-        :disabled="syncActionLoading || statusLoading"
+        :disabled="syncActionLoading"
         @click="handleFullSync"
       >
-        Полная синхронизация
+        {{ syncActionLoading ? 'Запуск…' : 'Полная синхронизация' }}
       </button>
 
       <button
+        type="button"
         class="sync-panel__btn sync-panel__btn--outline"
-        :disabled="syncActionLoading || statusLoading"
+        :disabled="syncActionLoading"
         @click="handleIncrementalSync"
       >
-        Инкрементная синхронизация
+        {{ syncActionLoading ? 'Запуск…' : 'Инкрементная синхронизация' }}
       </button>
 
       <button
+        type="button"
         class="sync-panel__btn sync-panel__btn--danger"
-        :disabled="syncActionLoading || statusLoading"
-        @click="handleCancelSync"
+        disabled
       >
         Отменить синхронизацию
       </button>
+
+      <p v-if="syncActionMessage" class="sync-panel__message" role="status">
+        {{ syncActionMessage }}
+      </p>
+      <p v-if="syncActionError" class="sync-panel__error" role="alert">
+        {{ syncActionError }}
+      </p>
     </div>
   </section>
 </template>

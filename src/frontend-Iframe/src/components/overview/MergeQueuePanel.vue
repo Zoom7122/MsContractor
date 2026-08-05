@@ -1,17 +1,14 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-
-import { cancelMergeJob, getMergeJobs } from '../../api/mergeJobs'
+import { computed, ref } from 'vue'
 
 const mergeJobs = ref([])
 const busyCounterpartyIds = ref([])
 const loading = ref(false)
-const error = ref(null)
+const error = ref('Раздел временно недоступен')
 const actionMessage = ref(null)
 const actionError = ref(null)
 const cancellingJobId = ref(0)
 const isExpanded = ref(false)
-let pollingId = null
 
 const activeJobsCount = computed(() =>
   mergeJobs.value.filter((job) => job.status === 'queued' || job.status === 'running').length
@@ -29,74 +26,9 @@ const visibleMergeJobs = computed(() => {
   return mergeJobs.value.slice(0, 1)
 })
 
-onMounted(() => {
-  void loadMergeJobs()
-  startPolling()
-})
-
-onBeforeUnmount(() => {
-  stopPolling()
-})
-
-async function loadMergeJobs() {
-  if (loading.value) {
-    return
-  }
-
-  loading.value = true
-  error.value = null
-
-  try {
-    const response = await getMergeJobs({ limit: 8 })
-    mergeJobs.value = Array.isArray(response?.items) ? response.items.map(normalizeMergeJob) : []
-    busyCounterpartyIds.value = Array.isArray(response?.busyCounterpartyIds)
-      ? response.busyCounterpartyIds.map((item) => String(item || '').trim()).filter(Boolean)
-      : []
-  } catch (requestError) {
-    error.value = requestError.message || 'Не удалось загрузить очередь объединений'
-  } finally {
-    loading.value = false
-  }
-}
-
-async function handleCancelJob(jobId) {
-  if (!jobId || cancellingJobId.value) {
-    return
-  }
-
-  cancellingJobId.value = Number(jobId)
+function handleCancelJob() {
   actionMessage.value = null
-  actionError.value = null
-
-  try {
-    const response = await cancelMergeJob(jobId)
-    const normalized = normalizeMergeJob(response)
-    mergeJobs.value = mergeJobs.value.map((job) => (job.id === normalized.id ? normalized : job))
-    actionMessage.value = `Задача #${jobId} отменена`
-  } catch (requestError) {
-    actionError.value = requestError.message || 'Не удалось отменить задачу'
-  } finally {
-    cancellingJobId.value = 0
-  }
-}
-
-function startPolling() {
-  if (pollingId) {
-    return
-  }
-
-  pollingId = window.setInterval(() => {
-    void loadMergeJobs()
-  }, 10000)
-}
-
-function stopPolling() {
-  if (!pollingId) {
-    return
-  }
-
-  window.clearInterval(pollingId)
-  pollingId = null
+  actionError.value = 'Раздел временно недоступен'
 }
 
 function toggleExpanded() {
@@ -181,7 +113,7 @@ function pluralizeCounterparties(count) {
 }
 
 function canCancel(job) {
-  return job.status === 'queued'
+  return false
 }
 </script>
 

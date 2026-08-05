@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 using MsContractor.VendorService.Contracts;
 using MsContractor.VendorService.Controllers;
 using MsContractor.VendorService.Repo;
@@ -12,10 +13,12 @@ namespace MsContractor.VendorService.Tests;
 public sealed class MoyskladSessionControllerTests
 {
     [Theory]
-    [InlineData("Development", false, "samesite=lax")]
-    [InlineData("Production", true, "samesite=none")]
+    [InlineData("Development", false, false, "samesite=lax")]
+    [InlineData("Development", true, true, "samesite=none")]
+    [InlineData("Production", false, true, "samesite=none")]
     public async Task CreateAsync_IssuesEnvironmentAppropriateHttpOnlyCookie(
         string environmentName,
+        bool forwardedHttps,
         bool secure,
         string expectedSameSite)
     {
@@ -33,13 +36,16 @@ public sealed class MoyskladSessionControllerTests
             service,
             TestSupport.Options(),
             new TestWebHostEnvironment(environmentName),
-            TimeProvider.System)
+            TimeProvider.System,
+            NullLogger<MoyskladSessionController>.Instance)
         {
             ControllerContext = new ControllerContext
             {
                 HttpContext = new DefaultHttpContext()
             }
         };
+        if (forwardedHttps)
+            controller.Request.Headers["X-Forwarded-Proto"] = "https";
 
         var result = await controller.CreateAsync(
             new MoyskladSessionRequest(
@@ -72,7 +78,8 @@ public sealed class MoyskladSessionControllerTests
             service,
             TestSupport.Options(),
             new TestWebHostEnvironment(Environments.Development),
-            TimeProvider.System)
+            TimeProvider.System,
+            NullLogger<MoyskladSessionController>.Instance)
         {
             ControllerContext = new ControllerContext
             {

@@ -54,6 +54,8 @@ builder.Services.AddScoped<VendorJwtReplayStore>();
 builder.Services.AddScoped<IVendorInstallationRepository, VendorInstallationRepository>();
 builder.Services.AddScoped<VendorInstallationService>();
 builder.Services.AddScoped<MoyskladSessionService>();
+builder.Services.AddHealthChecks()
+    .AddCheck<VendorReadinessHealthCheck>("vendor-dependencies", tags: ["ready"]);
 
 var app = builder.Build();
 

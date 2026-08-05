@@ -27,4 +27,26 @@ public sealed class AccessTokenProtector
         CryptographicOperations.ZeroMemory(plaintext);
         return new ProtectedAccessToken(ciphertext, nonce, tag, _keyVersion);
     }
+
+    public string Unprotect(
+        byte[] ciphertext,
+        byte[] nonce,
+        byte[] tag,
+        int keyVersion)
+    {
+        if (keyVersion != _keyVersion)
+            throw new CryptographicException("The access token key version is not available.");
+
+        var plaintext = new byte[ciphertext.Length];
+        try
+        {
+            using var aes = new AesGcm(_key, tagSizeInBytes: 16);
+            aes.Decrypt(nonce, ciphertext, tag, plaintext);
+            return System.Text.Encoding.UTF8.GetString(plaintext);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(plaintext);
+        }
+    }
 }

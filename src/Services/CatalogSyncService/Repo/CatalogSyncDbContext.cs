@@ -1,0 +1,86 @@
+using Microsoft.EntityFrameworkCore;
+
+namespace MsContractor.CatalogSyncService.Repo;
+
+public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> options)
+    : DbContext(options)
+{
+    public DbSet<SyncRun> SyncRuns => Set<SyncRun>();
+    public DbSet<InboxMessage> InboxMessages => Set<InboxMessage>();
+    public DbSet<Counterparty> Counterparties => Set<Counterparty>();
+    public DbSet<SyncOutboxMessage> OutboxMessages => Set<SyncOutboxMessage>();
+    public DbSet<SyncWatermark> SyncWatermarks => Set<SyncWatermark>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.HasDefaultSchema("catalog_sync");
+
+        modelBuilder.Entity<SyncRun>(entity =>
+        {
+            entity.ToTable("sync_runs");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Status).HasMaxLength(32).IsRequired();
+            entity.Property(item => item.RequestedMode).HasMaxLength(16).IsRequired();
+            entity.Property(item => item.ExecutionMode).HasMaxLength(16).IsRequired();
+            entity.Property(item => item.ErrorCode).HasMaxLength(64);
+            entity.Property(item => item.ErrorMessage).HasMaxLength(512);
+            entity.HasIndex(item => item.MessageId).IsUnique();
+            entity.HasIndex(item => new { item.AccountId, item.Status });
+            entity.HasIndex(item => new { item.AccountId, item.CreatedAt });
+            entity.HasAlternateKey(item => new { item.Id, item.AccountId });
+        });
+
+        modelBuilder.Entity<SyncWatermark>(entity =>
+        {
+            entity.ToTable("sync_watermarks");
+            entity.HasKey(item => item.AccountId);
+        });
+
+        modelBuilder.Entity<InboxMessage>(entity =>
+        {
+            entity.ToTable("inbox_messages");
+            entity.HasKey(item => new { item.MessageId, item.ConsumerName });
+            entity.Property(item => item.ConsumerName).HasMaxLength(128);
+        });
+
+        modelBuilder.Entity<Counterparty>(entity =>
+        {
+            entity.ToTable("counterparties");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Name).HasMaxLength(1024);
+            entity.Property(item => item.Phone).HasMaxLength(255);
+            entity.Property(item => item.Email).HasMaxLength(320);
+            entity.Property(item => item.Inn).HasMaxLength(32);
+            entity.Property(item => item.Kpp).HasMaxLength(32);
+            entity.Property(item => item.NormalizedName).HasMaxLength(1024);
+            entity.Property(item => item.NormalizedPhone).HasMaxLength(64);
+            entity.Property(item => item.NormalizedEmail).HasMaxLength(320);
+            entity.Property(item => item.NormalizedInn).HasMaxLength(32);
+            entity.Property(item => item.NormalizedKpp).HasMaxLength(32);
+            entity.Property(item => item.RawJson).HasColumnType("jsonb");
+            entity.HasIndex(item => new { item.AccountId, item.Id }).IsUnique();
+            entity.HasIndex(item => new { item.AccountId, item.NormalizedName });
+            entity.HasIndex(item => new { item.AccountId, item.NormalizedPhone });
+            entity.HasIndex(item => new { item.AccountId, item.NormalizedEmail });
+            entity.HasIndex(item => new { item.AccountId, item.NormalizedInn });
+            entity.HasIndex(item => new { item.LastSyncRunId, item.AccountId });
+            entity.HasOne(item => item.LastSyncRun)
+                .WithMany(item => item.Counterparties)
+                .HasForeignKey(item => new { item.LastSyncRunId, item.AccountId })
+                .HasPrincipalKey(item => new { item.Id, item.AccountId })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<SyncOutboxMessage>(entity =>
+        {
+            entity.ToTable("outbox_messages");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Topic).HasMaxLength(255);
+            entity.Property(item => item.MessageKey).HasMaxLength(128);
+            entity.Property(item => item.EventType).HasMaxLength(128);
+            entity.Property(item => item.Payload).HasColumnType("jsonb");
+            entity.Property(item => item.LastError).HasMaxLength(1024);
+            entity.HasIndex(item => new { item.PublishedAt, item.CreatedAt });
+        });
+    }
+}

@@ -7,6 +7,7 @@ x-service-env: &service-env
   ConnectionStrings__Postgres: Host=postgres;Port=${POSTGRES_PORT};Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
   Redis__ConnectionString: redis:${REDIS_PORT}
   Kafka__BootstrapServers: kafka:${KAFKA_INTERNAL_PORT}
+  InternalApi__Key: ${INTERNAL_API_KEY:?Set INTERNAL_API_KEY to a non-empty secret before starting Compose}
 
   Services__GatewayBff__BaseUrl: http://gateway-bff:${SERVICE_INTERNAL_PORT}
   Services__VendorService__BaseUrl: http://vendor-service:${SERVICE_INTERNAL_PORT}
@@ -133,20 +134,16 @@ services:
       <<: *service-env
       ReverseProxy__Clusters__vendor-service-cluster__Destinations__vendor-service__Address: http://vendor-service:${SERVICE_INTERNAL_PORT}/
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
       kafka:
         condition: service_healthy
-      vendor-service:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:${SERVICE_INTERNAL_PORT}/health/ready > /dev/null"]
-      interval: 10s
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:${SERVICE_INTERNAL_PORT}/health/live > /dev/null || exit 1"]
+      interval: 30s
       timeout: 5s
-      retries: 10
-      start_period: 30s
+      retries: 3
+      start_period: 20s
     networks:
       - mscontractor-net
 
@@ -171,14 +168,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:${SERVICE_INTERNAL_PORT}/health/ready > /dev/null"]
-      interval: 10s
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:${SERVICE_INTERNAL_PORT}/health/live > /dev/null || exit 1"]
+      interval: 30s
       timeout: 5s
-      retries: 10
-      start_period: 45s
+      retries: 3
+      start_period: 20s
     networks:
       - mscontractor-net
 
@@ -197,14 +192,14 @@ services:
       <<: *service-env
       MoySklad__JsonApiBaseUrl: https://api.moysklad.ru/api/remap/1.2
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
-      vendor-service:
-        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:${SERVICE_INTERNAL_PORT}/health/live > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     networks:
       - mscontractor-net
 
@@ -221,15 +216,18 @@ services:
       - "${CATALOG_SYNC_SERVICE_PORT}:${SERVICE_INTERNAL_PORT}"
     environment:
       <<: *service-env
+      Kafka__SyncConsumerGroup: catalog-sync-service
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
       kafka:
         condition: service_healthy
-      moysklad-egress-service:
-        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:${SERVICE_INTERNAL_PORT}/health/live > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     networks:
       - mscontractor-net
 
@@ -253,8 +251,12 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
-      moysklad-egress-service:
-        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:${SERVICE_INTERNAL_PORT}/health/live > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     networks:
       - mscontractor-net
 
@@ -276,6 +278,12 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:${SERVICE_INTERNAL_PORT}/health/live > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     networks:
       - mscontractor-net
 
@@ -297,6 +305,12 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:${SERVICE_INTERNAL_PORT}/health/live > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     networks:
       - mscontractor-net
 

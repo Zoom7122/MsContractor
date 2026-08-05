@@ -10,4 +10,8 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\MsContractor.Contracts\MsContractor.Contracts.csproj" />
+  </ItemGroup>
+
 </Project>

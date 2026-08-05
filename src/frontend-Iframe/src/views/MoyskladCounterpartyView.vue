@@ -1,15 +1,13 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-
-import { getCounterpartyPage, runCounterpartyFullSync } from '../api/counterparties'
 
 const route = useRoute()
 const router = useRouter()
 
 const loading = ref(false)
 const syncing = ref(false)
-const error = ref(null)
+const error = ref('Раздел временно недоступен')
 const syncMessage = ref(null)
 const counterparty = ref(createEmptyCounterpartyPage())
 
@@ -22,57 +20,9 @@ const backQuery = computed(() => {
   return query
 })
 
-watch(
-  () => counterpartyId.value,
-  () => {
-    void loadCounterpartyPage()
-  },
-  { immediate: true }
-)
-
-onMounted(() => {
+function handleFullSync() {
   syncMessage.value = null
-})
-
-async function loadCounterpartyPage() {
-  if (!counterpartyId.value) {
-    error.value = 'Не указан идентификатор контрагента'
-    counterparty.value = createEmptyCounterpartyPage()
-    return
-  }
-
-  loading.value = true
-  error.value = null
-
-  try {
-    const response = await getCounterpartyPage(counterpartyId.value)
-    counterparty.value = normalizeCounterpartyPage(response)
-  } catch (requestError) {
-    error.value = requestError.message || 'Не удалось загрузить карточку контрагента'
-    counterparty.value = createEmptyCounterpartyPage()
-  } finally {
-    loading.value = false
-  }
-}
-
-async function handleFullSync() {
-  if (!counterpartyId.value || syncing.value) {
-    return
-  }
-
-  syncing.value = true
-  error.value = null
-  syncMessage.value = null
-
-  try {
-    const response = await runCounterpartyFullSync(counterpartyId.value)
-    syncMessage.value = response?.message || 'Полная выгрузка обновлена'
-    counterparty.value = normalizeCounterpartyPage(response)
-  } catch (requestError) {
-    error.value = requestError.message || 'Не удалось обновить полную выгрузку'
-  } finally {
-    syncing.value = false
-  }
+  error.value = 'Раздел временно недоступен'
 }
 
 function handleBack() {
@@ -175,7 +125,7 @@ function archiveLabel(archived) {
         <button class="counterparty-page__button counterparty-page__button--ghost" type="button" @click="handleBack">
           Назад
         </button>
-        <button class="counterparty-page__button counterparty-page__button--primary" type="button" :disabled="syncing" @click="handleFullSync">
+        <button class="counterparty-page__button counterparty-page__button--primary" type="button" disabled>
           {{ syncing ? 'Обновляем...' : 'Обновить полную выгрузку' }}
         </button>
       </div>

@@ -16,6 +16,9 @@
         }
       },
       "MsContractor.BuildingBlocks/1.0.0": {
+        "dependencies": {
+          "MsContractor.Contracts": "1.0.0"
+        },
         "runtime": {
           "MsContractor.BuildingBlocks.dll": {
             "assemblyVersion": "1.0.0.0",

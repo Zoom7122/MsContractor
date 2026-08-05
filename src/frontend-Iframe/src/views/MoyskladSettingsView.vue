@@ -1,18 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
-
-import {
-  getCounterpartyAttributes,
-  saveCounterpartyAttributeMergeSettings
-} from '../api/counterparties'
-import {
-  getDuplicateExclusions,
-  getDuplicateSearchOptions,
-  getFullSyncTimer,
-  saveDuplicateExclusions,
-  saveDuplicateSearchOptions,
-  saveFullSyncTimer
-} from '../api/settings'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
   settingsData: {
@@ -46,7 +33,7 @@ const exclusionFieldOptions = [
 const initialSettings = ref(cloneSettings(defaultSettings))
 const form = ref(cloneSettings(defaultSettings))
 const loading = ref(false)
-const loadError = ref(null)
+const loadError = ref(props.settingsData ? null : 'Раздел временно недоступен')
 const saving = ref(false)
 const message = ref(null)
 const saveError = ref(null)
@@ -76,41 +63,6 @@ watch(
   },
   { immediate: true }
 )
-
-onMounted(() => {
-  if (props.settingsData) {
-    return
-  }
-
-  loadSettings()
-})
-
-async function loadSettings() {
-  loading.value = true
-  loadError.value = null
-
-  try {
-    const [duplicateExclusions, duplicateSearchOptions, fullSyncTimer, mergeAttributes] = await Promise.all([
-      getDuplicateExclusions(),
-      getDuplicateSearchOptions(),
-      getFullSyncTimer(),
-      getCounterpartyAttributes()
-    ])
-
-    const normalized = normalizeSettings({
-      duplicateExclusions,
-      duplicateSearchOptions,
-      fullSyncTimer,
-      mergeAttributes
-    })
-    initialSettings.value = cloneSettings(normalized)
-    form.value = cloneSettings(normalized)
-  } catch (error) {
-    loadError.value = error.message || 'Не удалось загрузить настройки'
-  } finally {
-    loading.value = false
-  }
-}
 
 function normalizeSettings(source) {
   const duplicateExclusions = Array.isArray(source?.duplicateExclusions)
@@ -234,41 +186,9 @@ function cancelChanges() {
   saveError.value = null
 }
 
-async function saveSettings() {
-  if (saving.value) {
-    return
-  }
-
-  saving.value = true
+function saveSettings() {
   message.value = null
-  saveError.value = null
-
-  try {
-    if (!props.settingsData) {
-      await Promise.all([
-        saveDuplicateExclusions(form.value.duplicateExclusions),
-        saveDuplicateSearchOptions({
-          ...form.value.duplicateSearchOptions,
-          groupLimit: form.value.searchLimits.groupLimit,
-          itemLimit: form.value.searchLimits.itemLimit
-        }),
-        saveFullSyncTimer(form.value.fullSyncTimer),
-        saveCounterpartyAttributeMergeSettings(
-          form.value.mergeAttributes.map((item) => ({
-            attributeId: item.attributeId,
-            enabled: item.enabled
-          }))
-        )
-      ])
-    }
-
-    initialSettings.value = cloneSettings(form.value)
-    message.value = 'Настройки сохранены'
-  } catch (error) {
-    saveError.value = error.message || 'Не удалось сохранить настройки'
-  } finally {
-    saving.value = false
-  }
+  saveError.value = 'Раздел временно недоступен'
 }
 </script>
 
@@ -431,7 +351,7 @@ async function saveSettings() {
           Отменить изменения
         </button>
 
-        <button class="settings-button settings-button--primary" type="button" :disabled="saving" @click="saveSettings">
+        <button class="settings-button settings-button--primary" type="button" disabled>
           Сохранить настройки
         </button>
       </div>

@@ -25,6 +25,12 @@ public sealed class VendorRequestCorrelationMiddleware(
             return Task.CompletedTask;
         });
 
+        if (context.Request.Path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase))
+        {
+            await next(context);
+            return;
+        }
+
         using (logger.BeginScope(new Dictionary<string, object?>
         {
             ["correlation_id"] = correlationId
@@ -47,6 +53,26 @@ public sealed class VendorRequestCorrelationMiddleware(
             }
             finally
             {
+                if (context.Request.Path.StartsWithSegments(
+                        "/api/moysklad/session",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    var setCookieHeaders = context.Response.Headers.SetCookie;
+                    var setCookiePresent = setCookieHeaders.Count > 0;
+                    logger.LogInformation(
+                        "Gateway session response cookie forwarding: method={Method}, status_code={StatusCode}, set_cookie_present={SetCookiePresent}, set_cookie_count={SetCookieCount}, secure={Secure}, http_only={HttpOnly}, same_site_none={SameSiteNone}",
+                        context.Request.Method,
+                        context.Response.StatusCode,
+                        setCookiePresent,
+                        setCookieHeaders.Count,
+                        setCookiePresent && setCookieHeaders.Any(value =>
+                            value?.Contains("Secure", StringComparison.OrdinalIgnoreCase) == true),
+                        setCookiePresent && setCookieHeaders.Any(value =>
+                            value?.Contains("HttpOnly", StringComparison.OrdinalIgnoreCase) == true),
+                        setCookiePresent && setCookieHeaders.Any(value =>
+                            value?.Contains("SameSite=None", StringComparison.OrdinalIgnoreCase) == true));
+                }
+
                 logger.LogInformation(
                     "Gateway request completed at {CompletedAtUtc}: {Method} {Path} returned {StatusCode} in {DurationMs} ms; proxiedToVendorService={ProxiedToVendorService}; correlation {CorrelationId}",
                     DateTimeOffset.UtcNow,

@@ -12,7 +12,8 @@ public sealed class MoyskladSessionController(
     MoyskladSessionService service,
     IOptions<VendorOptions> options,
     IWebHostEnvironment environment,
-    TimeProvider timeProvider) : ControllerBase
+    TimeProvider timeProvider,
+    ILogger<MoyskladSessionController> logger) : ControllerBase
 {
     [HttpPost]
     [ProducesResponseType<MoyskladSessionResponse>(StatusCodes.Status200OK)]
@@ -30,8 +31,26 @@ public sealed class MoyskladSessionController(
         try
         {
             Request.Cookies.TryGetValue(options.Value.SessionCookieName, out var priorToken);
+            logger.LogInformation(
+                "Iframe session creation started: app_id={AppId}, app_uid={AppUid}, locale={UserLocale}, prior_cookie_present={PriorCookiePresent}, external_https={ExternalHttps}",
+                request.AppId,
+                request.AppUid,
+                request.UserLocale,
+                !string.IsNullOrWhiteSpace(priorToken),
+                IsExternalHttps());
+
             var created = await service.CreateAsync(request, priorToken, cancellationToken);
-            AppendSessionCookie(created.Token);
+            logger.LogInformation(
+                "Iframe session stored: account_id={AccountId}, employee_id={EmployeeId}, prior_session_replaced={PriorSessionReplaced}",
+                created.Response.AccountId,
+                created.Response.EmployeeId,
+                !string.IsNullOrWhiteSpace(priorToken));
+
+            AppendSessionCookie(
+                created.Token,
+                "created",
+                created.Response.AccountId,
+                created.Response.EmployeeId);
             return Ok(created.Response);
         }
         catch (VendorValidationException exception)
@@ -65,7 +84,7 @@ public sealed class MoyskladSessionController(
             return Error(StatusCodes.Status401Unauthorized, "SESSION_UNAUTHORIZED", "Session is missing or expired.");
         }
 
-        AppendSessionCookie(token!);
+        AppendSessionCookie(token!, "refreshed", session.AccountId, session.EmployeeId);
         return Ok(session);
     }
 
@@ -76,29 +95,64 @@ public sealed class MoyskladSessionController(
         Request.Cookies.TryGetValue(options.Value.SessionCookieName, out var token);
         await service.LogoutAsync(token, cancellationToken);
         DeleteSessionCookie();
+        logger.LogInformation(
+            "Iframe session cookie cleared: cookie_name={CookieName}, cookie_was_present={CookieWasPresent}",
+            options.Value.SessionCookieName,
+            !string.IsNullOrWhiteSpace(token));
         return NoContent();
     }
 
-    private void AppendSessionCookie(string token)
+    private void AppendSessionCookie(
+        string token,
+        string operation,
+        Guid accountId,
+        Guid employeeId)
     {
         var cookieOptions = CreateCookieOptions();
         cookieOptions.MaxAge = options.Value.SessionLifetime;
         cookieOptions.Expires = timeProvider.GetUtcNow().Add(options.Value.SessionLifetime);
         Response.Cookies.Append(options.Value.SessionCookieName, token, cookieOptions);
+        logger.LogInformation(
+            "Iframe session cookie appended to response: operation={Operation}, account_id={AccountId}, employee_id={EmployeeId}, cookie_name={CookieName}, set_cookie_present={SetCookiePresent}, http_only={HttpOnly}, secure={Secure}, same_site={SameSite}, path={Path}, max_age_seconds={MaxAgeSeconds}",
+            operation,
+            accountId,
+            employeeId,
+            options.Value.SessionCookieName,
+            Response.Headers.SetCookie.Count > 0,
+            cookieOptions.HttpOnly,
+            cookieOptions.Secure,
+            cookieOptions.SameSite,
+            cookieOptions.Path,
+            (long)options.Value.SessionLifetime.TotalSeconds);
     }
 
     private void DeleteSessionCookie() =>
         Response.Cookies.Delete(options.Value.SessionCookieName, CreateCookieOptions());
 
-    private CookieOptions CreateCookieOptions() =>
-        new()
+    private CookieOptions CreateCookieOptions()
+    {
+        var secure = IsExternalHttps();
+        return new CookieOptions
         {
             HttpOnly = true,
-            Secure = !environment.IsDevelopment(),
-            SameSite = environment.IsDevelopment() ? SameSiteMode.Lax : SameSiteMode.None,
+            Secure = true,
+            SameSite =SameSiteMode.None,
             Path = "/",
             IsEssential = true
         };
+    }
+
+    private bool IsExternalHttps()
+    {
+        if (Request.IsHttps)
+            return true;
+
+        var forwardedProtocols = Request.Headers["X-Forwarded-Proto"]
+            .ToString()
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return forwardedProtocols.Any(protocol =>
+            string.Equals(protocol, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase));
+    }
 
     private ObjectResult Error(int statusCode, string code, string message) =>
         StatusCode(statusCode, new VendorErrorResponse(code, message));

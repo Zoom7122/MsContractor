@@ -1,11 +1,30 @@
 {
   "version": 3,
   "targets": {
-    "net10.0": {}
+    "net10.0": {
+      "MsContractor.Contracts/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v10.0",
+        "compile": {
+          "bin/placeholder/MsContractor.Contracts.dll": {}
+        },
+        "runtime": {
+          "bin/placeholder/MsContractor.Contracts.dll": {}
+        }
+      }
+    }
   },
-  "libraries": {},
+  "libraries": {
+    "MsContractor.Contracts/1.0.0": {
+      "type": "project",
+      "path": "../MsContractor.Contracts/MsContractor.Contracts.csproj",
+      "msbuildProject": "../MsContractor.Contracts/MsContractor.Contracts.csproj"
+    }
+  },
   "projectFileDependencyGroups": {
-    "net10.0": []
+    "net10.0": [
+      "MsContractor.Contracts >= 1.0.0"
+    ]
   },
   "packageFolders": {
     "/home/vlad/.nuget/packages/": {}
@@ -32,7 +51,11 @@
       "frameworks": {
         "net10.0": {
           "targetAlias": "net10.0",
-          "projectReferences": {}
+          "projectReferences": {
+            "/home/vlad/Рабочий стол/MS_service/src/Shared/MsContractor.Contracts/MsContractor.Contracts.csproj": {
+              "projectPath": "/home/vlad/Рабочий стол/MS_service/src/Shared/MsContractor.Contracts/MsContractor.Contracts.csproj"
+            }
+          }
         }
       },
       "warningProperties": {

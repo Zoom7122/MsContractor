@@ -1,26 +1,17 @@
 {
   "version": 2,
-  "dgSpecHash": "XDVdAnQE79o=",
+  "dgSpecHash": "U1heRj6x2JM=",
   "success": true,
   "projectFilePath": "/home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/MsContractor.Gateway.Bff.csproj",
   "expectedPackageFiles": [
+    "/home/vlad/.nuget/packages/confluent.kafka/2.15.0/confluent.kafka.2.15.0.nupkg.sha512",
+    "/home/vlad/.nuget/packages/librdkafka.redist/2.15.0/librdkafka.redist.2.15.0.nupkg.sha512",
     "/home/vlad/.nuget/packages/microsoft.aspnetcore.openapi/10.0.9/microsoft.aspnetcore.openapi.10.0.9.nupkg.sha512",
-    "/home/vlad/.nuget/packages/microsoft.openapi/2.0.0/microsoft.openapi.2.0.0.nupkg.sha512",
-    "/home/vlad/.nuget/packages/system.io.hashing/8.0.0/system.io.hashing.8.0.0.nupkg.sha512",
+    "/home/vlad/.nuget/packages/microsoft.openapi/2.7.5/microsoft.openapi.2.7.5.nupkg.sha512",
+    "/home/vlad/.nuget/packages/pipelines.sockets.unofficial/2.2.8/pipelines.sockets.unofficial.2.2.8.nupkg.sha512",
+    "/home/vlad/.nuget/packages/stackexchange.redis/2.10.1/stackexchange.redis.2.10.1.nupkg.sha512",
+    "/home/vlad/.nuget/packages/system.io.hashing/9.0.10/system.io.hashing.9.0.10.nupkg.sha512",
     "/home/vlad/.nuget/packages/yarp.reverseproxy/2.3.0/yarp.reverseproxy.2.3.0.nupkg.sha512"
   ],
-  "logs": [
-    {
-      "code": "NU1903",
-      "level": "Warning",
-      "message": "Package 'Microsoft.OpenApi' 2.0.0 has a known high severity vulnerability, https://github.com/advisories/GHSA-v5pm-xwqc-g5wc",
-      "projectPath": "/home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/MsContractor.Gateway.Bff.csproj",
-      "warningLevel": 1,
-      "filePath": "/home/vlad/Рабочий стол/MS_service/src/Services/Gateway.Bff/MsContractor.Gateway.Bff.csproj",
-      "libraryId": "Microsoft.OpenApi",
-      "targetGraphs": [
-        "net10.0"
-      ]
-    }
-  ]
+  "logs": []
 }

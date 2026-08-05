@@ -1,8 +1,6 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-
-import { getDuplicateGroups } from '../api/duplicates'
 
 const props = defineProps({
   duplicatesData: {
@@ -26,7 +24,7 @@ const route = useRoute()
 const router = useRouter()
 const filters = ref(readFiltersFromRoute(route.query))
 const loading = ref(false)
-const error = ref(null)
+const error = ref(props.duplicatesData ? null : 'Раздел временно недоступен')
 const mergeMessage = ref(readMergeMessageFromRoute(route.query))
 const groupsTruncated = ref(false)
 const groups = ref([])
@@ -66,15 +64,7 @@ watch(
   { immediate: true }
 )
 
-onMounted(() => {
-  if (props.duplicatesData) {
-    return
-  }
-
-  loadDuplicateGroups()
-})
-
-async function loadDuplicateGroups() {
+function loadDuplicateGroups() {
   if (!preserveMergeMessageOnNextLoad) {
     mergeMessage.value = null
   }
@@ -85,17 +75,7 @@ async function loadDuplicateGroups() {
     return
   }
 
-  loading.value = true
-  error.value = null
-
-  try {
-    const response = await getDuplicateGroups(buildDuplicateQuery())
-    applyDuplicateResponse(response)
-  } catch (requestError) {
-    error.value = requestError.message || 'Не удалось загрузить группы дублей'
-  } finally {
-    loading.value = false
-  }
+  error.value = 'Раздел временно недоступен'
 }
 
 function applyDuplicateResponse(response) {
@@ -331,12 +311,11 @@ function cloneValue(value) {
           class="duplicates-input"
           type="search"
           placeholder="Поиск по группе или контрагенту"
-          @keydown.enter.prevent="loadDuplicateGroups"
         />
       </label>
 
       <div class="duplicates-filters__actions">
-        <button class="duplicates-button duplicates-button--primary" type="button" :disabled="loading" @click="loadDuplicateGroups">
+        <button class="duplicates-button duplicates-button--primary" type="button" disabled>
           Найти дубли
         </button>
         <button class="duplicates-button duplicates-button--outline" type="button" :disabled="loading" @click="resetFilters">
@@ -483,8 +462,7 @@ function cloneValue(value) {
           <button
             class="duplicates-button duplicates-button--primary"
             type="button"
-            :disabled="!canGoToMerge"
-            @click="handleGoToMerge"
+            disabled
           >
             Перейти к объединению
           </button>

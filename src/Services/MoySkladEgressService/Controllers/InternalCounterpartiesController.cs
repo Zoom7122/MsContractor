@@ -72,6 +72,77 @@ public sealed class InternalCounterpartiesController(
         }
     }
 
+    [HttpPut("{counterpartyId:guid}")]
+    public async Task<IActionResult> UpdateAsync(
+        Guid accountId,
+        Guid counterpartyId,
+        [FromBody] InternalCounterpartyUpdateRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!InternalApiKeyAuthentication.IsAuthorized(Request, configuration))
+            return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
+        if (counterpartyId == Guid.Empty || string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(new InternalErrorResponse("INVALID_COUNTERPARTY_UPDATE", "Counterparty update is invalid."));
+        if (!TryOperationContext(out var mergeJobId, out var operationId, out var userId))
+            return BadRequest(new InternalErrorResponse("INVALID_INTERNAL_CONTEXT", "Merge job, operation, and user headers are required."));
+
+        return await ExecutePutAsync(
+            () => gateway.UpdateAsync(
+                accountId, counterpartyId, request, mergeJobId, operationId, userId,
+                CorrelationId(), cancellationToken),
+            cancellationToken);
+    }
+
+    [HttpPut("{counterpartyId:guid}/archive")]
+    public async Task<IActionResult> ArchiveAsync(
+        Guid accountId,
+        Guid counterpartyId,
+        CancellationToken cancellationToken)
+    {
+        if (!InternalApiKeyAuthentication.IsAuthorized(Request, configuration))
+            return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
+        if (counterpartyId == Guid.Empty)
+            return BadRequest(new InternalErrorResponse("INVALID_COUNTERPARTY_ID", "Counterparty id is invalid."));
+        if (!TryOperationContext(out var mergeJobId, out var operationId, out var userId))
+            return BadRequest(new InternalErrorResponse("INVALID_INTERNAL_CONTEXT", "Merge job, operation, and user headers are required."));
+
+        return await ExecutePutAsync(
+            () => gateway.ArchiveAsync(
+                accountId, counterpartyId, mergeJobId, operationId, userId,
+                CorrelationId(), cancellationToken),
+            cancellationToken);
+    }
+
+    private async Task<IActionResult> ExecutePutAsync(
+        Func<Task<MoySkladRawResponse>> action,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await action();
+            Response.Headers[InternalApiHeaders.CorrelationId] = CorrelationId();
+            return Content(result.Json, "application/json", Encoding.UTF8);
+        }
+        catch (EgressException exception)
+        {
+            return StatusCode(exception.StatusCode, new InternalErrorResponse(exception.Code, exception.SafeMessage));
+        }
+    }
+
+    private bool TryOperationContext(out Guid mergeJobId, out Guid operationId, out Guid userId)
+    {
+        var hasMergeJob = TryHeaderGuid(InternalApiHeaders.MergeJobId, out mergeJobId);
+        var hasOperation = TryHeaderGuid(InternalApiHeaders.OperationId, out operationId);
+        var hasUser = TryHeaderGuid(InternalApiHeaders.UserId, out userId);
+        return hasMergeJob && hasOperation && hasUser;
+    }
+
+    private string CorrelationId()
+    {
+        var value = Request.Headers[InternalApiHeaders.CorrelationId].ToString();
+        return string.IsNullOrWhiteSpace(value) ? Guid.NewGuid().ToString("D") : value;
+    }
+
     private bool TryHeaderGuid(string name, out Guid value) =>
         Guid.TryParse(Request.Headers[name].ToString(), out value) && value != Guid.Empty;
 }

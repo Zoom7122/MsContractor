@@ -131,6 +131,52 @@ namespace MsContractor.CatalogSyncService.Repo.Migrations
                     b.ToTable("inbox_messages", "catalog_sync");
                 });
 
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.MergeJob", b =>
+                {
+                    b.Property<Guid>("Id").ValueGeneratedOnAdd().HasColumnType("uuid");
+                    b.Property<Guid>("AccountId").HasColumnType("uuid");
+                    b.Property<DateTimeOffset?>("CompletedAt").HasColumnType("timestamp with time zone");
+                    b.Property<Guid>("CorrelationId").HasColumnType("uuid");
+                    b.Property<DateTimeOffset>("CreatedAt").HasColumnType("timestamp with time zone");
+                    b.Property<Guid>("MainCounterpartyId").HasColumnType("uuid");
+                    b.Property<Guid>("MessageId").HasColumnType("uuid");
+                    b.Property<string>("Payload").IsRequired().HasColumnType("jsonb");
+                    b.Property<int>("PayloadVersion").HasColumnType("integer");
+                    b.Property<Guid>("RequestedByUserId").HasColumnType("uuid");
+                    b.Property<DateTimeOffset?>("StartedAt").HasColumnType("timestamp with time zone");
+                    b.Property<string>("Status").IsRequired().HasMaxLength(32).HasColumnType("character varying(32)");
+                    b.Property<DateTimeOffset>("UpdatedAt").HasColumnType("timestamp with time zone");
+                    b.HasKey("Id");
+                    b.HasAlternateKey("Id", "AccountId");
+                    b.HasIndex("MessageId").IsUnique();
+                    b.HasIndex("AccountId", "CreatedAt");
+                    b.HasIndex("AccountId", "Status");
+                    b.ToTable("merge_jobs", "catalog_sync");
+                });
+
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.MergeOperation", b =>
+                {
+                    b.Property<Guid>("Id").ValueGeneratedOnAdd().HasColumnType("uuid");
+                    b.Property<Guid>("AccountId").HasColumnType("uuid");
+                    b.Property<int>("AttemptCount").HasColumnType("integer");
+                    b.Property<DateTimeOffset?>("CompletedAt").HasColumnType("timestamp with time zone");
+                    b.Property<Guid>("CounterpartyId").HasColumnType("uuid");
+                    b.Property<DateTimeOffset>("CreatedAt").HasColumnType("timestamp with time zone");
+                    b.Property<string>("ErrorCode").HasMaxLength(64).HasColumnType("character varying(64)");
+                    b.Property<string>("ErrorMessage").HasMaxLength(512).HasColumnType("character varying(512)");
+                    b.Property<Guid>("MergeJobId").HasColumnType("uuid");
+                    b.Property<string>("OperationType").IsRequired().HasMaxLength(64).HasColumnType("character varying(64)");
+                    b.Property<int>("Sequence").HasColumnType("integer");
+                    b.Property<DateTimeOffset?>("StartedAt").HasColumnType("timestamp with time zone");
+                    b.Property<string>("Status").IsRequired().HasMaxLength(32).HasColumnType("character varying(32)");
+                    b.Property<DateTimeOffset>("UpdatedAt").HasColumnType("timestamp with time zone");
+                    b.HasKey("Id");
+                    b.HasIndex("MergeJobId", "AccountId");
+                    b.HasIndex("MergeJobId", "OperationType", "CounterpartyId").IsUnique();
+                    b.HasIndex("MergeJobId", "Sequence").IsUnique();
+                    b.ToTable("merge_operations", "catalog_sync");
+                });
+
             modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.SyncOutboxMessage", b =>
                 {
                     b.Property<Guid>("Id")
@@ -259,6 +305,16 @@ namespace MsContractor.CatalogSyncService.Repo.Migrations
                         .HasForeignKey("LastSyncRunId", "AccountId")
                         .HasPrincipalKey("Id", "AccountId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.MergeOperation", b =>
+                {
+                    b.HasOne("MsContractor.CatalogSyncService.Repo.MergeJob", "MergeJob")
+                        .WithMany("Operations")
+                        .HasForeignKey("MergeJobId", "AccountId")
+                        .HasPrincipalKey("Id", "AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

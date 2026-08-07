@@ -3,6 +3,8 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Net.Http.Json;
+using MsContractor.Contracts.Internal;
 
 namespace MsContractor.MoySkladEgressService.Services;
 
@@ -25,6 +27,15 @@ public interface IMoySkladCounterpartyGateway
         Guid userId,
         string correlationId,
         CancellationToken cancellationToken);
+
+    Task<MoySkladRawResponse> UpdateAsync(
+        Guid accountId, Guid counterpartyId, InternalCounterpartyUpdateRequest update,
+        Guid mergeJobId, Guid operationId, Guid userId, string correlationId,
+        CancellationToken cancellationToken);
+
+    Task<MoySkladRawResponse> ArchiveAsync(
+        Guid accountId, Guid counterpartyId, Guid mergeJobId, Guid operationId,
+        Guid userId, string correlationId, CancellationToken cancellationToken);
 }
 
 public sealed class MoySkladCounterpartyGateway(
@@ -149,6 +160,89 @@ public sealed class MoySkladCounterpartyGateway(
         }
     }
 
+    public Task<MoySkladRawResponse> UpdateAsync(
+        Guid accountId,
+        Guid counterpartyId,
+        InternalCounterpartyUpdateRequest update,
+        Guid mergeJobId,
+        Guid operationId,
+        Guid userId,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        var payload = new Dictionary<string, object?> { ["name"] = update.Name };
+        if (update.Email is not null) payload["email"] = update.Email;
+        if (update.Phone is not null) payload["phone"] = update.Phone;
+        if (update.Description is not null) payload["description"] = update.Description;
+        return PutAsync(accountId, counterpartyId, payload, mergeJobId, operationId, userId, correlationId, cancellationToken);
+    }
+
+    public Task<MoySkladRawResponse> ArchiveAsync(
+        Guid accountId,
+        Guid counterpartyId,
+        Guid mergeJobId,
+        Guid operationId,
+        Guid userId,
+        string correlationId,
+        CancellationToken cancellationToken) =>
+        PutAsync(
+            accountId, counterpartyId,
+            new Dictionary<string, object?> { ["archived"] = true },
+            mergeJobId, operationId, userId, correlationId, cancellationToken);
+
+    private async Task<MoySkladRawResponse> PutAsync(
+        Guid accountId,
+        Guid counterpartyId,
+        IReadOnlyDictionary<string, object?> payload,
+        Guid mergeJobId,
+        Guid operationId,
+        Guid userId,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        var accessToken = await tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
+        await rateLimiter.WaitAsync(accountId, userId, cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"entity/counterparty/{counterpartyId:D}")
+        {
+            Content = JsonContent.Create(payload)
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        request.Headers.TryAddWithoutValidation("Accept", "application/json;charset=utf-8");
+        logger.LogInformation(
+            "Sending MoySklad counterparty mutation: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, counterparty_id={CounterpartyId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}",
+            accountId, mergeJobId, operationId, counterpartyId, userId, correlationId);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new EgressException(503, "MOYSKLAD_UNAVAILABLE", "MoySklad request timed out.");
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new EgressException(503, "MOYSKLAD_UNAVAILABLE", "MoySklad is unavailable.", exception);
+        }
+
+        using (response)
+        {
+            await rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            logger.LogInformation(
+                "MoySklad counterparty mutation completed: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, counterparty_id={CounterpartyId}, status={StatusCode}, correlation_id={CorrelationId}",
+                accountId, mergeJobId, operationId, counterpartyId, (int)response.StatusCode, correlationId);
+            if (!response.IsSuccessStatusCode)
+                ThrowForMutationStatus(response.StatusCode);
+            if (string.IsNullOrWhiteSpace(json))
+                throw new EgressException(502, "MOYSKLAD_INVALID_RESPONSE", "MoySklad returned an empty response.");
+            return new MoySkladRawResponse(
+                json, (int)response.StatusCode,
+                response.Content.Headers.ContentType?.MediaType, SafeHeaders(response));
+        }
+    }
+
     private static string FormatMoySkladTimestamp(DateTimeOffset value) =>
         value.ToOffset(MoscowOffset).ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
 
@@ -204,6 +298,20 @@ public sealed class MoySkladCounterpartyGateway(
                 new EgressException(429, "MOYSKLAD_RATE_LIMITED", "MoySklad rate limit exceeded."),
             _ when (int)statusCode >= 500 =>
                 new EgressException(503, "MOYSKLAD_UNAVAILABLE", "MoySklad is unavailable."),
+            _ => new EgressException(502, "MOYSKLAD_INVALID_RESPONSE", "MoySklad returned an unexpected status.")
+        };
+    }
+
+    private static void ThrowForMutationStatus(HttpStatusCode statusCode)
+    {
+        throw statusCode switch
+        {
+            HttpStatusCode.BadRequest => new EgressException(400, "MOYSKLAD_VALIDATION_FAILED", "MoySklad rejected the counterparty update."),
+            HttpStatusCode.Unauthorized => new EgressException(401, "MOYSKLAD_UNAUTHORIZED", "MoySklad rejected the access token."),
+            HttpStatusCode.Forbidden => new EgressException(403, "MOYSKLAD_FORBIDDEN", "MoySklad denied access."),
+            HttpStatusCode.NotFound => new EgressException(404, "MOYSKLAD_NOT_FOUND", "MoySklad counterparty was not found."),
+            HttpStatusCode.TooManyRequests => new EgressException(429, "MOYSKLAD_RATE_LIMITED", "MoySklad rate limit exceeded."),
+            _ when (int)statusCode >= 500 => new EgressException(503, "MOYSKLAD_UNAVAILABLE", "MoySklad is unavailable."),
             _ => new EgressException(502, "MOYSKLAD_INVALID_RESPONSE", "MoySklad returned an unexpected status.")
         };
     }

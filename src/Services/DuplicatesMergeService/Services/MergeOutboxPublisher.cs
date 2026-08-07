@@ -1,25 +1,23 @@
 using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
 using MsContractor.CatalogSyncService.Repo;
-using MsContractor.Contracts.Sync;
+using MsContractor.Contracts.Merge;
 
-namespace MsContractor.CatalogSyncService.Services;
+namespace MsContractor.DuplicatesMergeService.Services;
 
-public sealed class SyncOutboxPublisher(
+public sealed class MergeOutboxPublisher(
     IServiceScopeFactory scopeFactory,
     IProducer<string, string> producer,
-    ILogger<SyncOutboxPublisher> logger) : BackgroundService
+    ILogger<MergeOutboxPublisher> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            var publishFailed = false;
             await using var scope = scopeFactory.CreateAsyncScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<CatalogSyncDbContext>();
             var messages = await dbContext.OutboxMessages
-                .Where(item => item.PublishedAt == null &&
-                    (item.EventType == nameof(SyncCompleted) || item.EventType == nameof(SyncFailed)))
+                .Where(item => item.PublishedAt == null && item.EventType == nameof(MergeRequested))
                 .OrderBy(item => item.CreatedAt)
                 .Take(50)
                 .ToListAsync(stoppingToken);
@@ -29,6 +27,7 @@ public sealed class SyncOutboxPublisher(
                 continue;
             }
 
+            var failed = false;
             foreach (var message in messages)
             {
                 try
@@ -39,12 +38,7 @@ public sealed class SyncOutboxPublisher(
                         {
                             Key = message.MessageKey,
                             Value = message.Payload,
-                            Headers =
-                            [
-                                new Header(
-                                    "event-type",
-                                    System.Text.Encoding.UTF8.GetBytes(message.EventType))
-                            ]
+                            Headers = [new Header("event-type", System.Text.Encoding.UTF8.GetBytes(message.EventType))]
                         },
                         stoppingToken);
                     message.PublishedAt = DateTimeOffset.UtcNow;
@@ -52,21 +46,18 @@ public sealed class SyncOutboxPublisher(
                 }
                 catch (ProduceException<string, string> exception)
                 {
-                    publishFailed = true;
+                    failed = true;
                     message.PublishAttempts++;
                     message.LastError = exception.Error.Code.ToString();
                     logger.LogWarning(
-                        "Could not publish sync outbox event {EventId}; attempt {Attempt}.",
-                        message.Id,
-                        message.PublishAttempts);
+                        "Could not publish merge outbox message {MessageId}; attempt {Attempt}.",
+                        message.Id, message.PublishAttempts);
                 }
             }
 
             await dbContext.SaveChangesAsync(stoppingToken);
-            if (publishFailed)
-            {
+            if (failed)
                 await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
-            }
         }
     }
 }

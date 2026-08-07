@@ -331,6 +331,21 @@ services:
     networks:
       - mscontractor-net
 
+  dozzle:
+    image: amir20/dozzle:v10.6.15
+    container_name: mscontractor-dozzle
+    profiles:
+      - dev-tools
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${DOZZLE_PORT:-8089}:8080"
+    environment:
+      DOZZLE_FILTER: label=com.docker.compose.project=mscontractor
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - mscontractor-net
+
 volumes:
   mscontractor_postgres_data:
   mscontractor_redis_data:

@@ -2,11 +2,56 @@ using System.Net;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using MsContractor.MoySkladEgressService.Services;
+using MsContractor.Contracts.Internal;
 
 namespace MsContractor.Sync.Tests;
 
 public sealed class EgressGatewayTests
 {
+    [Fact]
+    public async Task UpdateAsync_SendsOnlyExplicitNonNullFields()
+    {
+        string? body = null;
+        HttpMethod? method = null;
+        var counterpartyId = Guid.NewGuid();
+        var gateway = CreateGateway(request =>
+        {
+            method = request.Method;
+            body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return Response(HttpStatusCode.OK, $$"""{"id":"{{counterpartyId}}","name":"Updated","archived":false}""");
+        });
+
+        await gateway.UpdateAsync(
+            Guid.NewGuid(), counterpartyId,
+            new InternalCounterpartyUpdateRequest("Updated", null, "+7999", null),
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation-id", CancellationToken.None);
+
+        Assert.Equal(HttpMethod.Put, method);
+        Assert.Contains("\"name\":\"Updated\"", body);
+        using var payload = System.Text.Json.JsonDocument.Parse(body!);
+        Assert.Equal("+7999", payload.RootElement.GetProperty("phone").GetString());
+        Assert.DoesNotContain("email", body);
+        Assert.DoesNotContain("description", body);
+    }
+
+    [Fact]
+    public async Task ArchiveAsync_AlwaysSendsArchivedTrue()
+    {
+        string? body = null;
+        var counterpartyId = Guid.NewGuid();
+        var gateway = CreateGateway(request =>
+        {
+            body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return Response(HttpStatusCode.OK, $$"""{"id":"{{counterpartyId}}","name":"Duplicate","archived":true}""");
+        });
+
+        await gateway.ArchiveAsync(
+            Guid.NewGuid(), counterpartyId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            "correlation-id", CancellationToken.None);
+
+        Assert.Equal("{\"archived\":true}", body);
+    }
+
     [Theory]
     [InlineData(false, 1, 0, "filter=archived%3Dfalse")]
     [InlineData(true, 1000, 2000, "filter=archived%3Dtrue")]

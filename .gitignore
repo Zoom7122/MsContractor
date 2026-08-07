@@ -1,7 +1,8 @@
 # ==========================================
 # .NET / C#
 # ==========================================
-
+**/bin/
+**/obj/
 bin/
 obj/
 [Bb]uild/
@@ -109,10 +110,6 @@ pnpm-debug.log*
 !.yarn/sdks
 !.yarn/versions
 
-# Frontend env
-src/Frontend/Iframe/.env
-src/Frontend/Iframe/.env.*
-!src/Frontend/Iframe/.env.example
 
 # ==========================================
 # Build output

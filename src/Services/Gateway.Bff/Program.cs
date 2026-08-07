@@ -24,6 +24,11 @@ builder.Services.AddHttpClient<IDuplicatePreviewClient, DuplicatePreviewClient>(
     client.BaseAddress = new Uri(duplicatesBaseUrl.EndsWith('/') ? duplicatesBaseUrl : $"{duplicatesBaseUrl}/");
     client.Timeout = TimeSpan.FromSeconds(15);
 });
+builder.Services.AddHttpClient<IMergeJobsClient, MergeJobsClient>(client =>
+{
+    client.BaseAddress = new Uri(duplicatesBaseUrl.EndsWith('/') ? duplicatesBaseUrl : $"{duplicatesBaseUrl}/");
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
 var catalogSyncBaseUrl = builder.Configuration["Services:CatalogSyncService:BaseUrl"]
     ?? "http://localhost:5013/";
 builder.Services.AddHttpClient<ICatalogSyncClient, CatalogSyncClient>(client =>

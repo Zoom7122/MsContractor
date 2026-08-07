@@ -6,6 +6,7 @@ namespace MsContractor.CatalogSyncService.Services;
 public interface IMoySkladCounterpartyParser
 {
     ParsedCounterpartyCollection Parse(string json);
+    ParsedCounterparty ParseOne(string json);
 }
 
 public sealed class MoySkladCounterpartyParser : IMoySkladCounterpartyParser
@@ -39,5 +40,15 @@ public sealed class MoySkladCounterpartyParser : IMoySkladCounterpartyParser
         }
 
         return new ParsedCounterpartyCollection(meta, rows);
+    }
+
+    public ParsedCounterparty ParseOne(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var value = document.RootElement.Deserialize<MoySkladCounterparty>(JsonOptions)
+            ?? throw new JsonException("MoySklad counterparty is invalid.");
+        if (value.Id == Guid.Empty || string.IsNullOrWhiteSpace(value.Name))
+            throw new JsonException("MoySklad counterparty does not contain required fields.");
+        return new ParsedCounterparty(value, document.RootElement.GetRawText());
     }
 }

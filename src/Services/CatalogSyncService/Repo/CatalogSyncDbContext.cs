@@ -10,6 +10,8 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
     public DbSet<Counterparty> Counterparties => Set<Counterparty>();
     public DbSet<SyncOutboxMessage> OutboxMessages => Set<SyncOutboxMessage>();
     public DbSet<SyncWatermark> SyncWatermarks => Set<SyncWatermark>();
+    public DbSet<MergeJob> MergeJobs => Set<MergeJob>();
+    public DbSet<MergeOperation> MergeOperations => Set<MergeOperation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -81,6 +83,35 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
             entity.Property(item => item.Payload).HasColumnType("jsonb");
             entity.Property(item => item.LastError).HasMaxLength(1024);
             entity.HasIndex(item => new { item.PublishedAt, item.CreatedAt });
+        });
+
+        modelBuilder.Entity<MergeJob>(entity =>
+        {
+            entity.ToTable("merge_jobs");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Status).HasMaxLength(32).IsRequired();
+            entity.Property(item => item.Payload).HasColumnType("jsonb");
+            entity.HasAlternateKey(item => new { item.Id, item.AccountId });
+            entity.HasIndex(item => item.MessageId).IsUnique();
+            entity.HasIndex(item => new { item.AccountId, item.Status });
+            entity.HasIndex(item => new { item.AccountId, item.CreatedAt });
+        });
+
+        modelBuilder.Entity<MergeOperation>(entity =>
+        {
+            entity.ToTable("merge_operations");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.OperationType).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.Status).HasMaxLength(32).IsRequired();
+            entity.Property(item => item.ErrorCode).HasMaxLength(64);
+            entity.Property(item => item.ErrorMessage).HasMaxLength(512);
+            entity.HasIndex(item => new { item.MergeJobId, item.Sequence }).IsUnique();
+            entity.HasIndex(item => new { item.MergeJobId, item.OperationType, item.CounterpartyId }).IsUnique();
+            entity.HasOne(item => item.MergeJob)
+                .WithMany(item => item.Operations)
+                .HasForeignKey(item => new { item.MergeJobId, item.AccountId })
+                .HasPrincipalKey(item => new { item.Id, item.AccountId })
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

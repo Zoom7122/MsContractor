@@ -7,8 +7,16 @@ public static class InternalApiHeaders
     public const string CorrelationId = "X-Correlation-Id";
     public const string SyncRunId = "X-Sync-Run-Id";
     public const string UserId = "X-User-Id";
+    public const string MergeJobId = "X-Merge-Job-Id";
+    public const string OperationId = "X-Merge-Operation-Id";
 }
 
 public sealed record InternalAccessTokenResponse(string AccessToken);
 
 public sealed record InternalErrorResponse(string Code, string Message);
+
+public sealed record InternalCounterpartyUpdateRequest(
+    string Name,
+    string? Email,
+    string? Phone,
+    string? Description);

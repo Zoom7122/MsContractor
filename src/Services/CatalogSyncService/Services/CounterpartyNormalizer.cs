@@ -11,6 +11,8 @@ public interface ICounterpartyNormalizer
         Guid syncRunId,
         ParsedCounterparty source,
         DateTimeOffset now);
+
+    void Apply(Counterparty target, ParsedCounterparty source, DateTimeOffset now);
 }
 
 public sealed partial class CounterpartyNormalizer : ICounterpartyNormalizer
@@ -44,6 +46,26 @@ public sealed partial class CounterpartyNormalizer : ICounterpartyNormalizer
             CreatedAt = now,
             UpdatedAt = now
         };
+    }
+
+    public void Apply(Counterparty target, ParsedCounterparty source, DateTimeOffset now)
+    {
+        var item = source.Value;
+        target.Name = item.Name;
+        target.Phone = item.Phone;
+        target.Email = item.Email;
+        target.Inn = item.Inn;
+        target.Kpp = item.Kpp;
+        target.Description = item.Description;
+        target.Archived = item.Archived;
+        target.NormalizedName = NormalizeName(item.Name);
+        target.NormalizedPhone = NormalizePhone(item.Phone);
+        target.NormalizedEmail = NormalizeEmail(item.Email);
+        target.NormalizedInn = Digits(item.Inn);
+        target.NormalizedKpp = Digits(item.Kpp);
+        target.MoySkladUpdatedAt = item.Updated?.ToUniversalTime();
+        target.RawJson = source.RawJson;
+        target.UpdatedAt = now;
     }
 
     public static string NormalizeName(string value) =>

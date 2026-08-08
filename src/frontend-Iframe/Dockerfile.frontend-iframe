@@ -7,7 +7,9 @@ ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 
 COPY frontend-Iframe/package.json frontend-Iframe/package-lock.json ./
 
-RUN npm ci
+# Vite is a devDependency but is required to produce the production bundle.
+# Force its installation even when a builder provides a production npm config.
+RUN npm ci --include=dev
 
 COPY frontend-Iframe ./
 

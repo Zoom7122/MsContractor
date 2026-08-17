@@ -49,6 +49,10 @@ await using (var scope = app.Services.CreateAsyncScope())
 
 // Configure the HTTP request pipeline.
 app.MapMsContractorOpenApi();
+app.UseMsContractorSwaggerUi(options =>
+{
+    options.SwaggerEndpoint("/openapi/v1.json", "Duplicates Merge Service");
+});
 
 app.UseHttpsRedirection();
 

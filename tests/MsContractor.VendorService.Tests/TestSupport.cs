@@ -26,6 +26,12 @@ internal static class TestSupport
             SessionCookieName = "mscontractor.session"
         });
 
+    public static IOptions<DevSessionOptions> DevSessionOptions(Guid accountId) =>
+        Microsoft.Extensions.Options.Options.Create(new DevSessionOptions
+        {
+            AccountId = accountId
+        });
+
 }
 
 internal sealed class MutableTimeProvider(DateTimeOffset now) : TimeProvider
@@ -67,6 +73,7 @@ internal sealed class FakeSessionStore : IVendorSessionStore
 
     public List<string> DeletedTokens { get; } = [];
     public List<Guid> RevokedAccounts { get; } = [];
+    public List<VendorSession> CreatedSessions { get; } = [];
 
     public Task<string> CreateAsync(
         Guid accountId,
@@ -75,7 +82,9 @@ internal sealed class FakeSessionStore : IVendorSessionStore
     {
         var token = $"token-{++_nextToken}";
         var now = DateTimeOffset.UtcNow;
-        _sessions[token] = new VendorSession(accountId, employeeId, now, now);
+        var session = new VendorSession(accountId, employeeId, now, now);
+        _sessions[token] = session;
+        CreatedSessions.Add(session);
         return Task.FromResult(token);
     }
 

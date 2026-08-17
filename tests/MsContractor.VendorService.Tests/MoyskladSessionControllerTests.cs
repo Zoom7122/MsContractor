@@ -35,6 +35,7 @@ public sealed class MoyskladSessionControllerTests
         var controller = new MoyskladSessionController(
             service,
             TestSupport.Options(),
+            TestSupport.DevSessionOptions(accountId),
             new TestWebHostEnvironment(environmentName),
             TimeProvider.System,
             NullLogger<MoyskladSessionController>.Instance)
@@ -77,6 +78,7 @@ public sealed class MoyskladSessionControllerTests
         var controller = new MoyskladSessionController(
             service,
             TestSupport.Options(),
+            TestSupport.DevSessionOptions(Guid.NewGuid()),
             new TestWebHostEnvironment(Environments.Development),
             TimeProvider.System,
             NullLogger<MoyskladSessionController>.Instance)
@@ -93,6 +95,80 @@ public sealed class MoyskladSessionControllerTests
         Assert.Contains(
             "mscontractor.session=",
             controller.Response.Headers.SetCookie.ToString().ToLowerInvariant());
+    }
+
+    [Fact]
+    public async Task CreateDevAsync_CreatesSessionForConfiguredAccountWithoutVendorLookups()
+    {
+        var accountId = Guid.NewGuid();
+        var contextClient = new FakeContextClient(
+            new MoyskladEmployeeContext(Guid.NewGuid(), Guid.NewGuid()));
+        var sessionStore = new FakeSessionStore();
+        var repository = new FakeInstallationRepository();
+        var service = new MoyskladSessionService(
+            contextClient,
+            sessionStore,
+            repository,
+            TestSupport.Options(),
+            TimeProvider.System);
+        var controller = new MoyskladSessionController(
+            service,
+            TestSupport.Options(),
+            TestSupport.DevSessionOptions(accountId),
+            new TestWebHostEnvironment(Environments.Development),
+            TimeProvider.System,
+            NullLogger<MoyskladSessionController>.Instance)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            }
+        };
+        controller.Request.Headers.Cookie = "mscontractor.session=prior-token";
+
+        var result = await controller.CreateDevAsync(CancellationToken.None);
+
+        var response = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(
+            new MoyskladSessionResponse(accountId, accountId),
+        Assert.IsType<MoyskladSessionResponse>(response.Value));
+        Assert.Equal(["prior-token"], sessionStore.DeletedTokens);
+        var createdSession = Assert.Single(sessionStore.CreatedSessions);
+        Assert.Equal(accountId, createdSession.AccountId);
+        Assert.Equal(accountId, createdSession.EmployeeId);
+        Assert.Equal(0, contextClient.Calls);
+        Assert.Equal(0, repository.SaveChangesCalls);
+        Assert.Contains("mscontractor.session=token-1", controller.Response.Headers.SetCookie.ToString().ToLowerInvariant());
+    }
+
+    [Fact]
+    public async Task CreateDevAsync_ReturnsNotFoundOutsideDevelopment()
+    {
+        var sessionStore = new FakeSessionStore();
+        var service = new MoyskladSessionService(
+            new FakeContextClient(new MoyskladEmployeeContext(Guid.NewGuid(), Guid.NewGuid())),
+            sessionStore,
+            new FakeInstallationRepository(),
+            TestSupport.Options(),
+            TimeProvider.System);
+        var controller = new MoyskladSessionController(
+            service,
+            TestSupport.Options(),
+            TestSupport.DevSessionOptions(Guid.NewGuid()),
+            new TestWebHostEnvironment(Environments.Production),
+            TimeProvider.System,
+            NullLogger<MoyskladSessionController>.Instance)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            }
+        };
+
+        var result = await controller.CreateDevAsync(CancellationToken.None);
+
+        Assert.IsType<NotFoundResult>(result);
+        Assert.Empty(sessionStore.CreatedSessions);
     }
 
     private static Installation ActiveInstallation(Guid accountId) =>

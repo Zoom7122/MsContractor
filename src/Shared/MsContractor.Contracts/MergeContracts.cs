@@ -19,6 +19,21 @@ public sealed record CreateMergeJobRequest(
     IReadOnlyList<Guid> DuplicateCounterpartyIds,
     MergeMainCounterpartyDto MainCounterparty);
 
+public sealed record MergeSelectionPreviewRequest(
+    IReadOnlyList<Guid> CounterpartyIds);
+
+public sealed record MergeSelectionCounterpartyDto(
+    Guid Id,
+    string Name,
+    string? Description,
+    string? Email,
+    string? Phone,
+    bool Archived,
+    DateTimeOffset UpdatedAt);
+
+public sealed record MergeSelectionPreviewResponse(
+    IReadOnlyList<MergeSelectionCounterpartyDto> Counterparties);
+
 public sealed record MergeJobAccepted(Guid MergeJobId, string Status);
 
 public sealed record MergeRequested(

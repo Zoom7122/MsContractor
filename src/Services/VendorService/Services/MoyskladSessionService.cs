@@ -75,6 +75,23 @@ public sealed class MoyskladSessionService(
             : new MoyskladSessionResponse(session.AccountId, session.EmployeeId);
     }
 
+    public async Task<CreatedMoyskladSession> CreateDevAsync(
+        Guid accountId,
+        string? priorToken,
+        CancellationToken cancellationToken)
+    {
+        if (accountId == Guid.Empty)
+            throw new ArgumentException("Dev session account ID must be a non-empty UUID.", nameof(accountId));
+
+        if (!string.IsNullOrWhiteSpace(priorToken))
+            await sessionStore.DeleteAsync(priorToken, cancellationToken);
+        var token = await sessionStore.CreateAsync(accountId, accountId, cancellationToken);
+
+        return new CreatedMoyskladSession(
+            token,
+            new MoyskladSessionResponse(accountId, accountId));
+    }
+
     public Task LogoutAsync(string? token, CancellationToken cancellationToken) =>
         string.IsNullOrWhiteSpace(token)
             ? Task.CompletedTask

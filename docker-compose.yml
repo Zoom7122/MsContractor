@@ -133,6 +133,12 @@ services:
     environment:
       <<: *service-env
       ReverseProxy__Clusters__vendor-service-cluster__Destinations__vendor-service__Address: http://vendor-service:${SERVICE_INTERNAL_PORT}/
+      ReverseProxy__Clusters__openapi-vendor-service-cluster__Destinations__vendor-service__Address: http://vendor-service:${SERVICE_INTERNAL_PORT}/
+      ReverseProxy__Clusters__openapi-moysklad-egress-service-cluster__Destinations__moysklad-egress-service__Address: http://moysklad-egress-service:${SERVICE_INTERNAL_PORT}/
+      ReverseProxy__Clusters__openapi-catalog-sync-service-cluster__Destinations__catalog-sync-service__Address: http://catalog-sync-service:${SERVICE_INTERNAL_PORT}/
+      ReverseProxy__Clusters__openapi-duplicates-merge-service-cluster__Destinations__duplicates-merge-service__Address: http://duplicates-merge-service:${SERVICE_INTERNAL_PORT}/
+      ReverseProxy__Clusters__openapi-notification-service-cluster__Destinations__notification-service__Address: http://notification-service:${SERVICE_INTERNAL_PORT}/
+      ReverseProxy__Clusters__openapi-audit-service-cluster__Destinations__audit-service__Address: http://audit-service:${SERVICE_INTERNAL_PORT}/
     depends_on:
       redis:
         condition: service_healthy
@@ -163,6 +169,7 @@ services:
       Vendor__SecretKey: ${MOYSKLAD_VENDOR_SECRET}
       Vendor__AccessTokenEncryptionKey: ${VENDOR_TOKEN_ENCRYPTION_KEY}
       Vendor__TokenKeyVersion: 1
+      DevSession__AccountId: ${DEV_ACCOUNT_ID:?Set DEV_ACCOUNT_ID to a non-empty UUID before starting Compose}
     depends_on:
       postgres:
         condition: service_healthy

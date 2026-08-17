@@ -1,4 +1,5 @@
 using MsContractor.BuildingBlocks.Health;
+using MsContractor.BuildingBlocks.OpenApi;
 using MsContractor.Gateway.Bff.Middleware;
 using MsContractor.Gateway.Bff.Services;
 using StackExchange.Redis;
@@ -10,7 +11,7 @@ builder.AddMsContractorHealth();
 
 builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+builder.Services.AddMsContractorOpenApi();
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     ConnectionMultiplexer.Connect(
         builder.Configuration["Redis:ConnectionString"]
@@ -20,6 +21,11 @@ builder.Services.AddSingleton<IGatewaySessionReader, GatewaySessionReader>();
 var duplicatesBaseUrl = builder.Configuration["Services:DuplicatesMergeService:BaseUrl"]
     ?? "http://localhost:5014/";
 builder.Services.AddHttpClient<IDuplicatePreviewClient, DuplicatePreviewClient>(client =>
+{
+    client.BaseAddress = new Uri(duplicatesBaseUrl.EndsWith('/') ? duplicatesBaseUrl : $"{duplicatesBaseUrl}/");
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
+builder.Services.AddHttpClient<IMergeSelectionPreviewClient, MergeSelectionPreviewClient>(client =>
 {
     client.BaseAddress = new Uri(duplicatesBaseUrl.EndsWith('/') ? duplicatesBaseUrl : $"{duplicatesBaseUrl}/");
     client.Timeout = TimeSpan.FromSeconds(15);
@@ -44,10 +50,17 @@ builder.Services
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+app.MapMsContractorOpenApi();
+app.UseMsContractorSwaggerUi(options =>
 {
-    app.MapOpenApi();
-}
+    options.SwaggerEndpoint("/openapi/v1.json", "Gateway BFF");
+    options.SwaggerEndpoint("/_openapi/vendor/openapi/v1.json", "Vendor Service");
+    options.SwaggerEndpoint("/_openapi/moysklad-egress/openapi/v1.json", "MoySklad Egress Service");
+    options.SwaggerEndpoint("/_openapi/catalog-sync/openapi/v1.json", "Catalog Sync Service");
+    options.SwaggerEndpoint("/_openapi/duplicates-merge/openapi/v1.json", "Duplicates Merge Service");
+    options.SwaggerEndpoint("/_openapi/notification/openapi/v1.json", "Notification Service");
+    options.SwaggerEndpoint("/_openapi/audit/openapi/v1.json", "Audit Service");
+});
 
 app.UseVendorRequestCorrelation();
 

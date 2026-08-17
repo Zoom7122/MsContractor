@@ -1,12 +1,14 @@
 using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
 using MsContractor.BuildingBlocks.Health;
+using MsContractor.BuildingBlocks.OpenApi;
 using MsContractor.CatalogSyncService.Repo;
 using MsContractor.CatalogSyncService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.AddMsContractorHealth();
 builder.Services.AddControllers();
+builder.Services.AddMsContractorOpenApi();
 builder.Services.AddDbContext<CatalogSyncDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")));
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
@@ -40,6 +42,7 @@ builder.Services.AddHealthChecks()
     .AddCheck<CatalogReadinessHealthCheck>("catalog-dependencies", tags: ["ready"]);
 
 var app = builder.Build();
+app.MapMsContractorOpenApi();
 await using (var scope = app.Services.CreateAsyncScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<CatalogSyncDbContext>();

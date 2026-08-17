@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { api } from '../api/http'
 
 const route = useRoute()
 const router = useRouter()
@@ -10,12 +11,11 @@ const previewLoading = ref(false)
 const submitLoading = ref(false)
 const error = ref(null)
 const successMessage = ref(null)
-const mergeAttributesError = ref(null)
 const counterparties = ref([])
-const mergeAttributes = ref([])
-const attributeSelections = ref({})
 const primaryCounterpartyId = ref('')
 const fieldSelections = ref(createEmptyFieldSelections())
+
+let previewRequestToken = 0
 
 const primaryCounterparty = computed(() => {
   return counterparties.value.find((counterparty) => counterparty.id === primaryCounterpartyId.value) || null
@@ -30,51 +30,6 @@ const fieldRows = computed(() => [
   { key: 'phone', label: 'Телефон' }
 ])
 
-const enabledMergeAttributes = computed(() =>
-  mergeAttributes.value.filter((item) => item.enabled)
-)
-
-const syncingCounterpartiesCount = computed(() =>
-  counterparties.value.filter((counterparty) => counterparty.syncState === 'loading').length
-)
-
-const syncedCounterpartiesCount = computed(() =>
-  counterparties.value.filter((counterparty) => counterparty.syncState === 'ready' || counterparty.syncState === 'partial').length
-)
-
-const totalLinkedDocuments = computed(() =>
-  counterparties.value.reduce((sum, counterparty) => sum + Number(counterparty.linkedDocumentsTotal || 0), 0)
-)
-
-const totalDocumentsFromExports = computed(() =>
-  counterparties.value.reduce((sum, counterparty) => sum + Number(counterparty.fullSyncTotalDocuments || 0), 0)
-)
-
-const duplicatesToArchiveCount = computed(() => Math.max(counterparties.value.length - 1, 0))
-
-const documentSummaryCards = computed(() => [
-  {
-    label: 'Связанные документы',
-    value: totalLinkedDocuments.value,
-    note: 'Уже найдены в карточках КА'
-  },
-  {
-    label: 'Документы из полной выгрузки',
-    value: totalDocumentsFromExports.value,
-    note: 'Уточняются фоновым обновлением'
-  },
-  {
-    label: 'Дубликатов для архива',
-    value: duplicatesToArchiveCount.value,
-    note: 'После подтверждения merge'
-  },
-  {
-    label: 'Доп. полей в merge',
-    value: enabledMergeAttributes.value.length,
-    note: 'Берутся из настроек iframe'
-  }
-])
-
 const headerStatusLabel = computed(() => {
   if (submitLoading.value) {
     return 'Добавляем объединение в очередь'
@@ -82,10 +37,6 @@ const headerStatusLabel = computed(() => {
 
   if (previewLoading.value && !counterparties.value.length) {
     return 'Подготавливаем предпросмотр'
-  }
-
-  if (syncingCounterpartiesCount.value) {
-    return `Фоновая выгрузка: ${syncingCounterpartiesCount.value} из ${counterparties.value.length}, merge можно ставить в очередь`
   }
 
   if (canSubmit.value) {
@@ -97,15 +48,16 @@ const headerStatusLabel = computed(() => {
 
 const headerStatusClass = computed(() => ({
   'merge-status-pill': true,
-  'merge-status-pill--warning': syncingCounterpartiesCount.value > 0,
-  'merge-status-pill--success': canSubmit.value && syncingCounterpartiesCount.value === 0 && !submitLoading.value,
+  'merge-status-pill--success': canSubmit.value && !submitLoading.value,
   'merge-status-pill--loading': previewLoading.value && !counterparties.value.length
 }))
 
 const canSubmit = computed(() => {
   return !submitLoading.value &&
     counterparties.value.length >= 2 &&
-    Boolean(primaryCounterpartyId.value)
+    Boolean(primaryCounterpartyId.value) &&
+    !primaryCounterparty.value?.archived &&
+    Boolean(fieldSelections.value.name.value.trim())
 })
 
 watch(primaryCounterpartyId, (nextId) => {
@@ -120,27 +72,59 @@ watch(primaryCounterpartyId, (nextId) => {
     }
   }
 
-  for (const attribute of enabledMergeAttributes.value) {
-    const currentSourceCounterpartyId = attributeSelections.value[attribute.attributeId]
-    if (!currentSourceCounterpartyId || !counterpartyExists(currentSourceCounterpartyId)) {
-      applyAttributeSelection(attribute.attributeId, resolveDefaultAttributeSource(attribute.attributeId))
-    }
-  }
 })
 
 watch(
   () => selectedCounterpartyIds.value.join(','),
   () => {
-    error.value = selectedCounterpartyIds.value.length < 2
-      ? 'Выберите хотя бы двух контрагентов для объединения'
-      : 'Раздел временно недоступен'
-    counterparties.value = []
-    primaryCounterpartyId.value = ''
-    mergeAttributes.value = []
-    attributeSelections.value = {}
+    loadPreview()
   },
   { immediate: true }
 )
+
+async function loadPreview() {
+  const ids = selectedCounterpartyIds.value
+  const requestToken = ++previewRequestToken
+
+  if (ids.length < 2) {
+    error.value = 'Выберите хотя бы двух контрагентов для объединения'
+    counterparties.value = []
+    primaryCounterpartyId.value = ''
+    fieldSelections.value = createEmptyFieldSelections()
+    return
+  }
+
+  loading.value = true
+  previewLoading.value = true
+  error.value = null
+  successMessage.value = null
+
+  try {
+    const response = await api.post('/api/merge-preview/selection', {
+      counterpartyIds: ids
+    })
+    if (requestToken !== previewRequestToken) {
+      return
+    }
+
+    counterparties.value = normalizeCounterparties(response?.counterparties)
+    primaryCounterpartyId.value = counterparties.value.find((item) => !item.archived)?.id || ''
+    initializeFieldSelections()
+  } catch (requestError) {
+    if (requestToken !== previewRequestToken) {
+      return
+    }
+    error.value = requestError.message || 'Не удалось загрузить предпросмотр объединения'
+    counterparties.value = []
+    primaryCounterpartyId.value = ''
+    fieldSelections.value = createEmptyFieldSelections()
+  } finally {
+    if (requestToken === previewRequestToken) {
+      loading.value = false
+      previewLoading.value = false
+    }
+  }
+}
 
 function initializeFieldSelections() {
   const primaryId = primaryCounterpartyId.value
@@ -155,17 +139,11 @@ function initializeFieldSelections() {
   fieldSelections.value = nextSelections
 }
 
-function initializeAttributeSelections() {
-  const nextSelections = {}
-
-  for (const attribute of enabledMergeAttributes.value) {
-    nextSelections[attribute.attributeId] = resolveDefaultAttributeSource(attribute.attributeId)
-  }
-
-  attributeSelections.value = nextSelections
-}
-
 function handlePrimaryChange(counterpartyId) {
+  const counterparty = counterparties.value.find((item) => item.id === counterpartyId)
+  if (!counterparty || counterparty.archived) {
+    return
+  }
   primaryCounterpartyId.value = counterpartyId
 }
 
@@ -182,21 +160,6 @@ function applyFieldSelection(fieldKey, counterpartyId) {
   fieldSelections.value[fieldKey] = buildFieldSelection(fieldKey, counterpartyId, counterparty)
 }
 
-function handleAttributeSelection(attributeId, counterpartyId) {
-  applyAttributeSelection(attributeId, counterpartyId)
-}
-
-function applyAttributeSelection(attributeId, counterpartyId) {
-  if (!attributeId || !counterpartyId) {
-    return
-  }
-
-  attributeSelections.value = {
-    ...attributeSelections.value,
-    [attributeId]: counterpartyId
-  }
-}
-
 function buildFieldSelection(fieldKey, counterpartyId, counterparty = null) {
   const source = counterparty || counterparties.value.find((item) => item.id === counterpartyId)
   return {
@@ -209,71 +172,47 @@ function counterpartyExists(counterpartyId) {
   return counterparties.value.some((item) => item.id === counterpartyId)
 }
 
-function resolveDefaultAttributeSource(attributeId) {
+function buildMergeJobRequest() {
   const primaryId = primaryCounterpartyId.value
-  const primary = counterparties.value.find((item) => item.id === primaryId)
-  if (primary?.attributeValues?.[attributeId]?.hasValue) {
-    return primaryId
-  }
-
-  const firstWithValue = counterparties.value.find((item) => item.attributeValues?.[attributeId]?.hasValue)
-  return firstWithValue?.id || primaryId || counterparties.value[0]?.id || ''
-}
-
-function buildMergePayload() {
-  const primaryId = primaryCounterpartyId.value
-  const secondaryCounterpartyIds = counterparties.value
+  const duplicateCounterpartyIds = counterparties.value
     .map((counterparty) => counterparty.id)
     .filter((id) => id !== primaryId)
 
   return {
-    primaryCounterpartyId: primaryId,
-    secondaryCounterpartyIds,
-    fields: {
+    mainCounterpartyId: primaryId,
+    duplicateCounterpartyIds,
+    mainCounterparty: {
       name: fieldSelections.value.name.value || '',
       description: fieldSelections.value.description.value || '',
       email: fieldSelections.value.email.value || '',
       phone: fieldSelections.value.phone.value || ''
-    },
-    attributeSelections: enabledMergeAttributes.value
-      .map((attribute) => ({
-        attributeId: attribute.attributeId,
-        sourceCounterpartyId: attributeSelections.value[attribute.attributeId] || resolveDefaultAttributeSource(attribute.attributeId)
-      }))
-      .filter((item) => item.attributeId && item.sourceCounterpartyId),
-    options: {
-      reassignDocuments: true,
-      documentTypes: [],
-      archiveDuplicate: true
     }
   }
 }
 
-function buildMergeRequest() {
-  const payload = buildMergePayload()
-
-  if (payload.secondaryCounterpartyIds.length > 1) {
-    return {
-      multiple: true,
-      payload
-    }
+async function handleSubmit() {
+  if (!canSubmit.value) {
+    return
   }
 
-  const [secondaryCounterpartyId = ''] = payload.secondaryCounterpartyIds
-  const { secondaryCounterpartyIds, ...singlePayload } = payload
-
-  return {
-    multiple: false,
-    payload: {
-      ...singlePayload,
-      secondaryCounterpartyId
-    }
-  }
-}
-
-function handleSubmit() {
+  submitLoading.value = true
   successMessage.value = null
-  error.value = 'Раздел временно недоступен'
+  error.value = null
+
+  try {
+    const response = await api.post('/api/merge-jobs', buildMergeJobRequest())
+    await router.push({
+      name: 'moysklad-duplicates',
+      query: buildDuplicatesReturnQuery({
+        mergeQueued: true,
+        mergeJobId: response?.mergeJobId
+      })
+    })
+  } catch (requestError) {
+    error.value = requestError.message || 'Не удалось добавить объединение в очередь'
+  } finally {
+    submitLoading.value = false
+  }
 }
 
 function handleCancel() {
@@ -283,145 +222,22 @@ function handleCancel() {
   })
 }
 
-function normalizeMergeAttributes(items) {
-  if (!Array.isArray(items)) {
-    return []
-  }
-
-  return items
-    .map((item) => ({
-      attributeId: String(item?.id || '').trim(),
-      name: String(item?.name || '').trim(),
-      type: String(item?.type || '').trim(),
-      required: Boolean(item?.required),
-      enabled: Boolean(item?.enabled)
-    }))
-    .filter((item) => item.attributeId && item.name)
-    .sort((left, right) => left.name.localeCompare(right.name, 'ru'))
-}
-
-function normalizeCounterparties(rows, attributes) {
+function normalizeCounterparties(rows) {
   if (!Array.isArray(rows)) {
     return []
   }
 
   return rows.map((row) => {
-    const rawJson = String(row?.rawJson || '{}')
     return {
-      id: String(row?.item?.id || ''),
-      name: String(row?.item?.name || ''),
-      description: String(row?.item?.description || ''),
-      email: String(row?.item?.email || ''),
-      phone: String(row?.item?.phone || ''),
-      rawJson,
-      attributeValues: extractAttributeValues(rawJson, attributes),
-      archived: Boolean(row?.item?.archived),
-      linkedDocumentsTotal: Number(row?.linkedDocumentsTotal || 0),
-      syncedLinkedDocumentsCount: Array.isArray(row?.linkedDocuments) ? row.linkedDocuments.length : 0,
-      fullSyncTotalDocuments: 0,
-      fullSyncErrorsCount: 0,
-      exportId: Number(row?.latestFullExport?.id || 0),
-      latestFullExportCreatedAt: String(row?.latestFullExport?.createdAt || ''),
-      latestFullExportIsPartial: Boolean(row?.latestFullExport?.isPartial),
-      syncState: 'idle',
-      syncMessage: 'Ожидает полной выгрузки',
-      updatedAt: String(row?.item?.updatedAt || ''),
-      syncedAt: String(row?.item?.syncedAt || '')
+      id: String(row?.id || ''),
+      name: String(row?.name || ''),
+      description: String(row?.description || ''),
+      email: String(row?.email || ''),
+      phone: String(row?.phone || ''),
+      archived: Boolean(row?.archived),
+      updatedAt: String(row?.updatedAt || '')
     }
-  })
-}
-
-function extractAttributeValues(rawJson, attributes) {
-  const result = buildEmptyAttributeMap(attributes)
-
-  try {
-    const parsed = JSON.parse(String(rawJson || '{}'))
-    const sourceAttributes = Array.isArray(parsed?.attributes) ? parsed.attributes : []
-
-    for (const attribute of sourceAttributes) {
-      const attributeId = String(attribute?.id || attribute?.meta?.id || '').trim()
-      if (!attributeId || !result[attributeId]) {
-        continue
-      }
-
-      result[attributeId] = {
-        hasValue: hasAttributeValue(attribute?.value),
-        displayValue: formatAttributeValue(attribute?.value)
-      }
-    }
-  } catch {
-    return result
-  }
-
-  return result
-}
-
-function buildEmptyAttributeMap(attributes) {
-  const result = {}
-
-  for (const attribute of attributes || []) {
-    result[attribute.attributeId] = {
-      hasValue: false,
-      displayValue: ''
-    }
-  }
-
-  return result
-}
-
-function formatAttributeValue(value) {
-  if (value === null || value === undefined) {
-    return ''
-  }
-  if (typeof value === 'string') {
-    return value.trim()
-  }
-  if (typeof value === 'boolean') {
-    return value ? 'Да' : 'Нет'
-  }
-  if (typeof value === 'number') {
-    return String(value)
-  }
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => formatAttributeValue(item))
-      .filter(Boolean)
-      .join(', ')
-  }
-  if (typeof value === 'object') {
-    for (const key of ['name', 'value', 'id', 'href']) {
-      const formatted = formatAttributeValue(value[key])
-      if (formatted) {
-        return formatted
-      }
-    }
-
-    try {
-      return JSON.stringify(value)
-    } catch {
-      return ''
-    }
-  }
-  return String(value).trim()
-}
-
-function hasAttributeValue(value) {
-  return formatAttributeValue(value) !== ''
-}
-
-function attributeDisplayValue(counterparty, attributeId) {
-  return counterparty?.attributeValues?.[attributeId]?.displayValue || '—'
-}
-
-function selectedAttributeValue(attributeId) {
-  const selectedId = attributeSelections.value[attributeId]
-  const selectedCounterparty = counterparties.value.find((item) => item.id === selectedId)
-  return attributeDisplayValue(selectedCounterparty, attributeId)
-}
-
-function isTextAttribute(attribute) {
-  const normalizedType = String(attribute?.type || '').trim().toLowerCase()
-  return normalizedType === 'text' || normalizedType === 'longtext'
+  }).filter((row) => row.id)
 }
 
 function isTextField(field) {
@@ -438,43 +254,6 @@ function valuePreviewClass(value, forceExpanded = false) {
   return {
     'merge-value-preview': true,
     'merge-value-preview--expanded': forceExpanded || isLargeTextValue(value)
-  }
-}
-
-function patchCounterparty(counterpartyId, nextValue) {
-  counterparties.value = counterparties.value.map((counterparty) => {
-    if (counterparty.id !== counterpartyId) {
-      return counterparty
-    }
-
-    return typeof nextValue === 'function'
-      ? { ...counterparty, ...nextValue(counterparty) }
-      : { ...counterparty, ...nextValue }
-  })
-}
-
-function syncBadgeLabel(counterparty) {
-  switch (counterparty.syncState) {
-    case 'loading':
-      return 'Синхронизация'
-    case 'ready':
-      return 'Выгрузка обновлена'
-    case 'partial':
-      return 'Частичная выгрузка'
-    case 'error':
-      return 'Ошибка выгрузки'
-    default:
-      return 'Ожидает выгрузки'
-  }
-}
-
-function syncBadgeClass(counterparty) {
-  return {
-    'merge-counterparty-card__badge': true,
-    'merge-counterparty-card__badge--loading': counterparty.syncState === 'loading',
-    'merge-counterparty-card__badge--ready': counterparty.syncState === 'ready',
-    'merge-counterparty-card__badge--partial': counterparty.syncState === 'partial',
-    'merge-counterparty-card__badge--error': counterparty.syncState === 'error'
   }
 }
 
@@ -641,10 +420,6 @@ function createEmptyFieldSelections() {
         </p>
         <p v-else-if="error" class="merge-notice merge-notice--error">{{ error }}</p>
         <p v-else-if="successMessage" class="merge-notice merge-notice--success">{{ successMessage }}</p>
-        <p v-if="!loading && !error && syncingCounterpartiesCount" class="merge-notice merge-notice--info">
-          Информация уже показана. Фоновая полная выгрузка продолжается: {{ syncingCounterpartiesCount }} из
-          {{ counterparties.length }} КА ещё обновляются.
-        </p>
       </div>
 
       <div v-if="counterparties.length" class="merge-workspace">
@@ -675,6 +450,7 @@ function createEmptyFieldSelections() {
                         :checked="counterparty.id === primaryCounterpartyId"
                         type="radio"
                         name="primaryCounterparty"
+                        :disabled="counterparty.archived"
                         @change="handlePrimaryChange(counterparty.id)"
                       />
                     </div>
@@ -692,8 +468,8 @@ function createEmptyFieldSelections() {
                       <p>{{ displayValue(counterparty.description) }}</p>
                     </div>
 
-                    <span :class="syncBadgeClass(counterparty)">
-                      {{ syncBadgeLabel(counterparty) }}
+                    <span class="merge-counterparty-card__badge">
+                      {{ counterparty.archived ? 'Архивный' : 'Активный' }}
                     </span>
                   </div>
 
@@ -706,26 +482,10 @@ function createEmptyFieldSelections() {
                       <dt>Телефон</dt>
                       <dd>{{ displayValue(counterparty.phone) }}</dd>
                     </div>
-                    <div>
-                      <dt>Связанных документов</dt>
-                      <dd>{{ counterparty.linkedDocumentsTotal }}</dd>
-                    </div>
-                    <div>
-                      <dt>Документов в выгрузке</dt>
-                      <dd>{{ counterparty.fullSyncTotalDocuments || '—' }}</dd>
-                    </div>
                   </dl>
 
                   <div class="merge-counterparty-card__timeline">
                     <span>Обновлен: {{ formatDateTime(counterparty.updatedAt) }}</span>
-                    <span>Export: {{ counterparty.exportId || '—' }}</span>
-                  </div>
-
-                  <div class="merge-counterparty-card__footer">
-                    <span>{{ counterparty.syncMessage }}</span>
-                    <span v-if="counterparty.latestFullExportCreatedAt">
-                      Выгрузка: {{ formatDateTime(counterparty.latestFullExportCreatedAt) }}
-                    </span>
                   </div>
                 </label>
               </div>
@@ -779,85 +539,6 @@ function createEmptyFieldSelections() {
             </div>
           </section>
 
-          <section class="merge-panel">
-            <div class="merge-panel__header">
-              <h2>Дополнительные поля</h2>
-              <p>Показываются только поля, которые пользователь включил в настройках merge.</p>
-            </div>
-
-            <p v-if="mergeAttributesError" class="merge-notice merge-notice--error">
-              {{ mergeAttributesError }}
-            </p>
-
-            <div v-if="!enabledMergeAttributes.length" class="merge-empty-state">
-              В настройках не выбрано ни одного дополнительного поля для объединения.
-            </div>
-
-            <div v-else class="merge-table-wrap merge-table-wrap--attribute-fields">
-              <table class="merge-table">
-                <thead>
-                  <tr>
-                    <th>Доп. поле</th>
-                    <th v-for="counterparty in counterparties" :key="`attribute-head-${counterparty.id}`">
-                      {{ displayValue(counterparty.name) }}
-                    </th>
-                    <th>Итоговое значение</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="attribute in enabledMergeAttributes" :key="attribute.attributeId">
-                    <td class="merge-table__field">
-                      <strong>{{ attribute.name }}</strong>
-                      <span class="merge-table__field-note">{{ attribute.type || 'unknown' }}</span>
-                    </td>
-                    <td v-for="counterparty in counterparties" :key="`${attribute.attributeId}-${counterparty.id}`">
-                      <label class="merge-radio-option">
-                        <input
-                          :checked="attributeSelections[attribute.attributeId] === counterparty.id"
-                          type="radio"
-                          :name="`attribute-${attribute.attributeId}`"
-                          @change="handleAttributeSelection(attribute.attributeId, counterparty.id)"
-                        />
-                        <span
-                          :class="valuePreviewClass(
-                            attributeDisplayValue(counterparty, attribute.attributeId),
-                            isTextAttribute(attribute)
-                          )"
-                        >
-                          {{ attributeDisplayValue(counterparty, attribute.attributeId) }}
-                        </span>
-                      </label>
-                    </td>
-                    <td class="merge-table__result">
-                      <div
-                        :class="valuePreviewClass(
-                          selectedAttributeValue(attribute.attributeId),
-                          isTextAttribute(attribute)
-                        )"
-                      >
-                        {{ selectedAttributeValue(attribute.attributeId) }}
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section class="merge-panel">
-            <div class="merge-panel__header">
-              <h2>Связанные документы</h2>
-              <p>Счётчики обновляются по мере поступления данных из полной выгрузки и уже доступны до её окончания.</p>
-            </div>
-
-            <div class="merge-document-grid">
-              <article v-for="card in documentSummaryCards" :key="card.label" class="merge-document-card">
-                <span class="merge-document-card__label">{{ card.label }}</span>
-                <strong>{{ card.value }}</strong>
-                <p>{{ card.note }}</p>
-              </article>
-            </div>
-          </section>
         </div>
 
       </div>
@@ -867,19 +548,11 @@ function createEmptyFieldSelections() {
       </div>
 
       <footer v-if="counterparties.length" class="merge-surface__footer">
-        <div class="merge-surface__footer-note">
-          <strong>Важно:</strong>
-          <span>
-            полная выгрузка может продолжаться в фоне, но объединение уже можно добавлять в очередь. Документы и счётчики
-            будут уточняться по мере догрузки данных.
-          </span>
-        </div>
-
         <div class="merge-actions">
           <button class="merge-button merge-button--ghost" type="button" @click="handleCancel">
             Отмена
           </button>
-          <button class="merge-button merge-button--primary" type="button" disabled>
+          <button class="merge-button merge-button--primary" type="button" :disabled="!canSubmit" @click="handleSubmit">
             {{ submitLoading ? 'Добавляем...' : 'Добавить в очередь' }}
           </button>
         </div>

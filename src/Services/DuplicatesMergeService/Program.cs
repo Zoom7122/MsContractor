@@ -1,4 +1,5 @@
 using MsContractor.BuildingBlocks.Health;
+using MsContractor.BuildingBlocks.OpenApi;
 using Microsoft.EntityFrameworkCore;
 using MsContractor.CatalogSyncService.Repo;
 using MsContractor.DuplicatesMergeService.Services;
@@ -14,6 +15,7 @@ builder.Services.AddControllers();
 builder.Services.AddDbContext<CatalogSyncDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")));
 builder.Services.AddScoped<IDuplicatePreviewService, DuplicatePreviewService>();
+builder.Services.AddScoped<IMergeSelectionPreviewService, MergeSelectionPreviewService>();
 builder.Services.AddScoped<IMergeJobCreator, MergeJobCreator>();
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<IMoySkladCounterpartyParser, MoySkladCounterpartyParser>();
@@ -35,7 +37,7 @@ builder.Services.AddSingleton<IProducer<string, string>>(_ =>
 builder.Services.AddHostedService<MergeOutboxPublisher>();
 builder.Services.AddHostedService<MergeRequestedConsumer>();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+builder.Services.AddMsContractorOpenApi();
 
 var app = builder.Build();
 
@@ -46,10 +48,7 @@ await using (var scope = app.Services.CreateAsyncScope())
 }
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
+app.MapMsContractorOpenApi();
 
 app.UseHttpsRedirection();
 

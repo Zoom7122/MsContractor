@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.EntityFrameworkCore;
 using MsContractor.BuildingBlocks.Health;
+using MsContractor.BuildingBlocks.OpenApi;
 using MsContractor.VendorService.Middleware;
 using MsContractor.VendorService.Repo;
 using MsContractor.VendorService.Services;
@@ -18,7 +19,7 @@ builder.Services.AddControllers()
                     "VENDOR_VALIDATION_ERROR",
                     "The request body is invalid."));
     });
-builder.Services.AddOpenApi();
+builder.Services.AddMsContractorOpenApi();
 builder.Services.AddDbContext<VendorDbContext>(options =>
 {
     options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres"));
@@ -28,6 +29,14 @@ builder.Services
     .BindConfiguration(VendorOptions.SectionName)
     .ValidateOnStart();
 builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<VendorOptions>, VendorOptionsValidator>();
+builder.Services
+    .AddOptions<DevSessionOptions>()
+    .BindConfiguration(DevSessionOptions.SectionName);
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddOptions<DevSessionOptions>().ValidateOnStart();
+    builder.Services.AddSingleton<Microsoft.Extensions.Options.IValidateOptions<DevSessionOptions>, DevSessionOptionsValidator>();
+}
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 {
@@ -77,10 +86,7 @@ await using (var scope = app.Services.CreateAsyncScope())
     Console.WriteLine("Redis connection check succeeded.");
 }
 
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
+app.MapMsContractorOpenApi();
 
 app.UseHttpsRedirection();
 

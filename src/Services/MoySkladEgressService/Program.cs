@@ -1,5 +1,6 @@
 using System.Net;
 using MsContractor.BuildingBlocks.Health;
+using MsContractor.BuildingBlocks.OpenApi;
 using MsContractor.MoySkladEgressService.Services;
 using Npgsql;
 using StackExchange.Redis;
@@ -11,7 +12,7 @@ builder.AddMsContractorHealth();
 
 builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+builder.Services.AddMsContractorOpenApi();
 var egressOptions = new EgressOptions
 {
     JsonApiBaseUrl = NormalizeBaseUri(
@@ -78,10 +79,7 @@ catch (Exception exception)
 }
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
+app.MapMsContractorOpenApi();
 
 app.UseHttpsRedirection();
 

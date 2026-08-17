@@ -11,6 +11,7 @@ namespace MsContractor.VendorService.Controllers;
 public sealed class MoyskladSessionController(
     MoyskladSessionService service,
     IOptions<VendorOptions> options,
+    IOptions<DevSessionOptions> devSessionOptions,
     IWebHostEnvironment environment,
     TimeProvider timeProvider,
     ILogger<MoyskladSessionController> logger) : ControllerBase
@@ -69,6 +70,28 @@ public sealed class MoyskladSessionController(
         {
             return Error(StatusCodes.Status502BadGateway, "SESSION_UPSTREAM_ERROR", "MoySklad Vendor API is unavailable.");
         }
+    }
+
+    [HttpPost("dev")]
+    [ProducesResponseType<MoyskladSessionResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CreateDevAsync(CancellationToken cancellationToken)
+    {
+        if (!environment.IsDevelopment())
+            return NotFound();
+
+        Request.Cookies.TryGetValue(options.Value.SessionCookieName, out var priorToken);
+        var created = await service.CreateDevAsync(
+            devSessionOptions.Value.AccountId,
+            priorToken,
+            cancellationToken);
+
+        AppendSessionCookie(
+            created.Token,
+            "dev-created",
+            created.Response.AccountId,
+            created.Response.EmployeeId);
+        return Ok(created.Response);
     }
 
     [HttpGet("me")]
@@ -131,12 +154,11 @@ public sealed class MoyskladSessionController(
 
     private CookieOptions CreateCookieOptions()
     {
-        var secure = IsExternalHttps();
         return new CookieOptions
         {
             HttpOnly = true,
             Secure = true,
-            SameSite =SameSiteMode.None,
+            SameSite = SameSiteMode.None,
             Path = "/",
             IsEssential = true
         };

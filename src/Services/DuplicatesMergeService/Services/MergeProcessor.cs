@@ -14,7 +14,7 @@ public interface IMergeProcessor
     Task ProcessAsync(MergeRequested command, CancellationToken cancellationToken);
 }
 
-public sealed class MergeProcessor(
+public sealed partial class MergeProcessor(
     CatalogSyncDbContext dbContext,
     IMergeEgressClient egressClient,
     IMoySkladCounterpartyParser parser,
@@ -73,14 +73,13 @@ public sealed class MergeProcessor(
             return;
         }
 
-        foreach (var operation in job.Operations
-                     .Where(item => item.OperationType == MergeOperationTypes.ArchiveDuplicate)
-                     .OrderBy(item => item.Sequence))
-        {
-            if (MergeOperationStatuses.IsTerminal(operation.Status))
-                continue;
-            await ExecuteArchiveAsync(job, operation, cancellationToken);
-        }
+        var archiveOperations = job.Operations
+            .Where(item => item.OperationType == MergeOperationTypes.ArchiveDuplicate)
+            .Where(item => !MergeOperationStatuses.IsTerminal(item.Status))
+            .OrderBy(item => item.Sequence)
+            .ToArray();
+        if (archiveOperations.Length > 0)
+            await ExecuteArchiveBatchAsync(job, archiveOperations, cancellationToken);
 
         now = timeProvider.GetUtcNow();
         job.Status = job.Operations.Any(item => item.Status == MergeOperationStatuses.Failed)
@@ -92,59 +91,61 @@ public sealed class MergeProcessor(
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    private async Task<bool> ExecuteUpdateMainAsync(
+    private async Task ExecuteArchiveBatchAsync(
         MergeJob job,
-        MergeOperation operation,
-        MergeMainCounterpartyDto snapshot,
+        IReadOnlyList<MergeOperation> operations,
         CancellationToken cancellationToken)
     {
-        await MarkRunningAsync(operation, cancellationToken);
-        try
-        {
-            var response = await egressClient.UpdateAsync(
-                job.AccountId, operation.CounterpartyId, snapshot,
-                job.Id, operation.Id, job.RequestedByUserId, job.CorrelationId, cancellationToken);
-            var parsed = parser.ParseOne(response.Json);
-            EnsureResponse(operation.CounterpartyId, parsed, archivedRequired: false);
-            var local = await FindLocalAsync(job.AccountId, operation.CounterpartyId, cancellationToken);
-            normalizer.Apply(local, parsed, timeProvider.GetUtcNow());
-            Complete(operation);
-            await dbContext.SaveChangesAsync(cancellationToken);
-            return true;
-        }
-        catch (Exception exception) when (IsOperationFailure(exception))
-        {
-            if (await HandleFailureAsync(operation, exception, cancellationToken))
-                throw new MergeRetryableException("Update main counterparty will be retried.", exception);
-            await FailJobAsync(job, cancellationToken);
-            return false;
-        }
-    }
+        foreach (var operation in operations)
+            await MarkRunningAsync(operation, cancellationToken);
 
-    private async Task ExecuteArchiveAsync(
-        MergeJob job,
-        MergeOperation operation,
-        CancellationToken cancellationToken)
-    {
-        await MarkRunningAsync(operation, cancellationToken);
         try
         {
             // Local Archived=true deliberately does not skip this external operation.
             var response = await egressClient.ArchiveAsync(
-                job.AccountId, operation.CounterpartyId,
-                job.Id, operation.Id, job.RequestedByUserId, job.CorrelationId, cancellationToken);
-            var parsed = parser.ParseOne(response.Json);
-            EnsureResponse(operation.CounterpartyId, parsed, archivedRequired: true);
-            var local = await FindLocalAsync(job.AccountId, operation.CounterpartyId, cancellationToken);
-            normalizer.Apply(local, parsed, timeProvider.GetUtcNow());
-            Complete(operation);
+                job.AccountId, operations.Select(item => item.CounterpartyId).ToArray(),
+                job.Id, job.RequestedByUserId, job.CorrelationId, cancellationToken);
+            var parsedById = ParseArchiveBatch(response.Json, operations);
+            foreach (var operation in operations)
+            {
+                var parsed = parsedById[operation.CounterpartyId];
+                var local = await FindLocalAsync(job.AccountId, operation.CounterpartyId, cancellationToken);
+                normalizer.Apply(local, parsed, timeProvider.GetUtcNow());
+                Complete(operation);
+            }
             await dbContext.SaveChangesAsync(cancellationToken);
         }
         catch (Exception exception) when (IsOperationFailure(exception))
         {
-            if (await HandleFailureAsync(operation, exception, cancellationToken))
-                throw new MergeRetryableException("Archive counterparty will be retried.", exception);
+            var shouldRetry = false;
+            foreach (var operation in operations)
+                shouldRetry |= await HandleFailureAsync(operation, exception, cancellationToken);
+            if (shouldRetry)
+                throw new MergeRetryableException("Archive counterparties will be retried.", exception);
         }
+    }
+
+    private IReadOnlyDictionary<Guid, MsContractor.CatalogSyncService.Models.ParsedCounterparty> ParseArchiveBatch(
+        string json,
+        IReadOnlyList<MergeOperation> operations)
+    {
+        using var document = JsonDocument.Parse(json);
+        if (document.RootElement.ValueKind != JsonValueKind.Array)
+            throw new JsonException("MoySklad batch archive response must be an array.");
+
+        var expectedIds = operations.Select(item => item.CounterpartyId).ToHashSet();
+        var parsedById = new Dictionary<Guid, MsContractor.CatalogSyncService.Models.ParsedCounterparty>();
+        foreach (var item in document.RootElement.EnumerateArray())
+        {
+            var parsed = parser.ParseOne(item.GetRawText());
+            EnsureResponse(parsed.Value.Id, parsed, archivedRequired: true);
+            if (!expectedIds.Contains(parsed.Value.Id) || !parsedById.TryAdd(parsed.Value.Id, parsed))
+                throw new JsonException("MoySklad batch archive response does not match requested counterparties.");
+        }
+
+        if (parsedById.Count != expectedIds.Count)
+            throw new JsonException("MoySklad batch archive response is incomplete.");
+        return parsedById;
     }
 
     private async Task MarkRunningAsync(MergeOperation operation, CancellationToken cancellationToken)

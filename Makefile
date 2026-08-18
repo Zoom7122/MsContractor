@@ -4,10 +4,14 @@ DEV_PROFILE = dev-tools
 DEV_COMPOSE = $(COMPOSE) --env-file $(DEV_ENV) up -d --build --profile $(DEV_PROFILE) 
 SOLUTION = MsContractor.sln
 
-.PHONY: compose ps build logs dozzle test health
+.PHONY: compose recreate ps build logs dozzle test health
 
 compose:
 	docker compose --env-file .env.dev --profile dev-tools up -d --build
+
+recreate:
+	@test -n "$(SERVICE)" || (echo "Usage: make recreate SERVICE=<service-name>"; exit 1)
+	$(COMPOSE) --env-file $(DEV_ENV) --profile $(DEV_PROFILE) up -d --build --force-recreate $(SERVICE)
 
 
 logs:

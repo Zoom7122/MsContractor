@@ -93,22 +93,29 @@ public sealed class InternalCounterpartiesController(
             cancellationToken);
     }
 
-    [HttpPut("{counterpartyId:guid}/archive")]
+    [HttpPut("archive")]
     public async Task<IActionResult> ArchiveAsync(
         Guid accountId,
-        Guid counterpartyId,
+        [FromBody] InternalCounterpartyBatchArchiveRequest request,
         CancellationToken cancellationToken)
     {
         if (!InternalApiKeyAuthentication.IsAuthorized(Request, configuration))
             return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
-        if (counterpartyId == Guid.Empty)
-            return BadRequest(new InternalErrorResponse("INVALID_COUNTERPARTY_ID", "Counterparty id is invalid."));
-        if (!TryOperationContext(out var mergeJobId, out var operationId, out var userId))
-            return BadRequest(new InternalErrorResponse("INVALID_INTERNAL_CONTEXT", "Merge job, operation, and user headers are required."));
+        if (request.CounterpartyIds is null || request.CounterpartyIds.Count == 0 ||
+            request.CounterpartyIds.Any(id => id == Guid.Empty) ||
+            request.CounterpartyIds.Distinct().Count() != request.CounterpartyIds.Count)
+        {
+            return BadRequest(new InternalErrorResponse("INVALID_COUNTERPARTY_IDS", "At least one unique counterparty id is required."));
+        }
+        if (!TryHeaderGuid(InternalApiHeaders.MergeJobId, out var mergeJobId) ||
+            !TryHeaderGuid(InternalApiHeaders.UserId, out var userId))
+        {
+            return BadRequest(new InternalErrorResponse("INVALID_INTERNAL_CONTEXT", "Merge job and user headers are required."));
+        }
 
         return await ExecutePutAsync(
             () => gateway.ArchiveAsync(
-                accountId, counterpartyId, mergeJobId, operationId, userId,
+                accountId, request.CounterpartyIds, mergeJobId, userId,
                 CorrelationId(), cancellationToken),
             cancellationToken);
     }

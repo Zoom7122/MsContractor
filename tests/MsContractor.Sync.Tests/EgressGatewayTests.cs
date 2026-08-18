@@ -35,21 +35,31 @@ public sealed class EgressGatewayTests
     }
 
     [Fact]
-    public async Task ArchiveAsync_AlwaysSendsArchivedTrue()
+    public async Task ArchiveAsync_SendsBatchWithArchivedTrueAndCounterpartyMeta()
     {
         string? body = null;
+        HttpMethod? method = null;
         var counterpartyId = Guid.NewGuid();
         var gateway = CreateGateway(request =>
         {
+            method = request.Method;
             body = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
             return Response(HttpStatusCode.OK, $$"""{"id":"{{counterpartyId}}","name":"Duplicate","archived":true}""");
         });
 
         await gateway.ArchiveAsync(
-            Guid.NewGuid(), counterpartyId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), [counterpartyId], Guid.NewGuid(), Guid.NewGuid(),
             "correlation-id", CancellationToken.None);
 
-        Assert.Equal("{\"archived\":true}", body);
+        Assert.Equal(HttpMethod.Post, method);
+        using var payload = System.Text.Json.JsonDocument.Parse(body!);
+        var item = Assert.Single(payload.RootElement.EnumerateArray());
+        Assert.True(item.GetProperty("archived").GetBoolean());
+        Assert.Equal("counterparty", item.GetProperty("meta").GetProperty("type").GetString());
+        Assert.Equal(
+            "https://api.moysklad.ru/api/remap/1.2/entity/counterparty/metadata",
+            item.GetProperty("meta").GetProperty("metadataHref").GetString());
+        Assert.EndsWith($"entity/counterparty/{counterpartyId:D}", item.GetProperty("meta").GetProperty("href").GetString());
     }
 
     [Theory]

@@ -20,3 +20,6 @@ public sealed record InternalCounterpartyUpdateRequest(
     string? Email,
     string? Phone,
     string? Description);
+
+public sealed record InternalCounterpartyBatchArchiveRequest(
+    IReadOnlyList<Guid> CounterpartyIds);

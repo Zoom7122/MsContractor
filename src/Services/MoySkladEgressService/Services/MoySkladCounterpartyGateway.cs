@@ -34,7 +34,7 @@ public interface IMoySkladCounterpartyGateway
         CancellationToken cancellationToken);
 
     Task<MoySkladRawResponse> ArchiveAsync(
-        Guid accountId, Guid counterpartyId, Guid mergeJobId, Guid operationId,
+        Guid accountId, IReadOnlyList<Guid> counterpartyIds, Guid mergeJobId,
         Guid userId, string correlationId, CancellationToken cancellationToken);
 }
 
@@ -179,16 +179,29 @@ public sealed class MoySkladCounterpartyGateway(
 
     public Task<MoySkladRawResponse> ArchiveAsync(
         Guid accountId,
-        Guid counterpartyId,
+        IReadOnlyList<Guid> counterpartyIds,
         Guid mergeJobId,
-        Guid operationId,
         Guid userId,
         string correlationId,
-        CancellationToken cancellationToken) =>
-        PutAsync(
-            accountId, counterpartyId,
-            new Dictionary<string, object?> { ["archived"] = true },
-            mergeJobId, operationId, userId, correlationId, cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        var payload = counterpartyIds.Select(counterpartyId => new
+        {
+            meta = new
+            {
+                href = new Uri(httpClient.BaseAddress!, $"entity/counterparty/{counterpartyId:D}").ToString(),
+                metadataHref = new Uri(httpClient.BaseAddress!, "entity/counterparty/metadata").ToString(),
+                type = "counterparty",
+                mediaType = "application/json"
+            },
+            archived = true
+        }).ToArray();
+
+        logger.LogInformation(
+            "MoySklad counterparty batch archive payload: {Payload}",
+            JsonSerializer.Serialize(payload));
+        return PostBatchAsync(accountId, payload, mergeJobId, userId, correlationId, cancellationToken);
+    }
 
     private async Task<MoySkladRawResponse> PutAsync(
         Guid accountId,
@@ -239,6 +252,71 @@ public sealed class MoySkladCounterpartyGateway(
                 throw new EgressException(502, "MOYSKLAD_INVALID_RESPONSE", "MoySklad returned an empty response.");
             return new MoySkladRawResponse(
                 json, (int)response.StatusCode,
+                response.Content.Headers.ContentType?.MediaType, SafeHeaders(response));
+        }
+    }
+
+    private async Task<MoySkladRawResponse> PostBatchAsync<T>(
+        Guid accountId,
+        T payload,
+        Guid mergeJobId,
+        Guid userId,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        var accessToken = await tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
+        //Заглушка сделать лимитер
+        await rateLimiter.WaitAsync(accountId, userId, cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "entity/counterparty")
+        {
+            Content = JsonContent.Create(payload)
+        };
+
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        request.Headers.TryAddWithoutValidation("Accept", "application/json;charset=utf-8");
+
+        logger.LogInformation(
+            "MoySklad batch archive request: method={Method}, url={Url}, body={Body}",
+            request.Method, new Uri(httpClient.BaseAddress!, request.RequestUri!), JsonSerializer.Serialize(payload));
+        logger.LogInformation(
+            "Sending MoySklad counterparty batch archive: account_id={AccountId}, merge_job_id={MergeJobId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}",
+            accountId, mergeJobId, userId, correlationId);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await httpClient.SendAsync(
+                request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new EgressException(503, "MOYSKLAD_UNAVAILABLE", "MoySklad request timed out.");
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new EgressException(503, "MOYSKLAD_UNAVAILABLE", "MoySklad is unavailable.", exception);
+        }
+
+        using (response)
+        {
+            await rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+            logger.LogInformation(
+                "MoySklad counterparty batch archive completed: account_id={AccountId}, merge_job_id={MergeJobId}, status={StatusCode}, correlation_id={CorrelationId}",
+                accountId, mergeJobId, (int)response.StatusCode, correlationId);
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            logger.LogInformation(
+                "MoySklad batch archive response: status={StatusCode}, reason={ReasonPhrase}, body={Body}",
+                (int)response.StatusCode, response.ReasonPhrase, json);
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogWarning(
+                    "MoySklad counterparty batch archive rejected: status={StatusCode}, error={ErrorMessage}",
+                    (int)response.StatusCode, ExtractErrorMessage(json));
+                ThrowForMutationStatus(response.StatusCode);
+            }
+            if (string.IsNullOrWhiteSpace(json))
+                throw new EgressException(502, "MOYSKLAD_INVALID_RESPONSE", "MoySklad returned an empty response.");
+            return new MoySkladRawResponse(json, (int)response.StatusCode,
                 response.Content.Headers.ContentType?.MediaType, SafeHeaders(response));
         }
     }

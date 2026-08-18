@@ -33,6 +33,7 @@ public sealed class MergeProcessorTests
         Assert.True(duplicate.Archived);
         Assert.Equal(MergeJobStatuses.Completed, job.Status);
         Assert.Single(fixture.Egress.ArchiveCalls);
+        Assert.Equal([fixture.Duplicates[0].Id], fixture.Egress.ArchiveCalls[0]);
 
         await fixture.Processor.ProcessAsync(command, CancellationToken.None);
 
@@ -77,10 +78,11 @@ public sealed class MergeProcessorTests
             .ToListAsync();
         var job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
         Assert.False(duplicates.Single(item => item.Id == fixture.Duplicates[0].Id).Archived);
-        Assert.True(duplicates.Single(item => item.Id == fixture.Duplicates[1].Id).Archived);
-        Assert.Equal(2, fixture.Egress.ArchiveCalls.Count);
+        Assert.False(duplicates.Single(item => item.Id == fixture.Duplicates[1].Id).Archived);
+        Assert.Single(fixture.Egress.ArchiveCalls);
+        Assert.Equal(2, fixture.Egress.ArchiveCalls[0].Count);
         Assert.Equal(MergeJobStatuses.PartiallyCompleted, job.Status);
-        Assert.Single(job.Operations, item => item.Status == MergeOperationStatuses.Failed);
+        Assert.Equal(2, job.Operations.Count(item => item.Status == MergeOperationStatuses.Failed));
     }
 
     [Fact]
@@ -179,7 +181,7 @@ public sealed class MergeProcessorTests
     private sealed class FakeMergeEgressClient : IMergeEgressClient
     {
         public List<Guid> UpdateCalls { get; } = [];
-        public List<Guid> ArchiveCalls { get; } = [];
+        public List<IReadOnlyList<Guid>> ArchiveCalls { get; } = [];
         public Dictionary<Guid, string> Names { get; } = [];
         public Dictionary<Guid, Exception> ArchiveExceptions { get; } = [];
         public Exception? UpdateException { get; set; }
@@ -197,14 +199,20 @@ public sealed class MergeProcessorTests
         }
 
         public Task<MergeEgressResponse> ArchiveAsync(
-            Guid accountId, Guid counterpartyId, Guid mergeJobId, Guid operationId,
+            Guid accountId, IReadOnlyList<Guid> counterpartyIds, Guid mergeJobId,
             Guid userId, Guid correlationId, CancellationToken cancellationToken)
         {
-            ArchiveCalls.Add(counterpartyId);
-            if (ArchiveExceptions.TryGetValue(counterpartyId, out var exception))
+            ArchiveCalls.Add(counterpartyIds.ToArray());
+            if (counterpartyIds.Select(id => ArchiveExceptions.GetValueOrDefault(id)).FirstOrDefault(exception => exception is not null) is { } exception)
                 return Task.FromException<MergeEgressResponse>(exception);
-            return Task.FromResult(new MergeEgressResponse(Json(
-                counterpartyId, Names[counterpartyId], null, null, null, true)));
+            var json = JsonSerializer.Serialize(counterpartyIds.Select(counterpartyId => new
+            {
+                id = counterpartyId,
+                name = Names[counterpartyId],
+                archived = true,
+                updated = "2026-08-07 12:00:00.000"
+            }));
+            return Task.FromResult(new MergeEgressResponse(json));
         }
 
         private static string Json(

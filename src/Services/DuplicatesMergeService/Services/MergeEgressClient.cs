@@ -25,7 +25,7 @@ public interface IMergeEgressClient
         CancellationToken cancellationToken);
 
     Task<MergeEgressResponse> ArchiveAsync(
-        Guid accountId, Guid counterpartyId, Guid mergeJobId, Guid operationId,
+        Guid accountId, IReadOnlyList<Guid> counterpartyIds, Guid mergeJobId,
         Guid userId, Guid correlationId, CancellationToken cancellationToken);
 }
 
@@ -41,19 +41,19 @@ public sealed class MergeEgressClient(HttpClient httpClient, IConfiguration conf
             mergeJobId, operationId, userId, correlationId, cancellationToken);
 
     public Task<MergeEgressResponse> ArchiveAsync(
-        Guid accountId, Guid counterpartyId, Guid mergeJobId, Guid operationId,
-        Guid userId, Guid correlationId, CancellationToken cancellationToken) => SendAsync<object>(
+        Guid accountId, IReadOnlyList<Guid> counterpartyIds, Guid mergeJobId,
+        Guid userId, Guid correlationId, CancellationToken cancellationToken) => SendAsync(
             HttpMethod.Put,
-            $"internal/accounts/{accountId:D}/counterparties/{counterpartyId:D}/archive",
-            null,
-            mergeJobId, operationId, userId, correlationId, cancellationToken);
+            $"internal/accounts/{accountId:D}/counterparties/archive",
+            new InternalCounterpartyBatchArchiveRequest(counterpartyIds),
+            mergeJobId, null, userId, correlationId, cancellationToken);
 
     private async Task<MergeEgressResponse> SendAsync<T>(
         HttpMethod method,
         string uri,
         T? body,
         Guid mergeJobId,
-        Guid operationId,
+        Guid? operationId,
         Guid userId,
         Guid correlationId,
         CancellationToken cancellationToken)
@@ -63,7 +63,8 @@ public sealed class MergeEgressClient(HttpClient httpClient, IConfiguration conf
             request.Content = JsonContent.Create(body);
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.ApiKey, configuration["InternalApi:Key"]);
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.MergeJobId, mergeJobId.ToString("D"));
-        request.Headers.TryAddWithoutValidation(InternalApiHeaders.OperationId, operationId.ToString("D"));
+        if (operationId is not null)
+            request.Headers.TryAddWithoutValidation(InternalApiHeaders.OperationId, operationId.Value.ToString("D"));
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.UserId, userId.ToString("D"));
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.CorrelationId, correlationId.ToString("D"));
 

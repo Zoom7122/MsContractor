@@ -45,14 +45,28 @@ public sealed class VendorRequestLoggingMiddleware(
             }
             finally
             {
-                logger.LogInformation(
-                    "VendorService request completed at {CompletedAtUtc}: {Method} {Path} returned {StatusCode} in {DurationMs} ms with correlation {CorrelationId}",
-                    DateTimeOffset.UtcNow,
-                    context.Request.Method,
-                    context.Request.Path,
-                    context.Response.StatusCode,
-                    stopwatch.Elapsed.TotalMilliseconds,
-                    correlationId);
+                if (context.Response.StatusCode >= StatusCodes.Status400BadRequest)
+                {
+                    logger.LogError(
+                        "VendorService request completed at {CompletedAtUtc}: {Method} {Path} returned {StatusCode} in {DurationMs} ms with correlation {CorrelationId}",
+                        DateTimeOffset.UtcNow,
+                        context.Request.Method,
+                        context.Request.Path,
+                        context.Response.StatusCode,
+                        stopwatch.Elapsed.TotalMilliseconds,
+                        correlationId);
+                }
+                else
+                {
+                    logger.LogInformation(
+                        "VendorService request completed at {CompletedAtUtc}: {Method} {Path} returned {StatusCode} in {DurationMs} ms with correlation {CorrelationId}",
+                        DateTimeOffset.UtcNow,
+                        context.Request.Method,
+                        context.Request.Path,
+                        context.Response.StatusCode,
+                        stopwatch.Elapsed.TotalMilliseconds,
+                        correlationId);
+                }
             }
         }
     }

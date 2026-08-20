@@ -6,8 +6,14 @@ SOLUTION = MsContractor.sln
 
 .PHONY: compose recreate ps build logs dozzle test health
 
-compose:
+compose-up:
 	docker compose --env-file .env.dev --profile dev-tools up -d --build
+
+compose-down:
+	docker compose --env-file .env.dev --profile dev-tools down 
+
+compose-down-del:
+	docker compose --env-file .env.dev --profile dev-tools down -v
 
 recreate:
 	@test -n "$(SERVICE)" || (echo "Usage: make recreate SERVICE=<service-name>"; exit 1)

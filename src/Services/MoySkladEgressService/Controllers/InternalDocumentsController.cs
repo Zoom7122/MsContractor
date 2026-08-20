@@ -1,0 +1,66 @@
+using Microsoft.AspNetCore.Mvc;
+using MsContractor.BuildingBlocks.Security;
+using MsContractor.Contracts.Internal;
+using MsContractor.MoySkladEgressService.Services;
+
+namespace MsContractor.MoySkladEgressService.Controllers;
+
+[ApiController]
+[Route("internal/accounts/{accountId:guid}/documents")]
+public sealed class InternalDocumentsController(
+    IMoySkladDocumentDiscoveryService discoveryService,
+    IConfiguration configuration) : ControllerBase
+{
+    [HttpPost("discover")]
+    [ProducesResponseType<MoySkladDocumentDiscoveryResponse>(StatusCodes.Status200OK)]
+    public async Task<IActionResult> DiscoverAsync(
+        Guid accountId,
+        [FromBody] MoySkladDocumentDiscoveryRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!InternalApiKeyAuthentication.IsAuthorized(Request, configuration))
+            return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
+        if (accountId == Guid.Empty)
+            return BadRequest(new InternalErrorResponse("INVALID_ACCOUNT_ID", "accountId must be a non-empty guid."));
+        if (request.CounterpartyIds is null ||
+            request.CounterpartyIds.Count == 0 ||
+            request.CounterpartyIds.Any(id => id == Guid.Empty) ||
+            request.CounterpartyIds.Distinct().Count() != request.CounterpartyIds.Count)
+        {
+            return BadRequest(new InternalErrorResponse(
+                "INVALID_COUNTERPARTY_IDS",
+                "At least one unique non-empty counterparty id is required."));
+        }
+        if (!TryHeaderGuid(InternalApiHeaders.UserId, out var userId))
+        {
+            return BadRequest(new InternalErrorResponse(
+                "INVALID_INTERNAL_CONTEXT",
+                "A valid user header is required."));
+        }
+
+        var correlationId = Request.Headers[InternalApiHeaders.CorrelationId].ToString();
+        if (string.IsNullOrWhiteSpace(correlationId))
+            correlationId = Guid.NewGuid().ToString("D");
+        Response.Headers[InternalApiHeaders.CorrelationId] = correlationId;
+
+        try
+        {
+            var result = await discoveryService.DiscoverAsync(
+                accountId,
+                userId,
+                correlationId,
+                request.CounterpartyIds,
+                cancellationToken);
+            return Ok(result);
+        }
+        catch (EgressException exception)
+        {
+            return StatusCode(
+                exception.StatusCode,
+                new InternalErrorResponse(exception.Code, exception.SafeMessage));
+        }
+    }
+
+    private bool TryHeaderGuid(string name, out Guid value) =>
+        Guid.TryParse(Request.Headers[name].ToString(), out value) && value != Guid.Empty;
+}

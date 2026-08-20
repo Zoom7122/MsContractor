@@ -522,7 +522,8 @@ onMounted(() => {
           <button
             class="duplicates-button duplicates-button--primary"
             type="button"
-            disabled
+            :disabled="!canGoToMerge"
+            @click="handleGoToMerge"
           >
             Перейти к объединению
           </button>

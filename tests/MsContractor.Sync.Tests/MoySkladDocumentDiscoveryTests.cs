@@ -661,6 +661,12 @@ public sealed class MoySkladDocumentDiscoveryServiceTests
             Calls.Add(call);
             return callback(call);
         }
+
+        public Task<MoySkladDocumentChangeChunkResult> ChangeCounterpartyAsync(
+            Guid accountId, Guid requestedByUserId, Guid mergeJobId, Guid operationId,
+            string correlationId, Guid mainCounterpartyId, string documentType,
+            IReadOnlyList<MoySkladDocumentChangeItem> documents, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed record DocumentPageCall(
@@ -807,10 +813,20 @@ public sealed class InternalDocumentsControllerTests
         if (correlationId is not null)
             context.Request.Headers[InternalApiHeaders.CorrelationId] = correlationId;
 
-        return new InternalDocumentsController(service, configuration)
+        return new InternalDocumentsController(service, new NoopDocumentChangeService(), configuration)
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };
+    }
+
+    private sealed class NoopDocumentChangeService : IMoySkladDocumentChangeService
+    {
+        public Task<MoySkladDocumentChangeCounterpartyResponse> ChangeCounterpartyAsync(
+            Guid accountId, Guid requestedByUserId, Guid mergeJobId, Guid operationId,
+            string correlationId, MoySkladDocumentChangeCounterpartyRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new MoySkladDocumentChangeCounterpartyResponse(
+                request.MainCounterpartyId, request.Documents?.Count ?? 0, 0, 0, 0, [], [], []));
     }
 
     private sealed class CapturingDiscoveryService : IMoySkladDocumentDiscoveryService

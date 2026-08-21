@@ -9,6 +9,7 @@ namespace MsContractor.MoySkladEgressService.Controllers;
 [Route("internal/accounts/{accountId:guid}/documents")]
 public sealed class InternalDocumentsController(
     IMoySkladDocumentDiscoveryService discoveryService,
+    IMoySkladDocumentChangeService changeService,
     IConfiguration configuration) : ControllerBase
 {
     [HttpPost("discover")]
@@ -59,6 +60,53 @@ public sealed class InternalDocumentsController(
                 exception.StatusCode,
                 new InternalErrorResponse(exception.Code, exception.SafeMessage));
         }
+    }
+
+    [HttpPost("change-counterparty")]
+    [ProducesResponseType<MoySkladDocumentChangeCounterpartyResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<MoySkladDocumentChangeCounterpartyResponse>(StatusCodes.Status207MultiStatus)]
+    public async Task<IActionResult> ChangeCounterpartyAsync(
+        Guid accountId,
+        [FromBody] MoySkladDocumentChangeCounterpartyRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!InternalApiKeyAuthentication.IsAuthorized(Request, configuration))
+            return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
+        if (accountId == Guid.Empty)
+            return BadRequest(new InternalErrorResponse("INVALID_ACCOUNT_ID", "accountId must be a non-empty guid."));
+        if (request.MainCounterpartyId == Guid.Empty || request.Documents is null || request.Documents.Count == 0 ||
+            request.Documents.Any(item => string.IsNullOrWhiteSpace(item.DocumentType) || item.DocumentId == Guid.Empty) ||
+            request.Documents.Select(item => (item.DocumentType, item.DocumentId)).Distinct().Count() != request.Documents.Count)
+        {
+            return BadRequest(new InternalErrorResponse(
+                "INVALID_DOCUMENT_CHANGE_REQUEST",
+                "A main counterparty and at least one unique document type/id pair are required."));
+        }
+        if (!TryHeaderGuid(InternalApiHeaders.UserId, out var userId) ||
+            !TryHeaderGuid(InternalApiHeaders.MergeJobId, out var mergeJobId) ||
+            !TryHeaderGuid(InternalApiHeaders.OperationId, out var operationId))
+        {
+            return BadRequest(new InternalErrorResponse(
+                "INVALID_INTERNAL_CONTEXT",
+                "Merge job, operation, and user headers are required."));
+        }
+
+        var correlationId = Request.Headers[InternalApiHeaders.CorrelationId].ToString();
+        if (string.IsNullOrWhiteSpace(correlationId))
+            correlationId = Guid.NewGuid().ToString("D");
+        Response.Headers[InternalApiHeaders.CorrelationId] = correlationId;
+
+        var result = await changeService.ChangeCounterpartyAsync(
+            accountId,
+            userId,
+            mergeJobId,
+            operationId,
+            correlationId,
+            request,
+            cancellationToken);
+        return result.FailedCount == 0
+            ? Ok(result)
+            : StatusCode(StatusCodes.Status207MultiStatus, result);
     }
 
     private bool TryHeaderGuid(string name, out Guid value) =>

@@ -8,6 +8,7 @@ x-service-env: &service-env
   Redis__ConnectionString: redis:${REDIS_PORT}
   Kafka__BootstrapServers: kafka:${KAFKA_INTERNAL_PORT}
   InternalApi__Key: ${INTERNAL_API_KEY:?Set INTERNAL_API_KEY to a non-empty secret before starting Compose}
+  DOCUMENTS_PUT_CHANGE: ${DOCUMENTS_PUT_CHANGE:?Set DOCUMENTS_PUT_CHANGE to a non-empty comma-separated list}
 
   Services__GatewayBff__BaseUrl: http://gateway-bff:${SERVICE_INTERNAL_PORT}
   Services__VendorService__BaseUrl: http://vendor-service:${SERVICE_INTERNAL_PORT}

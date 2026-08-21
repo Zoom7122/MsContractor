@@ -19,6 +19,7 @@ public sealed partial class MergeProcessor(
     CatalogSyncDbContext dbContext,
     IMergeEgressClient egressClient,
     IDocumentDiscoveryEgressClient documentDiscoveryClient,
+    IDocumentChangeEgressClient documentChangeClient,
     IMoySkladCounterpartyParser parser,
     ICounterpartyNormalizer normalizer,
     TimeProvider timeProvider,
@@ -59,6 +60,8 @@ public sealed partial class MergeProcessor(
             return;
         }
 
+        await EnsureDocumentChangeOperationAsync(job, cancellationToken);
+
         var now = timeProvider.GetUtcNow();
         job.Status = MergeJobStatuses.Running;
         job.StartedAt ??= now;
@@ -89,6 +92,20 @@ public sealed partial class MergeProcessor(
             return;
         }
 
+        var documentChange = job.Operations.Single(
+            item => item.OperationType == MergeOperationTypes.ChangeDocumentCounterparties);
+        if (!MergeOperationStatuses.IsTerminal(documentChange.Status))
+        {
+            if (!await ExecuteDocumentChangeAsync(
+                    job, documentChange, command.DuplicateCounterpartyIds, cancellationToken))
+                return;
+        }
+        else if (documentChange.Status == MergeOperationStatuses.Failed)
+        {
+            await FailJobAsync(job, cancellationToken);
+            return;
+        }
+
         var archiveOperations = job.Operations
             .Where(item => item.OperationType == MergeOperationTypes.ArchiveDuplicate)
             .Where(item => !MergeOperationStatuses.IsTerminal(item.Status))
@@ -105,6 +122,137 @@ public sealed partial class MergeProcessor(
         job.UpdatedAt = now;
         AddInbox(job.MessageId, now);
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task EnsureDocumentChangeOperationAsync(MergeJob job, CancellationToken cancellationToken)
+    {
+        if (job.Operations.Any(item => item.OperationType == MergeOperationTypes.ChangeDocumentCounterparties))
+            return;
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        foreach (var operation in job.Operations.Where(item => item.Sequence >= 2).OrderByDescending(item => item.Sequence))
+        {
+            operation.Sequence++;
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        var now = timeProvider.GetUtcNow();
+        var documentChange = new MergeOperation
+        {
+            Id = Guid.NewGuid(),
+            MergeJobId = job.Id,
+            MergeJob = job,
+            AccountId = job.AccountId,
+            Sequence = 2,
+            OperationType = MergeOperationTypes.ChangeDocumentCounterparties,
+            CounterpartyId = job.MainCounterpartyId,
+            Status = MergeOperationStatuses.Pending,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        job.Operations.Add(documentChange);
+        dbContext.MergeOperations.Add(documentChange);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task<bool> ExecuteDocumentChangeAsync(
+        MergeJob job,
+        MergeOperation operation,
+        IReadOnlyList<Guid> duplicateCounterpartyIds,
+        CancellationToken cancellationToken)
+    {
+        await MarkRunningAsync(operation, cancellationToken);
+        try
+        {
+            var rows = await dbContext.CounterpartyDocuments
+                .Where(item => item.AccountId == job.AccountId &&
+                               duplicateCounterpartyIds.Contains(item.CounterpartyId))
+                .OrderBy(item => item.DocumentType)
+                .ThenBy(item => item.DocumentId)
+                .ToListAsync(cancellationToken);
+            if (rows.Count == 0)
+            {
+                Complete(operation);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                return true;
+            }
+
+            var documents = rows
+                .Select(item => new MoySkladDocumentChangeItem(item.DocumentType, item.DocumentId))
+                .ToArray();
+            var response = await documentChangeClient.ChangeCounterpartyAsync(
+                job.AccountId,
+                job.MainCounterpartyId,
+                documents,
+                job.Id,
+                operation.Id,
+                job.RequestedByUserId,
+                job.CorrelationId,
+                cancellationToken);
+            ValidateDocumentChangeResponse(job.MainCounterpartyId, documents, response);
+
+            var changedKeys = response.ChangedDocuments
+                .Select(item => (item.DocumentType, item.DocumentId))
+                .ToHashSet();
+            var now = timeProvider.GetUtcNow();
+            foreach (var row in rows.Where(item => changedKeys.Contains((item.DocumentType, item.DocumentId))))
+            {
+                row.CounterpartyId = job.MainCounterpartyId;
+                row.UpdatedAt = now;
+            }
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            if (response.Failures.Count == 0)
+            {
+                Complete(operation);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                return true;
+            }
+
+            var allRetryable = response.Failures.All(item => item.Retryable);
+            var representative = response.Failures.FirstOrDefault(item => !item.Retryable) ?? response.Failures[0];
+            var error = new MergeEgressException(
+                representative.Code,
+                $"Document counterparty change failed for {response.Failures.Count} document(s). {representative.Message}",
+                allRetryable ? 503 : 400);
+            if (await HandleFailureAsync(operation, error, cancellationToken))
+                throw new MergeRetryableException("Document counterparty change will be retried.", error);
+
+            await FailJobAsync(job, cancellationToken);
+            return false;
+        }
+        catch (Exception exception) when (IsOperationFailure(exception))
+        {
+            if (await HandleFailureAsync(operation, exception, cancellationToken))
+                throw new MergeRetryableException("Document counterparty change will be retried.", exception);
+
+            await FailJobAsync(job, cancellationToken);
+            return false;
+        }
+    }
+
+    private static void ValidateDocumentChangeResponse(
+        Guid mainCounterpartyId,
+        IReadOnlyList<MoySkladDocumentChangeItem> requested,
+        MoySkladDocumentChangeCounterpartyResponse response)
+    {
+        var requestedKeys = requested.Select(item => (item.DocumentType, item.DocumentId)).ToHashSet();
+        var returnedKeys = response.ChangedDocuments.Select(item => (item.DocumentType, item.DocumentId))
+            .Concat(response.SkippedDocuments.Select(item => (item.DocumentType, item.DocumentId)))
+            .Concat(response.Failures.Select(item => (item.DocumentType, item.DocumentId)))
+            .ToArray();
+        if (response.MainCounterpartyId != mainCounterpartyId ||
+            response.RequestedCount != requested.Count ||
+            response.ChangedCount != response.ChangedDocuments.Count ||
+            response.SkippedCount != response.SkippedDocuments.Count ||
+            response.FailedCount != response.Failures.Count ||
+            returnedKeys.Length != requested.Count ||
+            returnedKeys.Distinct().Count() != returnedKeys.Length ||
+            !returnedKeys.ToHashSet().SetEquals(requestedKeys))
+        {
+            throw new JsonException("Egress returned an inconsistent document change response.");
+        }
     }
 
     private async Task<bool> ExecuteDocumentDiscoveryAsync(

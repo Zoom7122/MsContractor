@@ -35,11 +35,12 @@ public sealed class MergeProcessorTests
         Assert.True(duplicate.Archived);
         Assert.Equal(2, documents.Count);
         Assert.Contains(documents, item => item.CounterpartyId == fixture.Main.Id && item.DocumentType == "customerorder");
-        Assert.Contains(documents, item => item.CounterpartyId == fixture.Duplicates[0].Id && item.DocumentType == "demand");
+        Assert.Contains(documents, item => item.CounterpartyId == fixture.Main.Id && item.DocumentType == "demand");
         Assert.Equal(MergeJobStatuses.Completed, job.Status);
         Assert.Equal(MergeOperationStatuses.Completed,
             job.Operations.Single(item => item.OperationType == MergeOperationTypes.DiscoverDocuments).Status);
         Assert.Single(fixture.Egress.ArchiveCalls);
+        Assert.Single(fixture.DocumentChanges.Calls);
         Assert.Equal([fixture.Duplicates[0].Id], fixture.Egress.ArchiveCalls[0]);
 
         await fixture.Processor.ProcessAsync(command, CancellationToken.None);
@@ -133,11 +134,97 @@ public sealed class MergeProcessorTests
         Assert.Empty(fixture.Egress.ArchiveCalls);
     }
 
+    [Fact]
+    public async Task ProcessAsync_DocumentChangePartialFailureKeepsSuccessAndStopsBeforeArchive()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 2);
+        var command = await fixture.CreateJobAsync();
+        fixture.DocumentChanges.Response = (mainId, documents) =>
+            new MoySkladDocumentChangeCounterpartyResponse(
+                mainId,
+                documents.Count,
+                1,
+                0,
+                1,
+                [documents[0]],
+                [],
+                [new MoySkladDocumentChangeFailure(
+                    documents[1].DocumentType, documents[1].DocumentId,
+                    "MOYSKLAD_3008", "Document is locked.", 400, false)]);
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        fixture.Db.ChangeTracker.Clear();
+        var main = await fixture.Db.Counterparties.SingleAsync(item => item.Id == fixture.Main.Id);
+        var job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
+        var stored = await fixture.Db.CounterpartyDocuments.Where(item => item.DocumentType == "demand").ToListAsync();
+        Assert.Equal("Updated Main", main.Name);
+        Assert.Equal(MergeJobStatuses.Failed, job.Status);
+        Assert.Equal(MergeOperationStatuses.Failed,
+            job.Operations.Single(item => item.OperationType == MergeOperationTypes.ChangeDocumentCounterparties).Status);
+        Assert.Single(stored, item => item.CounterpartyId == fixture.Main.Id);
+        Assert.Single(stored, item => item.CounterpartyId != fixture.Main.Id);
+        Assert.Empty(fixture.Egress.ArchiveCalls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_RetryableDocumentChangeRetriesOnlyDocumentsStillOnDuplicates()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 2, maxAttempts: 2);
+        var command = await fixture.CreateJobAsync();
+        fixture.DocumentChanges.Response = (mainId, documents) =>
+            new MoySkladDocumentChangeCounterpartyResponse(
+                mainId, documents.Count, 1, 0, 1, [documents[0]], [],
+                [new MoySkladDocumentChangeFailure(
+                    documents[1].DocumentType, documents[1].DocumentId,
+                    "MOYSKLAD_RATE_LIMITED", "Rate limit.", 429, true)]);
+
+        await Assert.ThrowsAsync<MergeRetryableException>(() =>
+            fixture.Processor.ProcessAsync(command, CancellationToken.None));
+        fixture.DocumentChanges.Response = null;
+        fixture.Db.ChangeTracker.Clear();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        Assert.Equal(2, fixture.DocumentChanges.Calls.Count);
+        Assert.Equal(2, fixture.DocumentChanges.Calls[0].Count);
+        Assert.Single(fixture.DocumentChanges.Calls[1]);
+        Assert.Single(fixture.Egress.UpdateCalls);
+        Assert.Single(fixture.Egress.ArchiveCalls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_AddsMissingDocumentChangeOperationToLegacyActiveJob()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var command = await fixture.CreateJobAsync();
+        var job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
+        var missing = job.Operations.Single(item =>
+            item.OperationType == MergeOperationTypes.ChangeDocumentCounterparties);
+        fixture.Db.MergeOperations.Remove(missing);
+        await fixture.Db.SaveChangesAsync();
+        var archive = job.Operations.Single(item => item.OperationType == MergeOperationTypes.ArchiveDuplicate);
+        archive.Sequence = 2;
+        await fixture.Db.SaveChangesAsync();
+        fixture.Db.ChangeTracker.Clear();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        fixture.Db.ChangeTracker.Clear();
+        job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
+        Assert.Equal(2, job.Operations.Single(item =>
+            item.OperationType == MergeOperationTypes.ChangeDocumentCounterparties).Sequence);
+        Assert.Equal(3, job.Operations.Single(item =>
+            item.OperationType == MergeOperationTypes.ArchiveDuplicate).Sequence);
+        Assert.Equal(MergeJobStatuses.Completed, job.Status);
+    }
+
     private sealed class Fixture(
         SqliteConnection connection,
         CatalogSyncDbContext db,
         FakeMergeEgressClient egress,
         FakeDocumentDiscoveryEgressClient documents,
+        FakeDocumentChangeEgressClient documentChanges,
         int maxAttempts) : IAsyncDisposable
     {
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -145,11 +232,12 @@ public sealed class MergeProcessorTests
         public CatalogSyncDbContext Db { get; } = db;
         public FakeMergeEgressClient Egress { get; } = egress;
         public FakeDocumentDiscoveryEgressClient Documents { get; } = documents;
+        public FakeDocumentChangeEgressClient DocumentChanges { get; } = documentChanges;
         public Guid AccountId { get; } = Guid.NewGuid();
         public Counterparty Main { get; private set; } = null!;
         public List<Counterparty> Duplicates { get; } = [];
         public MergeProcessor Processor => new(
-            Db, Egress, Documents, new MoySkladCounterpartyParser(), new CounterpartyNormalizer(),
+            Db, Egress, Documents, DocumentChanges, new MoySkladCounterpartyParser(), new CounterpartyNormalizer(),
             TimeProvider.System,
             new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -166,7 +254,8 @@ public sealed class MergeProcessorTests
             await db.Database.EnsureCreatedAsync();
             var egress = new FakeMergeEgressClient();
             var documents = new FakeDocumentDiscoveryEgressClient();
-            var fixture = new Fixture(connection, db, egress, documents, maxAttempts);
+            var documentChanges = new FakeDocumentChangeEgressClient();
+            var fixture = new Fixture(connection, db, egress, documents, documentChanges, maxAttempts);
             var run = NewRun(fixture.AccountId);
             fixture.Main = NewCounterparty(fixture.AccountId, run, "Main");
             db.Add(run);
@@ -210,6 +299,24 @@ public sealed class MergeProcessorTests
         {
             await Db.DisposeAsync();
             await Connection.DisposeAsync();
+        }
+    }
+
+    private sealed class FakeDocumentChangeEgressClient : IDocumentChangeEgressClient
+    {
+        public List<IReadOnlyList<MoySkladDocumentChangeItem>> Calls { get; } = [];
+        public Func<Guid, IReadOnlyList<MoySkladDocumentChangeItem>, MoySkladDocumentChangeCounterpartyResponse>? Response { get; set; }
+
+        public Task<MoySkladDocumentChangeCounterpartyResponse> ChangeCounterpartyAsync(
+            Guid accountId, Guid mainCounterpartyId, IReadOnlyList<MoySkladDocumentChangeItem> documents,
+            Guid mergeJobId, Guid operationId, Guid userId, Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add(documents.ToArray());
+            return Task.FromResult(Response?.Invoke(mainCounterpartyId, documents) ??
+                new MoySkladDocumentChangeCounterpartyResponse(
+                    mainCounterpartyId, documents.Count, documents.Count, 0, 0,
+                    documents.ToArray(), [], []));
         }
     }
 

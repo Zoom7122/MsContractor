@@ -35,6 +35,12 @@ builder.Services.AddHttpClient<IDocumentDiscoveryEgressClient, DocumentDiscovery
     client.Timeout = builder.Configuration.GetValue<TimeSpan?>("Merge:DocumentDiscoveryTimeout")
         ?? TimeSpan.FromMinutes(10);
 });
+builder.Services.AddHttpClient<IDocumentChangeEgressClient, DocumentChangeEgressClient>(client =>
+{
+    client.BaseAddress = new Uri(egressBaseUrl.EndsWith('/') ? egressBaseUrl : $"{egressBaseUrl}/");
+    client.Timeout = builder.Configuration.GetValue<TimeSpan?>("Merge:DocumentDiscoveryTimeout")
+        ?? TimeSpan.FromMinutes(10);
+});
 builder.Services.AddSingleton<IProducer<string, string>>(_ =>
     new ProducerBuilder<string, string>(new ProducerConfig
     {

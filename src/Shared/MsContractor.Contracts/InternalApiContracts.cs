@@ -39,3 +39,34 @@ public sealed record MoySkladDocumentTypeCount(
 public sealed record MoySkladDocumentDiscoveryResponse(
     IReadOnlyList<MoySkladDocumentReference> Documents,
     IReadOnlyList<MoySkladDocumentTypeCount> Counts);
+
+public sealed record MoySkladDocumentChangeCounterpartyRequest(
+    Guid MainCounterpartyId,
+    IReadOnlyList<MoySkladDocumentChangeItem>? Documents);
+
+public sealed record MoySkladDocumentChangeItem(
+    string DocumentType,
+    Guid DocumentId);
+
+public sealed record MoySkladDocumentChangeSkippedItem(
+    string DocumentType,
+    Guid DocumentId,
+    string Reason);
+
+public sealed record MoySkladDocumentChangeFailure(
+    string DocumentType,
+    Guid DocumentId,
+    string Code,
+    string Message,
+    int StatusCode,
+    bool Retryable);
+
+public sealed record MoySkladDocumentChangeCounterpartyResponse(
+    Guid MainCounterpartyId,
+    int RequestedCount,
+    int ChangedCount,
+    int SkippedCount,
+    int FailedCount,
+    IReadOnlyList<MoySkladDocumentChangeItem> ChangedDocuments,
+    IReadOnlyList<MoySkladDocumentChangeSkippedItem> SkippedDocuments,
+    IReadOnlyList<MoySkladDocumentChangeFailure> Failures);

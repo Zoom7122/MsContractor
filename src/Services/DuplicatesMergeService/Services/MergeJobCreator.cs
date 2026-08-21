@@ -97,11 +97,12 @@ public sealed class MergeJobCreator(
         };
         job.Operations.Add(NewOperation(job, 0, MergeOperationTypes.DiscoverDocuments, request.MainCounterpartyId, now));
         job.Operations.Add(NewOperation(job, 1, MergeOperationTypes.UpdateMainCounterparty, request.MainCounterpartyId, now));
+        job.Operations.Add(NewOperation(job, 2, MergeOperationTypes.ChangeDocumentCounterparties, request.MainCounterpartyId, now));
         for (var index = 0; index < request.DuplicateCounterpartyIds.Count; index++)
         {
             job.Operations.Add(NewOperation(
                 job,
-                index + 2,
+                index + 3,
                 MergeOperationTypes.ArchiveDuplicate,
                 request.DuplicateCounterpartyIds[index],
                 now));

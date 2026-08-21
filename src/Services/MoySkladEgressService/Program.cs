@@ -23,7 +23,10 @@ var egressOptions = new EgressOptions
         "http://localhost:5011/"),
     InternalApiKey = builder.Configuration["InternalApi:Key"] ?? string.Empty
 };
+var documentChangeOptions = MoySkladDocumentChangeOptions.Parse(
+    builder.Configuration["DOCUMENTS_PUT_CHANGE"]);
 builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(egressOptions));
+builder.Services.AddSingleton(documentChangeOptions);
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     ConnectionMultiplexer.Connect(
         builder.Configuration["Redis:ConnectionString"]
@@ -51,6 +54,7 @@ builder.Services.AddHttpClient<IMoySkladDocumentGateway, MoySkladDocumentGateway
     AutomaticDecompression = DecompressionMethods.GZip
 });
 builder.Services.AddScoped<IMoySkladDocumentDiscoveryService, MoySkladDocumentDiscoveryService>();
+builder.Services.AddScoped<IMoySkladDocumentChangeService, MoySkladDocumentChangeService>();
 builder.Services.AddSingleton<IMoySkladRateLimiter, ObservingMoySkladRateLimiter>();
 builder.Services.AddHealthChecks()
     .AddCheck<EgressReadinessHealthCheck>("egress-dependencies", tags: ["ready"]);

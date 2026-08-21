@@ -1,0 +1,15 @@
+:root {
+  --app-color-primary: #168de2;
+  --app-color-primary-dark: #0f76c4;
+  --app-color-text: #263238;
+  --app-color-text-secondary: #66727d;
+  --app-color-border: #d8dde3;
+  --app-color-border-light: #e7eaee;
+  --app-color-surface: #ffffff;
+  --app-color-background: #f4f6f8;
+  --app-color-success: #32a852;
+  --app-color-warning: #d99614;
+  --app-color-danger: #d9534f;
+  --app-sidebar-width: 220px;
+  --app-sidebar-collapsed-width: 58px;
+}

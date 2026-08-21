@@ -1,0 +1,5 @@
+.story-page {
+  min-height: 100vh;
+  padding: 16px;
+  background: var(--app-color-background);
+}

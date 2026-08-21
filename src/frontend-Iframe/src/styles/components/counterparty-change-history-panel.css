@@ -1,0 +1,113 @@
+.counterparty-history {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.counterparty-history__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.counterparty-history__header h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.counterparty-history__header p {
+  margin: 3px 0 0;
+  color: var(--app-color-text-secondary);
+  font-size: 12px;
+}
+
+.counterparty-history__tabs {
+  margin-bottom: -12px;
+}
+
+.counterparty-history__tabs :deep(.el-tabs__header) {
+  margin-bottom: 0;
+}
+
+:deep(.counterparty-history__filters > .el-card__body) {
+  padding: 10px 12px;
+}
+
+.counterparty-history__filter-grid {
+  display: grid;
+  grid-template-columns: minmax(210px, 1.5fr) repeat(5, minmax(125px, 1fr)) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.counterparty-history__filter-grid :deep(.el-form-item) {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.counterparty-history__filter-grid :deep(.el-select),
+.counterparty-history__filter-grid :deep(.el-date-editor) {
+  width: 100%;
+}
+
+.counterparty-history__filter-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.counterparty-history__table {
+  width: 100%;
+}
+
+.counterparty-history__counterparty {
+  max-width: calc(100% - 60px);
+  overflow: hidden;
+  vertical-align: middle;
+  text-overflow: ellipsis;
+}
+
+.counterparty-history__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--app-color-text-secondary);
+  font-size: 11px;
+}
+
+@media (max-width: 1250px) {
+  .counterparty-history__filter-grid {
+    grid-template-columns: repeat(3, minmax(150px, 1fr));
+  }
+
+  .counterparty-history__field--wide {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 700px) {
+  .counterparty-history__header {
+    flex-direction: column;
+  }
+
+  .counterparty-history__filter-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .counterparty-history__field--wide,
+  .counterparty-history__filter-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 480px) {
+  .counterparty-history__filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .counterparty-history__field--wide,
+  .counterparty-history__filter-actions {
+    grid-column: auto;
+  }
+}

@@ -1,0 +1,238 @@
+.merge-page {
+  min-width: 0;
+}
+
+:deep(.merge-dialog) {
+  display: flex;
+  height: 100vh;
+  flex-direction: column;
+  margin: 0;
+  overflow: hidden;
+  background: var(--app-color-background);
+}
+
+:deep(.merge-dialog .el-dialog__header) {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 12px 18px;
+  background: #fff;
+  border-bottom: 1px solid var(--app-color-border);
+}
+
+:deep(.merge-dialog .el-dialog__body) {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 14px 18px;
+}
+
+:deep(.merge-dialog .el-dialog__footer) {
+  flex: 0 0 auto;
+  padding: 10px 18px;
+  background: #fff;
+  border-top: 1px solid var(--app-color-border);
+}
+
+.merge-surface__topbar,
+.merge-surface__toolbar,
+.merge-panel__header--spread,
+.merge-counterparty-card__top,
+.merge-counterparty-card__title-row,
+.merge-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.merge-surface__title-block {
+  min-width: 0;
+}
+
+.merge-surface__eyebrow {
+  margin: 0 0 2px;
+  color: var(--app-color-primary-dark);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.merge-surface__title {
+  margin: 0;
+  font-size: 19px;
+}
+
+.merge-surface__subtitle {
+  margin: 3px 0 0;
+  color: var(--app-color-text-secondary);
+  font-size: 11px;
+}
+
+.merge-workspace {
+  display: grid;
+  gap: 12px;
+}
+
+.merge-panel {
+  min-width: 0;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid var(--app-color-border);
+  border-radius: 4px;
+}
+
+.merge-panel__header {
+  margin-bottom: 10px;
+}
+
+.merge-panel__header h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.merge-panel__header p {
+  margin: 3px 0 0;
+  color: var(--app-color-text-secondary);
+  font-size: 11px;
+}
+
+.merge-counterparty-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 8px;
+}
+
+.merge-counterparty-card {
+  min-width: 0;
+}
+
+.merge-counterparty-card--primary {
+  border-color: var(--app-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+:deep(.merge-counterparty-card .el-card__body) {
+  padding: 10px 12px;
+}
+
+.merge-counterparty-card__top {
+  align-items: flex-start;
+}
+
+.merge-counterparty-card__top :deep(.el-radio) {
+  min-width: 0;
+  height: auto;
+  margin-right: 0;
+  align-items: flex-start;
+  white-space: normal;
+}
+
+.merge-counterparty-card__top :deep(.el-radio__label) {
+  min-width: 0;
+  padding-left: 7px;
+}
+
+.merge-counterparty-card__identity {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.merge-counterparty-card__title-row {
+  justify-content: flex-start;
+}
+
+.merge-counterparty-card__identity > span:last-child,
+.merge-counterparty-card__timeline {
+  color: var(--app-color-text-secondary);
+  font-size: 10px;
+}
+
+.merge-counterparty-card__details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--app-color-border-light);
+}
+
+.merge-counterparty-card__details dt {
+  color: var(--app-color-text-secondary);
+  font-size: 9px;
+}
+
+.merge-counterparty-card__details dd {
+  margin: 2px 0 0;
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.merge-counterparty-card__timeline {
+  margin-top: 8px;
+}
+
+.merge-table {
+  width: 100%;
+}
+
+.merge-table :deep(.el-radio) {
+  height: auto;
+  margin-right: 0;
+  align-items: flex-start;
+  white-space: normal;
+}
+
+.merge-table :deep(.el-radio__label) {
+  min-width: 0;
+  padding-left: 6px;
+}
+
+.merge-value-preview {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+.merge-value-preview--expanded {
+  white-space: pre-wrap;
+}
+
+.merge-table__result {
+  display: grid;
+  gap: 4px;
+}
+
+.merge-table__result-source {
+  color: var(--app-color-text-secondary);
+  font-size: 9px;
+}
+
+.merge-actions {
+  justify-content: flex-end;
+}
+
+@media (max-width: 700px) {
+  .merge-surface__topbar {
+    align-items: flex-start;
+  }
+
+  .merge-surface__subtitle {
+    display: none;
+  }
+
+  :deep(.merge-dialog .el-dialog__body) {
+    padding: 10px;
+  }
+
+  .merge-panel__header--spread {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .merge-counterparty-grid {
+    grid-template-columns: 1fr;
+  }
+}

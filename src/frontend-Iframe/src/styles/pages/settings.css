@@ -1,0 +1,214 @@
+.settings-page {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-page__header {
+  margin-bottom: 2px;
+}
+
+.settings-page__title {
+  margin: 0;
+  font-size: 20px;
+}
+
+.settings-page__subtitle {
+  margin: 3px 0 0;
+  color: var(--app-color-text-secondary);
+  font-size: 12px;
+}
+
+.settings-card {
+  min-width: 0;
+}
+
+:deep(.settings-card > .el-card__body) {
+  display: flex;
+  min-height: 74px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 11px 14px;
+}
+
+.settings-card__main {
+  min-width: 0;
+  max-width: 720px;
+}
+
+.settings-card__title {
+  margin: 0;
+  font-size: 14px;
+}
+
+.settings-card__description {
+  margin: 4px 0 0;
+  color: var(--app-color-text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.settings-card__controls {
+  display: flex;
+  min-width: 210px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.settings-card__controls--fields {
+  min-width: min(420px, 100%);
+}
+
+.settings-card__controls--fields :deep(.el-form-item) {
+  width: 190px;
+  margin-bottom: 0;
+}
+
+.settings-card__controls--fields :deep(.el-input-number) {
+  width: 100%;
+}
+
+.settings-card__controls--inline :deep(.el-date-editor) {
+  width: 135px;
+}
+
+.merge-attributes-list {
+  display: grid;
+  width: min(520px, 100%);
+  max-height: 260px;
+  gap: 5px;
+  overflow: auto;
+}
+
+.merge-attribute {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 9px;
+  background: #f8f9fa;
+  border: 1px solid var(--app-color-border-light);
+  border-radius: 4px;
+}
+
+.merge-attribute__main {
+  display: inline-flex;
+  min-width: 0;
+  flex-direction: column;
+  white-space: normal;
+}
+
+.merge-attribute__main span {
+  color: var(--app-color-text-secondary);
+  font-size: 10px;
+}
+
+.settings-actions,
+.settings-actions__right {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-actions {
+  padding-top: 2px;
+}
+
+.settings-modal__description {
+  margin: -6px 0 14px;
+  color: var(--app-color-text-secondary);
+  font-size: 12px;
+}
+
+.exclusion-form {
+  display: flex;
+  width: 100%;
+  flex-wrap: nowrap;
+}
+
+.exclusion-form :deep(.el-form-item) {
+  margin-right: 8px;
+}
+
+.exclusion-form__value {
+  flex: 1;
+}
+
+.exclusion-list {
+  display: grid;
+  max-height: 300px;
+  gap: 5px;
+  overflow: auto;
+}
+
+.exclusion-item {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  background: #f8f9fa;
+  border: 1px solid var(--app-color-border-light);
+  border-radius: 4px;
+}
+
+.exclusion-item strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+@media (max-width: 820px) {
+  :deep(.settings-card > .el-card__body) {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .settings-card__controls {
+    width: 100%;
+    min-width: 0;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .settings-card__controls--fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .settings-card__controls--fields :deep(.el-form-item) {
+    width: 100%;
+  }
+
+  .merge-attributes-list {
+    width: 100%;
+  }
+}
+
+@media (max-width: 520px) {
+  .settings-card__controls--fields {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-actions__right {
+    width: 100%;
+  }
+
+  .exclusion-form {
+    flex-wrap: wrap;
+  }
+
+  .exclusion-form__value {
+    flex-basis: 100%;
+  }
+
+  .exclusion-item {
+    grid-template-columns: 80px minmax(0, 1fr);
+  }
+}

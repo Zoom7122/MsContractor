@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
+import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 
 const mergeJobs = ref([])
 const busyCounterpartyIds = ref([])
@@ -82,6 +83,13 @@ function statusClass(status) {
   }
 }
 
+function statusType(status) {
+  if (status === 'succeeded') return 'success'
+  if (status === 'failed' || status === 'interrupted') return 'danger'
+  if (status === 'queued' || status === 'running') return 'primary'
+  return 'info'
+}
+
 function kindLabel(kind) {
   return kind === 'batch' ? 'Пакетное' : 'Обычное'
 }
@@ -118,7 +126,7 @@ function canCancel(job) {
 </script>
 
 <template>
-  <section class="merge-queue-panel">
+  <el-card class="merge-queue-panel" shadow="never">
     <div class="merge-queue-panel__header">
       <div>
         <h2>Живая очередь объединений</h2>
@@ -141,27 +149,26 @@ function canCancel(job) {
           </div>
         </div>
 
-        <button
+        <el-button
           class="merge-queue-panel__toggle"
-          type="button"
+          circle
+          text
           :aria-expanded="isExpanded"
           :aria-label="isExpanded ? 'Свернуть очередь объединений' : 'Раскрыть очередь объединений'"
           :title="isExpanded ? 'Свернуть' : 'Раскрыть'"
           @click="toggleExpanded"
         >
-          <span class="merge-queue-panel__toggle-chevron" />
-        </button>
+          <el-icon><component :is="isExpanded ? ArrowUp : ArrowDown" /></el-icon>
+        </el-button>
       </div>
     </div>
 
-    <p v-if="loading" class="merge-queue-panel__message">Загружаем очередь объединений...</p>
-    <p v-if="error" class="merge-queue-panel__error">{{ error }}</p>
-    <p v-if="actionError" class="merge-queue-panel__error">{{ actionError }}</p>
-    <p v-if="actionMessage" class="merge-queue-panel__success">{{ actionMessage }}</p>
+    <el-skeleton v-if="loading" :rows="2" animated />
+    <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
+    <el-alert v-if="actionError" :title="actionError" type="error" :closable="false" show-icon />
+    <el-alert v-if="actionMessage" :title="actionMessage" type="success" :closable="false" show-icon />
 
-    <div v-if="!loading && !mergeJobs.length" class="merge-queue-panel__empty">
-      Очередь пока пуста.
-    </div>
+    <el-empty v-if="!loading && !mergeJobs.length" description="Очередь пока пуста" :image-size="64" />
 
     <div v-else class="merge-queue-panel__list">
       <article v-for="job in visibleMergeJobs" :key="job.id" class="merge-queue-panel__item">
@@ -172,18 +179,21 @@ function canCancel(job) {
           </div>
 
           <div class="merge-queue-panel__item-actions">
-            <span :class="statusClass(job.status)">
+            <el-tag :class="statusClass(job.status)" :type="statusType(job.status)" size="small" effect="light">
               {{ statusLabel(job.status) }}
-            </span>
-            <button
+            </el-tag>
+            <el-button
               v-if="canCancel(job)"
               class="merge-queue-panel__cancel"
-              type="button"
+              type="danger"
+              plain
+              size="small"
+              :loading="cancellingJobId === job.id"
               :disabled="cancellingJobId === job.id"
               @click="handleCancelJob(job.id)"
             >
-              {{ cancellingJobId === job.id ? 'Отмена...' : 'Отменить' }}
-            </button>
+              Отменить
+            </el-button>
           </div>
         </div>
 
@@ -215,301 +225,7 @@ function canCancel(job) {
         </p>
       </article>
     </div>
-  </section>
+  </el-card>
 </template>
 
-<style scoped>
-.merge-queue-panel {
-  padding: 24px;
-  background: #ffffff;
-  border: 1px solid #dfe7f3;
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(15, 35, 80, 0.06);
-}
-
-.merge-queue-panel__header {
-  display: flex;
-  justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 18px;
-}
-
-.merge-queue-panel__header h2 {
-  margin: 0;
-  color: #0f1b3d;
-  font-size: 22px;
-  font-weight: 700;
-}
-
-.merge-queue-panel__header p {
-  margin: 6px 0 0;
-  color: #64759b;
-  font-size: 14px;
-}
-
-.merge-queue-panel__summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(120px, 1fr));
-  gap: 12px;
-  min-width: 340px;
-}
-
-.merge-queue-panel__controls {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.merge-queue-panel__toggle {
-  position: relative;
-  width: 40px;
-  height: 40px;
-  flex: 0 0 auto;
-  color: #1d4ed8;
-  background: #f8fbff;
-  border: 1px solid #d8e4f5;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.merge-queue-panel__toggle:hover {
-  background: #edf4ff;
-}
-
-.merge-queue-panel__toggle-chevron {
-  position: absolute;
-  top: 13px;
-  left: 13px;
-  width: 12px;
-  height: 12px;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-  transform: rotate(45deg);
-  transition: transform 0.18s ease;
-}
-
-.merge-queue-panel__toggle[aria-expanded="true"] .merge-queue-panel__toggle-chevron {
-  transform: translateY(4px) rotate(225deg);
-}
-
-.merge-queue-panel__summary-card {
-  display: grid;
-  gap: 4px;
-  padding: 14px;
-  background: #f8fbff;
-  border: 1px solid #d8e4f5;
-  border-radius: 12px;
-}
-
-.merge-queue-panel__summary-card span {
-  color: #64759b;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.merge-queue-panel__summary-card strong {
-  color: #0f1b3d;
-  font-size: 22px;
-  font-weight: 800;
-}
-
-.merge-queue-panel__message,
-.merge-queue-panel__error,
-.merge-queue-panel__success {
-  margin: 0 0 12px;
-  font-size: 14px;
-  line-height: 1.4;
-}
-
-.merge-queue-panel__error {
-  color: #d92d3f;
-}
-
-.merge-queue-panel__success {
-  color: #157347;
-}
-
-.merge-queue-panel__empty {
-  padding: 18px;
-  color: #64759b;
-  font-size: 14px;
-  background: #f8fafd;
-  border: 1px dashed #d8e4f5;
-  border-radius: 12px;
-}
-
-.merge-queue-panel__list {
-  display: grid;
-  gap: 14px;
-}
-
-.merge-queue-panel__item {
-  padding: 18px;
-  background: linear-gradient(180deg, #ffffff, #f9fbff);
-  border: 1px solid #dfe7f3;
-  border-radius: 14px;
-}
-
-.merge-queue-panel__item-top {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.merge-queue-panel__item-title {
-  display: grid;
-  gap: 4px;
-}
-
-.merge-queue-panel__item-title strong {
-  color: #0f1b3d;
-  font-size: 16px;
-  font-weight: 800;
-}
-
-.merge-queue-panel__item-title span {
-  color: #64759b;
-  font-size: 13px;
-}
-
-.merge-queue-panel__item-actions {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.merge-queue-panel__status {
-  display: inline-flex;
-  min-height: 28px;
-  align-items: center;
-  padding: 0 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.merge-queue-panel__status--queued {
-  color: #9b5d00;
-  background: #fff1d6;
-}
-
-.merge-queue-panel__status--running {
-  color: #1d4ed8;
-  background: #e8f0ff;
-}
-
-.merge-queue-panel__status--succeeded {
-  color: #157347;
-  background: #e5f7ee;
-}
-
-.merge-queue-panel__status--failed,
-.merge-queue-panel__status--interrupted {
-  color: #b42318;
-  background: #fee4e2;
-}
-
-.merge-queue-panel__status--cancelled {
-  color: #50648f;
-  background: #edf2fb;
-}
-
-.merge-queue-panel__cancel {
-  min-height: 28px;
-  padding: 0 12px;
-  color: #d92d3f;
-  background: #fff5f6;
-  border: 1px solid #f2a4ad;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.merge-queue-panel__cancel:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.merge-queue-panel__meta {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin: 16px 0 0;
-}
-
-.merge-queue-panel__meta div {
-  display: grid;
-  gap: 4px;
-}
-
-.merge-queue-panel__meta dt {
-  color: #64759b;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.merge-queue-panel__meta dd {
-  margin: 0;
-  color: #0f1b3d;
-  font-size: 13px;
-  line-height: 1.4;
-  word-break: break-word;
-}
-
-.merge-queue-panel__job-error {
-  margin: 14px 0 0;
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.merge-queue-panel__job-error {
-  color: #b42318;
-}
-
-@media (max-width: 980px) {
-  .merge-queue-panel__header {
-    flex-direction: column;
-  }
-
-  .merge-queue-panel__summary {
-    min-width: 0;
-  }
-
-  .merge-queue-panel__controls {
-    align-items: stretch;
-  }
-
-  .merge-queue-panel__meta {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 640px) {
-  .merge-queue-panel {
-    padding: 20px;
-  }
-
-  .merge-queue-panel__summary {
-    grid-template-columns: 1fr;
-  }
-
-  .merge-queue-panel__controls {
-    flex-direction: column;
-  }
-
-  .merge-queue-panel__toggle {
-    align-self: flex-end;
-  }
-
-  .merge-queue-panel__item-top,
-  .merge-queue-panel__item-actions {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .merge-queue-panel__meta {
-    grid-template-columns: 1fr;
-  }
-}
-</style>
+<style scoped src="../../styles/components/merge-queue-panel.css"></style>

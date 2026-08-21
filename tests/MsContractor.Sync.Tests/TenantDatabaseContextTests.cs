@@ -1,0 +1,54 @@
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+using MsContractor.CatalogSyncService.Repo;
+
+namespace MsContractor.Sync.Tests;
+
+public sealed class TenantDatabaseContextTests
+{
+    [Fact]
+    public async Task SetTenantAsync_RejectsEmptyAccountId()
+    {
+        await using var fixture = await CreateAsync();
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            fixture.Context.SetTenantAsync(Guid.Empty, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SetTenantAsync_PreventsReusingContextForAnotherAccount()
+    {
+        await using var fixture = await CreateAsync();
+        var accountId = Guid.NewGuid();
+
+        await fixture.Context.SetTenantAsync(accountId, CancellationToken.None);
+        await fixture.Context.SetTenantAsync(accountId, CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Context.SetTenantAsync(Guid.NewGuid(), CancellationToken.None));
+    }
+
+    private static async Task<Fixture> CreateAsync()
+    {
+        var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var context = new CatalogSyncDbContext(
+            new DbContextOptionsBuilder<CatalogSyncDbContext>()
+                .UseSqlite(connection)
+                .Options);
+        await context.Database.EnsureCreatedAsync();
+        return new Fixture(connection, context);
+    }
+
+    private sealed class Fixture(SqliteConnection connection, CatalogSyncDbContext context)
+        : IAsyncDisposable
+    {
+        public CatalogSyncDbContext Context { get; } = context;
+
+        public async ValueTask DisposeAsync()
+        {
+            await Context.DisposeAsync();
+            await connection.DisposeAsync();
+        }
+    }
+}

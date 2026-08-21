@@ -20,6 +20,8 @@ public sealed class DuplicatePreviewService(CatalogSyncDbContext dbContext) : ID
         IReadOnlyCollection<DuplicateMatchField> fields,
         CancellationToken cancellationToken)
     {
+        await dbContext.SetTenantAsync(accountId, cancellationToken);
+
         var candidates = await dbContext.Counterparties
             .AsNoTracking()
             .Where(item => item.AccountId == accountId && !item.Archived)

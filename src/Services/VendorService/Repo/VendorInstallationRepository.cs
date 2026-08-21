@@ -24,8 +24,13 @@ public interface IVendorInstallationRepository
 
 public sealed class VendorInstallationRepository(VendorDbContext dbContext) : IVendorInstallationRepository
 {
-    public Task<Installation?> GetByAccountIdAsync(Guid accountId, CancellationToken cancellationToken) =>
-        dbContext.Installations.SingleOrDefaultAsync(item => item.AccountId == accountId, cancellationToken);
+    public async Task<Installation?> GetByAccountIdAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        await dbContext.SetTenantAsync(accountId, cancellationToken);
+        return await dbContext.Installations.SingleOrDefaultAsync(
+            item => item.AccountId == accountId,
+            cancellationToken);
+    }
 
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken) =>
         dbContext.SaveChangesAsync(cancellationToken);
@@ -34,6 +39,10 @@ public sealed class VendorInstallationRepository(VendorDbContext dbContext) : IV
         SaveVendorInstallationCommand command,
         CancellationToken cancellationToken)
     {
+        var accountId = command.Installation?.AccountId ?? command.OutboxMessage?.AccountId;
+        if (accountId is not null)
+            await dbContext.SetTenantAsync(accountId.Value, cancellationToken);
+
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
         if (command.OutboxMessage is null)
         {

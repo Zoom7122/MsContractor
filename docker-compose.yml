@@ -16,6 +16,8 @@ x-service-env: &service-env
   Services__DuplicatesMergeService__BaseUrl: http://duplicates-merge-service:${SERVICE_INTERNAL_PORT}
   Services__NotificationService__BaseUrl: http://notification-service:${SERVICE_INTERNAL_PORT}
   Services__AuditService__BaseUrl: http://audit-service:${SERVICE_INTERNAL_PORT}
+  Merge__DocumentDiscoveryTimeout: ${MERGE_DOCUMENT_DISCOVERY_TIMEOUT:-00:10:00}
+  Kafka__MergeConsumerMaxPollIntervalMs: ${MERGE_CONSUMER_MAX_POLL_INTERVAL_MS:-660000}
 
 services:
   postgres:

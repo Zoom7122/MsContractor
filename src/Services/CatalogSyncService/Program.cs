@@ -10,7 +10,9 @@ builder.AddMsContractorHealth();
 builder.Services.AddControllers();
 builder.Services.AddMsContractorOpenApi();
 builder.Services.AddDbContext<CatalogSyncDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")));
+    options
+        .UseNpgsql(builder.Configuration.GetConnectionString("Postgres"))
+        .AddInterceptors(new CatalogTenantConnectionInterceptor()));
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<IMoySkladCounterpartyParser, MoySkladCounterpartyParser>();
 builder.Services.AddSingleton<ICounterpartyNormalizer, CounterpartyNormalizer>();

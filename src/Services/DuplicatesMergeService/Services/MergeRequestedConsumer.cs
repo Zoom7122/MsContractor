@@ -22,7 +22,8 @@ public sealed class MergeRequestedConsumer(
             BootstrapServers = configuration["Kafka:BootstrapServers"] ?? "localhost:9092",
             GroupId = configuration["Kafka:MergeConsumerGroup"] ?? "duplicates-merge-service",
             EnableAutoCommit = false,
-            AutoOffsetReset = AutoOffsetReset.Earliest
+            AutoOffsetReset = AutoOffsetReset.Earliest,
+            MaxPollIntervalMs = configuration.GetValue("Kafka:MergeConsumerMaxPollIntervalMs", 660000)
         };
         using var consumer = new ConsumerBuilder<string, string>(config).Build();
         consumer.Subscribe(MergeTopics.Commands);

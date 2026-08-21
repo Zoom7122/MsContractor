@@ -31,6 +31,8 @@ public sealed class SyncProcessor(
         CancellationToken cancellationToken)
     {
         Validate(command);
+        await dbContext.SetTenantAsync(command.AccountId, cancellationToken);
+
         if (await dbContext.InboxMessages.AnyAsync(
                 item => item.MessageId == command.MessageId &&
                         item.ConsumerName == ConsumerName,

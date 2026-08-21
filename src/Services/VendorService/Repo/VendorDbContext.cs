@@ -5,11 +5,28 @@ namespace MsContractor.VendorService.Repo;
 public sealed class VendorDbContext(DbContextOptions<VendorDbContext> options)
     : DbContext(options)
 {
+    private Guid? tenantAccountId;
+
     public DbSet<Installation> Installations =>
         Set<Installation>();
 
     public DbSet<OutboxMessage> OutboxMessages =>
         Set<OutboxMessage>();
+    internal Guid? TenantAccountId => tenantAccountId;
+
+    public Task SetTenantAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (accountId == Guid.Empty)
+            throw new ArgumentException("Tenant account ID must be a non-empty UUID.", nameof(accountId));
+        if (tenantAccountId is not null && tenantAccountId != accountId)
+            throw new InvalidOperationException("A DbContext cannot be reused across tenant accounts.");
+        if (tenantAccountId == accountId)
+            return Task.CompletedTask;
+
+        tenantAccountId = accountId;
+        return Task.CompletedTask;
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

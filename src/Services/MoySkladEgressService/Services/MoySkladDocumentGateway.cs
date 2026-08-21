@@ -108,7 +108,7 @@ public sealed class MoySkladDocumentGateway(
                     limit,
                     (int)response.StatusCode,
                     safeError);
-                ThrowForStatus(response.StatusCode);
+                ThrowForStatus(response.StatusCode, safeError);
             }
 
             DocumentCollectionDto? payload;
@@ -169,22 +169,23 @@ public sealed class MoySkladDocumentGateway(
     private static EgressException InvalidResponse(string message, Exception? inner = null) =>
         new(502, "MOYSKLAD_DOCUMENT_DISCOVERY_INVALID_RESPONSE", message, inner);
 
-    private static void ThrowForStatus(HttpStatusCode statusCode)
+    private static void ThrowForStatus(HttpStatusCode statusCode, string safeError)
     {
+        var details = $"MoySklad error: {safeError}";
         throw statusCode switch
         {
             HttpStatusCode.Unauthorized =>
-                new EgressException(502, "MOYSKLAD_UNAUTHORIZED", "MoySklad rejected the access token."),
+                new EgressException(502, "MOYSKLAD_UNAUTHORIZED", $"MoySklad rejected the access token. {details}"),
             HttpStatusCode.Forbidden =>
-                new EgressException(502, "MOYSKLAD_FORBIDDEN", "MoySklad denied access."),
+                new EgressException(502, "MOYSKLAD_FORBIDDEN", $"MoySklad denied access. {details}"),
             HttpStatusCode.TooManyRequests =>
-                new EgressException(429, "MOYSKLAD_RATE_LIMITED", "MoySklad rate limit exceeded."),
+                new EgressException(429, "MOYSKLAD_RATE_LIMITED", $"MoySklad rate limit exceeded. {details}"),
             _ when (int)statusCode >= 500 =>
-                new EgressException(503, "MOYSKLAD_UNAVAILABLE", "MoySklad is unavailable."),
+                new EgressException(503, "MOYSKLAD_UNAVAILABLE", $"MoySklad is unavailable. {details}"),
             _ => new EgressException(
                 502,
                 "MOYSKLAD_DOCUMENT_DISCOVERY_INVALID_RESPONSE",
-                "MoySklad returned an unexpected document response status.")
+                $"MoySklad returned an unexpected document response status. {details}")
         };
     }
 

@@ -13,7 +13,9 @@ builder.AddMsContractorHealth();
 
 builder.Services.AddControllers();
 builder.Services.AddDbContext<CatalogSyncDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")));
+    options
+        .UseNpgsql(builder.Configuration.GetConnectionString("Postgres"))
+        .AddInterceptors(new CatalogTenantConnectionInterceptor()));
 builder.Services.AddScoped<IDuplicatePreviewService, DuplicatePreviewService>();
 builder.Services.AddScoped<IMergeSelectionPreviewService, MergeSelectionPreviewService>();
 builder.Services.AddScoped<IMergeJobCreator, MergeJobCreator>();
@@ -26,6 +28,12 @@ builder.Services.AddHttpClient<IMergeEgressClient, MergeEgressClient>(client =>
 {
     client.BaseAddress = new Uri(egressBaseUrl.EndsWith('/') ? egressBaseUrl : $"{egressBaseUrl}/");
     client.Timeout = TimeSpan.FromSeconds(45);
+});
+builder.Services.AddHttpClient<IDocumentDiscoveryEgressClient, DocumentDiscoveryEgressClient>(client =>
+{
+    client.BaseAddress = new Uri(egressBaseUrl.EndsWith('/') ? egressBaseUrl : $"{egressBaseUrl}/");
+    client.Timeout = builder.Configuration.GetValue<TimeSpan?>("Merge:DocumentDiscoveryTimeout")
+        ?? TimeSpan.FromMinutes(10);
 });
 builder.Services.AddSingleton<IProducer<string, string>>(_ =>
     new ProducerBuilder<string, string>(new ProducerConfig

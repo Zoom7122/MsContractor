@@ -22,7 +22,9 @@ builder.Services.AddControllers()
 builder.Services.AddMsContractorOpenApi();
 builder.Services.AddDbContext<VendorDbContext>(options =>
 {
-    options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres"));
+    options
+        .UseNpgsql(builder.Configuration.GetConnectionString("Postgres"))
+        .AddInterceptors(new VendorTenantConnectionInterceptor());
 });
 builder.Services
     .AddOptions<VendorOptions>()

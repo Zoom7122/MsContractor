@@ -10,6 +10,38 @@ namespace MsContractor.Sync.Tests;
 public sealed class MigrationSnapshotDiagnosticTests
 {
     [Fact]
+    public void RlsMigration_IsRegisteredAndCoversEveryTenantTable()
+    {
+        var options = new DbContextOptionsBuilder<CatalogSyncDbContext>()
+            .UseNpgsql("Host=localhost;Database=catalog_sync;Username=postgres;Password=postgres")
+            .Options;
+        using var dbContext = new CatalogSyncDbContext(options);
+        var migrationsAssembly = dbContext.GetService<IMigrationsAssembly>();
+
+        var migrationType = migrationsAssembly.Migrations[
+            "20260821000100_EnableTenantRowLevelSecurity"];
+        var migration = migrationsAssembly.CreateMigration(
+            migrationType,
+            dbContext.Database.ProviderName!);
+        var sql = string.Join(
+            Environment.NewLine,
+            migration.UpOperations.OfType<SqlOperation>().Select(operation => operation.Sql));
+
+        foreach (var table in new[]
+                 {
+                     "sync_runs", "sync_watermarks", "counterparties",
+                     "merge_jobs", "merge_operations"
+                 })
+        {
+            Assert.Contains($"ALTER TABLE catalog_sync.{table} ENABLE ROW LEVEL SECURITY", sql);
+            Assert.Contains($"CREATE POLICY account_isolation ON catalog_sync.{table}", sql);
+        }
+
+        Assert.Contains("current_setting('app.account_id', true)", sql);
+        Assert.Contains("WITH CHECK", sql);
+    }
+
+    [Fact]
     public void Snapshot_MatchesCurrentModel()
     {
         var options = new DbContextOptionsBuilder<CatalogSyncDbContext>()

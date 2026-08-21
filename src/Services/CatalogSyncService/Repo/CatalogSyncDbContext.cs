@@ -5,6 +5,8 @@ namespace MsContractor.CatalogSyncService.Repo;
 public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> options)
     : DbContext(options)
 {
+    private Guid? tenantAccountId;
+
     public DbSet<SyncRun> SyncRuns => Set<SyncRun>();
     public DbSet<InboxMessage> InboxMessages => Set<InboxMessage>();
     public DbSet<Counterparty> Counterparties => Set<Counterparty>();
@@ -12,6 +14,22 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
     public DbSet<SyncWatermark> SyncWatermarks => Set<SyncWatermark>();
     public DbSet<MergeJob> MergeJobs => Set<MergeJob>();
     public DbSet<MergeOperation> MergeOperations => Set<MergeOperation>();
+    public DbSet<CounterpartyDocument> CounterpartyDocuments => Set<CounterpartyDocument>();
+    internal Guid? TenantAccountId => tenantAccountId;
+
+    public Task SetTenantAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (accountId == Guid.Empty)
+            throw new ArgumentException("Tenant account ID must be a non-empty UUID.", nameof(accountId));
+        if (tenantAccountId is not null && tenantAccountId != accountId)
+            throw new InvalidOperationException("A DbContext cannot be reused across tenant accounts.");
+        if (tenantAccountId == accountId)
+            return Task.CompletedTask;
+
+        tenantAccountId = accountId;
+        return Task.CompletedTask;
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -112,6 +130,14 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
                 .HasForeignKey(item => new { item.MergeJobId, item.AccountId })
                 .HasPrincipalKey(item => new { item.Id, item.AccountId })
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CounterpartyDocument>(entity =>
+        {
+            entity.ToTable("counterparty_documents");
+            entity.HasKey(item => new { item.AccountId, item.DocumentType, item.DocumentId });
+            entity.Property(item => item.DocumentType).HasMaxLength(64).IsRequired();
+            entity.HasIndex(item => new { item.AccountId, item.CounterpartyId });
         });
     }
 }

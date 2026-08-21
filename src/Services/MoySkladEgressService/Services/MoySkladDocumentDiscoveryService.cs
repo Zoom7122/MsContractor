@@ -1,3 +1,5 @@
+using MsContractor.Contracts.Internal;
+
 namespace MsContractor.MoySkladEgressService.Services;
 
 public interface IMoySkladDocumentDiscoveryService

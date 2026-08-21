@@ -23,6 +23,31 @@ namespace MsContractor.CatalogSyncService.Repo.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.CounterpartyDocument", b =>
+                {
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DocumentType")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CounterpartyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("AccountId", "DocumentType", "DocumentId");
+
+                    b.HasIndex("AccountId", "CounterpartyId");
+
+                    b.ToTable("counterparty_documents", "catalog_sync");
+                });
+
             modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.Counterparty", b =>
                 {
                     b.Property<Guid>("Id")

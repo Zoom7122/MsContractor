@@ -2,6 +2,7 @@ namespace MsContractor.CatalogSyncService.Repo;
 
 public static class MergeOperationTypes
 {
+    public const string DiscoverDocuments = "discover_documents";
     public const string UpdateMainCounterparty = "update_main_counterparty";
     public const string ArchiveDuplicate = "archive_duplicate";
 }

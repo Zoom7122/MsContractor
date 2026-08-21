@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using MsContractor.CatalogSyncService.Repo;
 using MsContractor.CatalogSyncService.Services;
+using MsContractor.Contracts.Internal;
 using MsContractor.Contracts.Merge;
 
 namespace MsContractor.DuplicatesMergeService.Services;
@@ -17,6 +18,7 @@ public interface IMergeProcessor
 public sealed partial class MergeProcessor(
     CatalogSyncDbContext dbContext,
     IMergeEgressClient egressClient,
+    IDocumentDiscoveryEgressClient documentDiscoveryClient,
     IMoySkladCounterpartyParser parser,
     ICounterpartyNormalizer normalizer,
     TimeProvider timeProvider,
@@ -29,6 +31,8 @@ public sealed partial class MergeProcessor(
 
     public async Task ProcessAsync(MergeRequested command, CancellationToken cancellationToken)
     {
+        await dbContext.SetTenantAsync(command.AccountId, cancellationToken);
+
         if (await dbContext.InboxMessages.AnyAsync(
                 item => item.MessageId == command.MessageId && item.ConsumerName == ConsumerName,
                 cancellationToken))
@@ -61,6 +65,18 @@ public sealed partial class MergeProcessor(
         job.UpdatedAt = now;
         await dbContext.SaveChangesAsync(cancellationToken);
 
+        var discovery = job.Operations.Single(item => item.OperationType == MergeOperationTypes.DiscoverDocuments);
+        if (!MergeOperationStatuses.IsTerminal(discovery.Status))
+        {
+            if (!await ExecuteDocumentDiscoveryAsync(job, discovery, command.DuplicateCounterpartyIds, cancellationToken))
+                return;
+        }
+        else if (discovery.Status == MergeOperationStatuses.Failed)
+        {
+            await FailJobAsync(job, cancellationToken);
+            return;
+        }
+
         var update = job.Operations.Single(item => item.OperationType == MergeOperationTypes.UpdateMainCounterparty);
         if (!MergeOperationStatuses.IsTerminal(update.Status))
         {
@@ -89,6 +105,78 @@ public sealed partial class MergeProcessor(
         job.UpdatedAt = now;
         AddInbox(job.MessageId, now);
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<bool> ExecuteDocumentDiscoveryAsync(
+        MergeJob job,
+        MergeOperation operation,
+        IReadOnlyList<Guid> duplicateCounterpartyIds,
+        CancellationToken cancellationToken)
+    {
+        await MarkRunningAsync(operation, cancellationToken);
+        try
+        {
+            var counterpartyIds = duplicateCounterpartyIds.Append(job.MainCounterpartyId).ToArray();
+            var response = await documentDiscoveryClient.DiscoverAsync(
+                job.AccountId,
+                counterpartyIds,
+                job.Id,
+                operation.Id,
+                job.RequestedByUserId,
+                job.CorrelationId,
+                cancellationToken);
+            await ReplaceDocumentSnapshotAsync(job.AccountId, counterpartyIds, response.Documents, cancellationToken);
+            Complete(operation);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            logger.LogInformation(
+                "MoySklad document discovery completed: operation_id={OperationId}, documents_count={DocumentsCount}",
+                operation.Id,
+                response.Documents.Count);
+            return true;
+        }
+        catch (Exception exception) when (IsOperationFailure(exception))
+        {
+            if (await HandleFailureAsync(operation, exception, cancellationToken))
+                throw new MergeRetryableException("Document discovery will be retried.", exception);
+
+            await FailJobAsync(job, cancellationToken);
+            return false;
+        }
+    }
+
+    private async Task ReplaceDocumentSnapshotAsync(
+        Guid accountId,
+        IReadOnlyCollection<Guid> counterpartyIds,
+        IReadOnlyList<MoySkladDocumentReference> documents,
+        CancellationToken cancellationToken)
+    {
+        var knownCounterpartyIds = counterpartyIds.ToHashSet();
+        var uniqueDocumentKeys = new HashSet<(string DocumentType, Guid DocumentId)>();
+        foreach (var document in documents)
+        {
+            if (string.IsNullOrWhiteSpace(document.DocumentType) || document.DocumentId == Guid.Empty ||
+                document.CounterpartyId == Guid.Empty || !knownCounterpartyIds.Contains(document.CounterpartyId) ||
+                !uniqueDocumentKeys.Add((document.DocumentType, document.DocumentId)))
+            {
+                throw new JsonException("MoySklad document discovery response is inconsistent.");
+            }
+        }
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await dbContext.CounterpartyDocuments
+            .Where(item => item.AccountId == accountId && knownCounterpartyIds.Contains(item.CounterpartyId))
+            .ExecuteDeleteAsync(cancellationToken);
+        var now = timeProvider.GetUtcNow();
+        dbContext.CounterpartyDocuments.AddRange(documents.Select(document => new CounterpartyDocument
+        {
+            AccountId = accountId,
+            CounterpartyId = document.CounterpartyId,
+            DocumentType = document.DocumentType,
+            DocumentId = document.DocumentId,
+            UpdatedAt = now
+        }));
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private async Task ExecuteArchiveBatchAsync(
@@ -173,19 +261,24 @@ public sealed partial class MergeProcessor(
             operation.ErrorCode = SafeCode(exception);
             operation.ErrorMessage = SafeMessage(exception);
             await dbContext.SaveChangesAsync(cancellationToken);
+            logger.LogWarning(
+                "Merge operation will be retried: operation_id={OperationId}, operation_type={OperationType}, counterparty_id={CounterpartyId}, status={Status}, error_code={ErrorCode}, error_message={ErrorMessage}",
+                operation.Id, operation.OperationType, operation.CounterpartyId, operation.Status, operation.ErrorCode, operation.ErrorMessage);
             return true;
         }
 
         operation.Status = MergeOperationStatuses.Failed;
-        operation.ErrorCode = retryable ? "EGRESS_RETRY_EXHAUSTED" : SafeCode(exception);
+        // Keep the upstream code even when attempts are exhausted: it is the actionable
+        // cause for operators, while the message records that no retry remains.
+        operation.ErrorCode = SafeCode(exception);
         operation.ErrorMessage = retryable
-            ? "The Egress retry policy was exhausted."
+            ? LimitErrorMessage($"The Egress retry policy was exhausted. {SafeMessage(exception)}")
             : SafeMessage(exception);
         operation.CompletedAt = operation.UpdatedAt;
         await dbContext.SaveChangesAsync(cancellationToken);
         logger.LogWarning(
-            "Merge operation failed: operation_id={OperationId}, operation_type={OperationType}, counterparty_id={CounterpartyId}, status={Status}, error_code={ErrorCode}",
-            operation.Id, operation.OperationType, operation.CounterpartyId, operation.Status, operation.ErrorCode);
+            "Merge operation failed: operation_id={OperationId}, operation_type={OperationType}, counterparty_id={CounterpartyId}, status={Status}, error_code={ErrorCode}, error_message={ErrorMessage}",
+            operation.Id, operation.OperationType, operation.CounterpartyId, operation.Status, operation.ErrorCode, operation.ErrorMessage);
         return false;
     }
 
@@ -285,6 +378,9 @@ public sealed partial class MergeProcessor(
     private static string SafeCode(Exception exception) =>
         exception is MergeEgressException egress ? egress.Code : "EGRESS_INVALID_RESPONSE";
 
-    private static string SafeMessage(Exception exception) =>
-        exception is MergeEgressException egress ? egress.SafeMessage : "Egress returned invalid counterparty data.";
+    private static string SafeMessage(Exception exception) => LimitErrorMessage(
+        exception is MergeEgressException egress ? egress.SafeMessage : "Egress returned invalid counterparty data.");
+
+    private static string LimitErrorMessage(string message) =>
+        message.Length <= 512 ? message : message[..512];
 }

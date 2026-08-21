@@ -22,8 +22,9 @@ public sealed class MergeJobCreatorTests
         var job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
         Assert.Equal(accepted.MergeJobId, job.Id);
         Assert.Equal(MergeJobStatuses.Pending, job.Status);
-        Assert.Equal(2, job.Operations.Count);
+        Assert.Equal(3, job.Operations.Count);
         Assert.All(job.Operations, operation => Assert.Equal(MergeOperationStatuses.Pending, operation.Status));
+        Assert.Equal(0, job.Operations.Single(item => item.OperationType == MergeOperationTypes.DiscoverDocuments).Sequence);
         var archive = job.Operations.Single(item => item.OperationType == MergeOperationTypes.ArchiveDuplicate);
         Assert.Equal(fixture.Duplicate.Id, archive.CounterpartyId);
         var outbox = await fixture.Db.OutboxMessages.SingleAsync();

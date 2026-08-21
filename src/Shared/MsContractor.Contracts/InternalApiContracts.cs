@@ -23,3 +23,19 @@ public sealed record InternalCounterpartyUpdateRequest(
 
 public sealed record InternalCounterpartyBatchArchiveRequest(
     IReadOnlyList<Guid> CounterpartyIds);
+
+public sealed record MoySkladDocumentDiscoveryRequest(
+    IReadOnlyList<Guid>? CounterpartyIds);
+
+public sealed record MoySkladDocumentReference(
+    string DocumentType,
+    Guid DocumentId,
+    Guid CounterpartyId);
+
+public sealed record MoySkladDocumentTypeCount(
+    string DocumentType,
+    int Count);
+
+public sealed record MoySkladDocumentDiscoveryResponse(
+    IReadOnlyList<MoySkladDocumentReference> Documents,
+    IReadOnlyList<MoySkladDocumentTypeCount> Counts);

@@ -37,6 +37,7 @@ public sealed class MergeSelectionPreviewService(CatalogSyncDbContext dbContext)
         CancellationToken cancellationToken)
     {
         Validate(request);
+        await dbContext.SetTenantAsync(accountId, cancellationToken);
 
         var ids = request.CounterpartyIds.ToArray();
         var counterparties = await dbContext.Counterparties

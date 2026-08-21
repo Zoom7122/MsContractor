@@ -44,6 +44,7 @@ public sealed class MergeJobCreator(
         CancellationToken cancellationToken)
     {
         ValidateShape(request);
+        await dbContext.SetTenantAsync(accountId, cancellationToken);
         var ids = request.DuplicateCounterpartyIds.Append(request.MainCounterpartyId).ToArray();
         var counterparties = await dbContext.Counterparties
             .AsNoTracking()
@@ -94,12 +95,13 @@ public sealed class MergeJobCreator(
             CreatedAt = now,
             UpdatedAt = now
         };
-        job.Operations.Add(NewOperation(job, 0, MergeOperationTypes.UpdateMainCounterparty, request.MainCounterpartyId, now));
+        job.Operations.Add(NewOperation(job, 0, MergeOperationTypes.DiscoverDocuments, request.MainCounterpartyId, now));
+        job.Operations.Add(NewOperation(job, 1, MergeOperationTypes.UpdateMainCounterparty, request.MainCounterpartyId, now));
         for (var index = 0; index < request.DuplicateCounterpartyIds.Count; index++)
         {
             job.Operations.Add(NewOperation(
                 job,
-                index + 1,
+                index + 2,
                 MergeOperationTypes.ArchiveDuplicate,
                 request.DuplicateCounterpartyIds[index],
                 now));

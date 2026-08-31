@@ -1,0 +1,523 @@
+{
+  "runId": "20260831180143",
+  "baseUrl": "https://api.moysklad.ru/api/remap/1.2",
+  "applicable": true,
+  "selectedDocumentTypes": [
+    "cashin",
+    "cashout",
+    "commissionreportin",
+    "commissionreportout",
+    "counterpartyadjustment",
+    "customerorder",
+    "demand",
+    "facturein",
+    "factureout",
+    "invoicein",
+    "invoiceout",
+    "paymentin",
+    "paymentout",
+    "purchaseorder",
+    "purchasereturn",
+    "retaildemand",
+    "retailsalesreturn",
+    "retireorder",
+    "salesreturn",
+    "supply"
+  ],
+  "counterpartyCount": 1,
+  "writeReportJson": true,
+  "counterparty": {
+    "id": "e3529426-a54c-11f1-0a80-182000db5c8c",
+    "name": "MSContractor DOCS TEST16",
+    "href": "https://api.moysklad.ru/api/remap/1.2/entity/counterparty/e3529426-a54c-11f1-0a80-182000db5c8c"
+  },
+  "counterparties": [
+    {
+      "id": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "name": "MSContractor DOCS TEST16",
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/counterparty/e3529426-a54c-11f1-0a80-182000db5c8c"
+    }
+  ],
+  "supportEntities": {
+    "organization": {
+      "id": "b4058e55-243f-11f1-0a80-0f3f0008bf47",
+      "name": "Mike Borisov",
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/organization/b4058e55-243f-11f1-0a80-0f3f0008bf47"
+    },
+    "store": {
+      "id": "b40863cd-243f-11f1-0a80-0f3f0008bf4a",
+      "name": "Основной склад",
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/store/b40863cd-243f-11f1-0a80-0f3f0008bf4a"
+    },
+    "product": {
+      "id": "e231fea7-a54c-11f1-0a80-105200dd8e47",
+      "name": "MSContractor Test Product 20260831180143",
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/product/e231fea7-a54c-11f1-0a80-105200dd8e47"
+    },
+    "retailStore": null,
+    "retailShift": null,
+    "expenseItem": {
+      "id": "4e1c05f2-0673-11e6-a655-0cc47a342ca4",
+      "name": "Перемещение",
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/expenseitem/4e1c05f2-0673-11e6-a655-0cc47a342ca4"
+    }
+  },
+  "createdDocuments": [
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "customerorder",
+      "title": "Заказ покупателя",
+      "id": "e41422d1-a54c-11f1-0a80-105200dd8eb4",
+      "name": "82",
+      "applicable": true,
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/e41422d1-a54c-11f1-0a80-105200dd8eb4"
+    },
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "demand",
+      "title": "Отгрузка",
+      "id": "e480b8a5-a54c-11f1-0a80-161900dc6bf6",
+      "name": "00080",
+      "applicable": true,
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/demand/e480b8a5-a54c-11f1-0a80-161900dc6bf6?expand=positions"
+    },
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "purchaseorder",
+      "title": "Заказ поставщику",
+      "id": "e527b850-a54c-11f1-0a80-137200dd0a92",
+      "name": "00061",
+      "applicable": true,
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/purchaseorder/e527b850-a54c-11f1-0a80-137200dd0a92"
+    },
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "supply",
+      "title": "Приёмка",
+      "id": "e57cffe7-a54c-11f1-0a80-0cd600dcdc3d",
+      "name": "00064",
+      "applicable": true,
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/supply/e57cffe7-a54c-11f1-0a80-0cd600dcdc3d?expand=positions"
+    },
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "paymentin",
+      "title": "Входящий платёж",
+      "id": "e64a680f-a54c-11f1-0a80-161900dc6d8e",
+      "name": "00064",
+      "applicable": true,
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/paymentin/e64a680f-a54c-11f1-0a80-161900dc6d8e"
+    },
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "paymentout",
+      "title": "Исходящий платёж",
+      "id": "e6806ba4-a54c-11f1-0a80-091700dc31db",
+      "name": "00009",
+      "applicable": true,
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/paymentout/e6806ba4-a54c-11f1-0a80-091700dc31db"
+    },
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "cashin",
+      "title": "Приходный ордер",
+      "id": "e6dc476f-a54c-11f1-0a80-137200dd0aee",
+      "name": "00061",
+      "applicable": true,
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/cashin/e6dc476f-a54c-11f1-0a80-137200dd0aee"
+    },
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "cashout",
+      "title": "Расходный ордер",
+      "id": "e7164643-a54c-11f1-0a80-091700dc325b",
+      "name": "00009",
+      "applicable": true,
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/cashout/e7164643-a54c-11f1-0a80-091700dc325b"
+    },
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "invoiceout",
+      "title": "Счёт покупателю",
+      "id": "e75cd5bc-a54c-11f1-0a80-0cd600dcdcf5",
+      "name": "00063",
+      "applicable": true,
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/invoiceout/e75cd5bc-a54c-11f1-0a80-0cd600dcdcf5"
+    },
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "invoicein",
+      "title": "Счёт поставщика",
+      "id": "e7be68d4-a54c-11f1-0a80-0dcc00ded759",
+      "name": "00061",
+      "applicable": true,
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/invoicein/e7be68d4-a54c-11f1-0a80-0dcc00ded759"
+    },
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "counterpartyadjustment",
+      "title": "Корректировка взаиморасчётов",
+      "id": "e8153a5f-a54c-11f1-0a80-15de00de8cce",
+      "name": "00061",
+      "applicable": true,
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/counterpartyadjustment/e8153a5f-a54c-11f1-0a80-15de00de8cce"
+    },
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "commissionreportin",
+      "title": "Полученный отчёт комиссионера",
+      "id": "e85f2799-a54c-11f1-0a80-182000db60fc",
+      "name": "00009",
+      "applicable": true,
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/commissionreportin/e85f2799-a54c-11f1-0a80-182000db60fc"
+    },
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "commissionreportout",
+      "title": "Выданный отчёт комиссионера",
+      "id": "e8d1e749-a54c-11f1-0a80-029300da35ca",
+      "name": "00008",
+      "applicable": true,
+      "href": "https://api.moysklad.ru/api/remap/1.2/entity/commissionreportout/e8d1e749-a54c-11f1-0a80-029300da35ca"
+    }
+  ],
+  "failedDocuments": [
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "salesreturn",
+      "title": "Возврат покупателя",
+      "error": {
+        "method": "POST",
+        "path": "/entity/salesreturn",
+        "status": 400,
+        "body": "{\n  \"errors\" : [ {\n    \"error\" : \"Некорректный тип данных в meta сущности, поле type\",\n    \"code\" : 1060,\n    \"moreInfo\" : \"https://dev.moysklad.ru/doc/api/remap/1.2/#/errors#error_1060\"\n  } ]\n}"
+      },
+      "payload": {
+        "agent": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/counterparty/e3529426-a54c-11f1-0a80-182000db5c8c",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/counterparty/metadata",
+            "type": "counterparty",
+            "mediaType": "application/json",
+            "uuidHref": "https://online.moysklad.ru/app/#company/edit?id=e3529426-a54c-11f1-0a80-182000db5c8c"
+          }
+        },
+        "organization": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/organization/b4058e55-243f-11f1-0a80-0f3f0008bf47",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/organization/metadata",
+            "type": "organization",
+            "mediaType": "application/json",
+            "uuidHref": "https://online.moysklad.ru/app/#mycompany/edit?id=b4058e55-243f-11f1-0a80-0f3f0008bf47"
+          }
+        },
+        "store": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/store/b40863cd-243f-11f1-0a80-0f3f0008bf4a",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/store/metadata",
+            "type": "store",
+            "mediaType": "application/json",
+            "uuidHref": "https://online.moysklad.ru/app/#warehouse/edit?id=b40863cd-243f-11f1-0a80-0f3f0008bf4a"
+          }
+        },
+        "demand": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/demand/e480b8a5-a54c-11f1-0a80-161900dc6bf6?expand=positions",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/demand/metadata",
+            "type": "demand",
+            "mediaType": "application/json",
+            "uuidHref": "https://online.moysklad.ru/app/#demand/edit?id=e480b8a5-a54c-11f1-0a80-161900dc6bf6"
+          }
+        },
+        "positions": [
+          {
+            "meta": {
+              "href": "https://api.moysklad.ru/api/remap/1.2/entity/demand/e480b8a5-a54c-11f1-0a80-161900dc6bf6/positions/e480bd56-a54c-11f1-0a80-161900dc6bf7",
+              "type": "demandposition",
+              "mediaType": "application/json"
+            },
+            "quantity": 2.0,
+            "price": 11000.0,
+            "discount": 0.0,
+            "vat": 0,
+            "vatEnabled": false,
+            "assortment": {
+              "meta": {
+                "href": "https://api.moysklad.ru/api/remap/1.2/entity/product/e231fea7-a54c-11f1-0a80-105200dd8e47",
+                "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/product/metadata",
+                "type": "product",
+                "mediaType": "application/json",
+                "uuidHref": "https://online.moysklad.ru/app/#good/edit?id=e231f38e-a54c-11f1-0a80-105200dd8e45"
+              }
+            },
+            "overhead": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "purchasereturn",
+      "title": "Возврат поставщику",
+      "error": {
+        "method": "POST",
+        "path": "/entity/purchasereturn",
+        "status": 403,
+        "body": "{\n  \"errors\" : [ {\n    \"error\" : \"Дочерняя сущность не может изменять свою родительскую сущность\",\n    \"code\" : 1046,\n    \"moreInfo\" : \"https://dev.moysklad.ru/doc/api/remap/1.2/#/errors#error_1046\"\n  } ]\n}"
+      },
+      "payload": {
+        "agent": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/counterparty/e3529426-a54c-11f1-0a80-182000db5c8c",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/counterparty/metadata",
+            "type": "counterparty",
+            "mediaType": "application/json",
+            "uuidHref": "https://online.moysklad.ru/app/#company/edit?id=e3529426-a54c-11f1-0a80-182000db5c8c"
+          }
+        },
+        "organization": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/organization/b4058e55-243f-11f1-0a80-0f3f0008bf47",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/organization/metadata",
+            "type": "organization",
+            "mediaType": "application/json",
+            "uuidHref": "https://online.moysklad.ru/app/#mycompany/edit?id=b4058e55-243f-11f1-0a80-0f3f0008bf47"
+          }
+        },
+        "store": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/store/b40863cd-243f-11f1-0a80-0f3f0008bf4a",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/store/metadata",
+            "type": "store",
+            "mediaType": "application/json",
+            "uuidHref": "https://online.moysklad.ru/app/#warehouse/edit?id=b40863cd-243f-11f1-0a80-0f3f0008bf4a"
+          }
+        },
+        "supply": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/supply/e57cffe7-a54c-11f1-0a80-0cd600dcdc3d?expand=positions",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/supply/metadata",
+            "type": "supply",
+            "mediaType": "application/json",
+            "uuidHref": "https://online.moysklad.ru/app/#supply/edit?id=e57cffe7-a54c-11f1-0a80-0cd600dcdc3d"
+          }
+        },
+        "positions": [
+          {
+            "meta": {
+              "href": "https://api.moysklad.ru/api/remap/1.2/entity/supply/e57cffe7-a54c-11f1-0a80-0cd600dcdc3d/positions/e57d0448-a54c-11f1-0a80-0cd600dcdc3e",
+              "type": "supplyposition",
+              "mediaType": "application/json"
+            },
+            "quantity": 5.0,
+            "price": 14000.0,
+            "discount": 0.0,
+            "vat": 0,
+            "vatEnabled": false,
+            "assortment": {
+              "meta": {
+                "href": "https://api.moysklad.ru/api/remap/1.2/entity/product/e231fea7-a54c-11f1-0a80-105200dd8e47",
+                "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/product/metadata",
+                "type": "product",
+                "mediaType": "application/json",
+                "uuidHref": "https://online.moysklad.ru/app/#good/edit?id=e231f38e-a54c-11f1-0a80-105200dd8e45"
+              }
+            },
+            "overhead": 0.0
+          }
+        ]
+      }
+    },
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "factureout",
+      "title": "Выданный счёт-фактура",
+      "error": {
+        "method": "POST",
+        "path": "/entity/factureout",
+        "status": null,
+        "body": "не установлена связь с основанием demand"
+      },
+      "payload": {
+        "owner": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/employee/b3f3a377-243f-11f1-0a80-0f3f0008befb",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/employee/metadata",
+            "type": "employee",
+            "mediaType": "application/json",
+            "uuidHref": "https://online.moysklad.ru/app/#employee/edit?id=b3f3a377-243f-11f1-0a80-0f3f0008befb"
+          }
+        },
+        "shared": false,
+        "group": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/group/b3d3920d-243f-11f1-0a80-0b21000042b6",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/group/metadata",
+            "type": "group",
+            "mediaType": "application/json"
+          }
+        },
+        "name": "",
+        "moment": "2026-08-31 18:01:58.318",
+        "applicable": true,
+        "rate": {
+          "currency": {
+            "meta": {
+              "href": "https://api.moysklad.ru/api/remap/1.2/entity/currency/b4092727-243f-11f1-0a80-0f3f0008bf4f",
+              "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/currency/metadata",
+              "type": "currency",
+              "mediaType": "application/json",
+              "uuidHref": "https://online.moysklad.ru/app/#currency/edit?id=b4092727-243f-11f1-0a80-0f3f0008bf4f"
+            }
+          }
+        },
+        "sum": 22000.0,
+        "agent": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/counterparty/e3529426-a54c-11f1-0a80-182000db5c8c",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/counterparty/metadata",
+            "type": "counterparty",
+            "mediaType": "application/json",
+            "uuidHref": "https://online.moysklad.ru/app/#company/edit?id=e3529426-a54c-11f1-0a80-182000db5c8c"
+          }
+        },
+        "organization": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/organization/b4058e55-243f-11f1-0a80-0f3f0008bf47",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/organization/metadata",
+            "type": "organization",
+            "mediaType": "application/json",
+            "uuidHref": "https://online.moysklad.ru/app/#mycompany/edit?id=b4058e55-243f-11f1-0a80-0f3f0008bf47"
+          }
+        },
+        "files": {
+          "rows": []
+        },
+        "demands": [
+          {
+            "meta": {
+              "href": "https://api.moysklad.ru/api/remap/1.2/entity/demand/e480b8a5-a54c-11f1-0a80-161900dc6bf6",
+              "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/demand/metadata",
+              "type": "demand",
+              "mediaType": "application/json",
+              "uuidHref": "https://online.moysklad.ru/app/#demand/edit?id=e480b8a5-a54c-11f1-0a80-161900dc6bf6"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c",
+      "counterpartyName": "MSContractor DOCS TEST16",
+      "type": "facturein",
+      "title": "Полученный счёт-фактура",
+      "error": {
+        "method": "POST",
+        "path": "/entity/facturein",
+        "status": null,
+        "body": "не установлена связь с основанием supply"
+      },
+      "payload": {
+        "owner": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/employee/b3f3a377-243f-11f1-0a80-0f3f0008befb",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/employee/metadata",
+            "type": "employee",
+            "mediaType": "application/json",
+            "uuidHref": "https://online.moysklad.ru/app/#employee/edit?id=b3f3a377-243f-11f1-0a80-0f3f0008befb"
+          }
+        },
+        "shared": false,
+        "group": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/group/b3d3920d-243f-11f1-0a80-0b21000042b6",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/group/metadata",
+            "type": "group",
+            "mediaType": "application/json"
+          }
+        },
+        "name": "",
+        "moment": "2026-08-31 18:02:01.403",
+        "applicable": true,
+        "rate": {
+          "currency": {
+            "meta": {
+              "href": "https://api.moysklad.ru/api/remap/1.2/entity/currency/b4092727-243f-11f1-0a80-0f3f0008bf4f",
+              "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/currency/metadata",
+              "type": "currency",
+              "mediaType": "application/json",
+              "uuidHref": "https://online.moysklad.ru/app/#currency/edit?id=b4092727-243f-11f1-0a80-0f3f0008bf4f"
+            }
+          }
+        },
+        "sum": 70000.0,
+        "agent": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/counterparty/e3529426-a54c-11f1-0a80-182000db5c8c",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/counterparty/metadata",
+            "type": "counterparty",
+            "mediaType": "application/json",
+            "uuidHref": "https://online.moysklad.ru/app/#company/edit?id=e3529426-a54c-11f1-0a80-182000db5c8c"
+          }
+        },
+        "organization": {
+          "meta": {
+            "href": "https://api.moysklad.ru/api/remap/1.2/entity/organization/b4058e55-243f-11f1-0a80-0f3f0008bf47",
+            "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/organization/metadata",
+            "type": "organization",
+            "mediaType": "application/json",
+            "uuidHref": "https://online.moysklad.ru/app/#mycompany/edit?id=b4058e55-243f-11f1-0a80-0f3f0008bf47"
+          }
+        },
+        "files": {
+          "rows": []
+        },
+        "supplies": [
+          {
+            "meta": {
+              "href": "https://api.moysklad.ru/api/remap/1.2/entity/supply/e57cffe7-a54c-11f1-0a80-0cd600dcdc3d",
+              "metadataHref": "https://api.moysklad.ru/api/remap/1.2/entity/supply/metadata",
+              "type": "supply",
+              "mediaType": "application/json",
+              "uuidHref": "https://online.moysklad.ru/app/#supply/edit?id=e57cffe7-a54c-11f1-0a80-0cd600dcdc3d"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "skippedDocuments": [
+    {
+      "type": "retaildemand",
+      "title": "Розничная продажа",
+      "reason": "retailstore not found or not created"
+    },
+    {
+      "type": "retailsalesreturn",
+      "title": "Возврат розничной продажи",
+      "reason": "retailstore not found or not created"
+    },
+    {
+      "type": "retireorder",
+      "title": "Вывод кодов маркировки из оборота",
+      "reason": "не заданы параметры маркировки: TEST_MARKED_PRODUCT_ID, TEST_TRACKING_CODE, TEST_RETIRE_ORDER_TYPE, TEST_SUPPORTING_TRANSACTION",
+      "counterpartyId": "e3529426-a54c-11f1-0a80-182000db5c8c"
+    }
+  ]
+}

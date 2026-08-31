@@ -53,7 +53,8 @@ DEFAULT_COUNTERPARTY_COUNT = 2
 
 
 # Значения MS_COUNTERPARTY_COUNT, MS_COUNTERPARTY_NAME, MS_COUNTERPARTY_PHONE,
-# MS_WRITE_REPORT_JSON и MS_DOCUMENT_TYPES задаются в окружении.
+# MS_WRITE_REPORT_JSON, MS_DOCUMENT_TYPES и MS_DOCUMENT_TYPES_OPTIONAL задаются
+# в окружении.
 # Типы документов можно передать через MS_DOCUMENT_TYPES, через запятую или пробел:
 # MS_DOCUMENT_TYPES=customerorder,demand,invoiceout
 # Аргументы --docs, --stats и --all имеют более высокий приоритет.
@@ -61,8 +62,13 @@ DEFAULT_COUNTERPARTY_COUNT = 2
 BASE_URL = os.getenv("MS_BASE_URL", "https://api.moysklad.ru/api/remap/1.2").rstrip("/")
 MS_LOGIN = os.getenv("MS_LOGIN", "")
 MS_PASSWORD = os.getenv("MS_PASSWORD", "")
+MS_TOKEN = os.getenv("MS_TOKEN", "")
 COUNTERPARTY_NAME = os.getenv("MS_COUNTERPARTY_NAME", "MSContractor DOCS TEST")
 COUNTERPARTY_PHONE = os.getenv("MS_COUNTERPARTY_PHONE", "+79990000000")
+TEST_MARKED_PRODUCT_ID = os.getenv("TEST_MARKED_PRODUCT_ID", "")
+TEST_TRACKING_CODE = os.getenv("TEST_TRACKING_CODE", "")
+TEST_RETIRE_ORDER_TYPE = os.getenv("TEST_RETIRE_ORDER_TYPE", "")
+TEST_SUPPORTING_TRANSACTION = os.getenv("TEST_SUPPORTING_TRANSACTION", "")
 REQUEST_DELAY_SECONDS = float(os.getenv("MS_REQUEST_DELAY_SECONDS", "0.25"))
 MS_ERROR_LOG_DIR = Path(__file__).with_name("Logs_MS_test_data")
 
@@ -97,6 +103,7 @@ ALL_DOCUMENT_TYPES = {
     "commissionreportout",
     "retaildemand",
     "retailsalesreturn",
+    "retireorder",
 }
 
 PRODUCT_DOCUMENT_TYPES = {
@@ -136,6 +143,28 @@ COMMISSION_REPORT_DOCUMENT_TYPES = {
     "commissionreportout",
 }
 
+DEPENDENT_DOCUMENT_TYPES = {
+    "salesreturn",
+    "purchasereturn",
+    "retailsalesreturn",
+    "factureout",
+    "facturein",
+    "retireorder",
+}
+
+DOCUMENT_CREATION_ORDER = (
+    "customerorder", "demand", "purchaseorder", "supply", "paymentin",
+    "paymentout", "cashin", "cashout", "retaildemand", "invoiceout",
+    "invoicein", "counterpartyadjustment", "commissionreportin",
+    "commissionreportout", "salesreturn", "purchasereturn", "retailsalesreturn",
+    "factureout", "facturein", "retireorder",
+)
+
+READ_ONLY_FIELDS = {
+    "id", "accountId", "created", "updated", "deleted", "printed", "published", "vatSum",
+    "owner", "group", "shared", "files",
+}
+
 DOCUMENT_TITLES = {
     "customerorder": "Заказ покупателя",
     "demand": "Отгрузка",
@@ -156,6 +185,7 @@ DOCUMENT_TITLES = {
     "commissionreportout": "Выданный отчёт комиссионера",
     "retaildemand": "Розничная продажа",
     "retailsalesreturn": "Возврат розничной продажи",
+    "retireorder": "Вывод кодов маркировки из оборота",
 }
 
 
@@ -276,9 +306,24 @@ def selected_document_types(args: argparse.Namespace) -> Set[str]:
             )
         if not document_types:
             raise ValueError("MS_DOCUMENT_TYPES не должен быть пустым")
-        return document_types
+    else:
+        document_types = set(STAT_DOCUMENT_TYPES)
 
-    return set(STAT_DOCUMENT_TYPES)
+    optional_types = os.getenv("MS_DOCUMENT_TYPES_OPTIONAL")
+    if optional_types:
+        optional_document_types = {
+            document_type.lower()
+            for document_type in optional_types.replace(",", " ").split()
+        }
+        unknown_types = optional_document_types - ALL_DOCUMENT_TYPES
+        if unknown_types:
+            raise ValueError(
+                "MS_DOCUMENT_TYPES_OPTIONAL содержит неподдерживаемые типы: "
+                f"{', '.join(sorted(unknown_types))}"
+            )
+        document_types.update(optional_document_types)
+
+    return document_types
 
 
 def print_document_types() -> None:
@@ -289,9 +334,15 @@ def print_document_types() -> None:
 
 
 def validate_credentials() -> None:
+    if MS_TOKEN:
+        session.auth = None
+        session.headers["Authorization"] = f"Bearer {MS_TOKEN}"
+        return
+
     if not MS_LOGIN or not MS_PASSWORD:
-        print("Ошибка: задай MS_LOGIN и MS_PASSWORD через переменные окружения.")
+        print("Ошибка: задай MS_TOKEN или MS_LOGIN и MS_PASSWORD через переменные окружения.")
         print("Пример:")
+        print("export MS_TOKEN='access-token'")
         print("export MS_LOGIN='admin@example.com'")
         print("export MS_PASSWORD='password'")
         sys.exit(1)
@@ -342,7 +393,11 @@ def try_api(method: str, path: str, payload: Optional[Dict[str, Any]] = None) ->
 
 
 def meta(entity: Dict[str, Any]) -> Dict[str, Any]:
-    return {"meta": entity["meta"]}
+    entity_meta = dict(entity["meta"])
+    href = entity_meta.get("href")
+    if isinstance(href, str):
+        entity_meta["href"] = href.split("?", 1)[0]
+    return {"meta": entity_meta}
 
 
 def get_first(entity_type: str) -> Optional[Dict[str, Any]]:
@@ -407,7 +462,7 @@ def try_ensure_retail_store(
     ok, data = try_api("GET", "/entity/retailstore?limit=100")
     if not ok:
         print("Не удалось получить список розничных точек.")
-        print(data.get("body", ""))
+        print_error_details(data)
         return None
 
     for retail_store in data.get("rows", []):
@@ -434,7 +489,7 @@ def try_ensure_retail_store(
         return data
 
     print("Не удалось создать retailstore. Розничные документы будут пропущены.")
-    print(data.get("body", ""))
+    print_error_details(data)
     return None
 
 
@@ -543,6 +598,9 @@ def product_doc(
         payload["retailStore"] = meta(retail_store)
     if retail_shift:
         payload["retailShift"] = meta(retail_shift)
+    if doc_type == "retaildemand":
+        payload["cashSum"] = quantity * price
+        payload["noCashSum"] = 0
 
     return payload
 
@@ -624,6 +682,139 @@ def factureout_doc(
     applicable: bool,
 ) -> Dict[str, Any]:
     return simple_sum_doc(run_id, "factureout", org, cp, applicable, 22000)
+
+
+def document_positions(document: Dict[str, Any]) -> list[Dict[str, Any]]:
+    positions = document.get("positions", {})
+    return positions.get("rows", []) if isinstance(positions, dict) else positions
+
+
+def load_document_positions(document_type: str, document: Dict[str, Any]) -> Dict[str, Any]:
+    if document_positions(document):
+        return document
+
+    ok, positions = try_api(
+        "GET", f"/entity/{document_type}/{document['id']}/positions"
+    )
+    if ok:
+        document = dict(document)
+        document["positions"] = positions
+    return document
+
+
+def clean_document_positions(positions: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    return [clean_read_only_fields(position, is_root=True) for position in positions]
+
+
+def clean_read_only_fields(value: Any, *, is_root: bool = False) -> Any:
+    if isinstance(value, list):
+        return [clean_read_only_fields(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    return {
+        key: clean_read_only_fields(item)
+        for key, item in value.items()
+        if key not in READ_ONLY_FIELDS and not (is_root and key == "meta")
+    }
+
+
+def salesreturn_doc(source: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "agent": source["agent"],
+        "organization": source["organization"],
+        "store": source["store"],
+        "demand": meta(source),
+        "positions": clean_document_positions(document_positions(source)),
+    }
+
+
+def purchasereturn_doc(source: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "agent": source["agent"],
+        "organization": source["organization"],
+        "store": source["store"],
+        "supply": meta(source),
+        "positions": clean_document_positions(document_positions(source)),
+    }
+
+
+def retailsalesreturn_doc(source: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "agent": source["agent"],
+        "organization": source["organization"],
+        "store": source["store"],
+        "retailStore": source["retailStore"],
+        "retailShift": source["retailShift"],
+        "demand": meta(source),
+        "positions": clean_document_positions(document_positions(source)),
+        "cashSum": source.get("cashSum", 0),
+        "noCashSum": source.get("noCashSum", 0),
+    }
+
+
+def facture_template_payload(document_type: str, source_type: str, source: Dict[str, Any]) -> Dict[str, Any]:
+    source_fields = {
+        "factureout": {
+            "demand": "demands",
+            "paymentin": "payments",
+            "cashin": "cashIns",
+            "purchasereturn": "returns",
+        },
+        "facturein": {
+            "supply": "supplies",
+            "paymentout": "payments",
+        },
+    }
+    return {source_fields[document_type][source_type]: [meta(source)]}
+
+
+def choose_facture_source(
+    document_type: str,
+    created: Dict[str, Dict[str, Any]],
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    priorities = {
+        "factureout": ("demand", "paymentin", "cashin", "purchasereturn"),
+        "facturein": ("supply", "paymentout"),
+    }
+    for source_type in priorities[document_type]:
+        source = created.get(source_type)
+        if source:
+            return source_type, source
+    return None, None
+
+
+def facture_doc(document_type: str, source_type: str, source: Dict[str, Any]) -> Dict[str, Any]:
+    template = api(
+        "PUT",
+        f"/entity/{document_type}/new",
+        facture_template_payload(document_type, source_type, source),
+    )
+    return clean_read_only_fields(template, is_root=True)
+
+
+def retireorder_doc(cp: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    required = {
+        "TEST_MARKED_PRODUCT_ID": TEST_MARKED_PRODUCT_ID,
+        "TEST_TRACKING_CODE": TEST_TRACKING_CODE,
+        "TEST_RETIRE_ORDER_TYPE": TEST_RETIRE_ORDER_TYPE,
+        "TEST_SUPPORTING_TRANSACTION": TEST_SUPPORTING_TRANSACTION,
+    }
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        return None, f"не заданы параметры маркировки: {', '.join(missing)}"
+
+    product_href = f"{BASE_URL}/entity/product/{TEST_MARKED_PRODUCT_ID}"
+    return {
+        "agent": meta(cp),
+        "retireOrderType": TEST_RETIRE_ORDER_TYPE,
+        "supportingTransaction": TEST_SUPPORTING_TRANSACTION,
+        "positions": [{
+            "quantity": 1,
+            "assortment": {"meta": {"href": product_href, "type": "product", "mediaType": "application/json"}},
+            "trackingCodes": [{"cis": TEST_TRACKING_CODE, "type": "trackingcode"}],
+        }],
+    }, None
 
 
 def build_documents(
@@ -711,7 +902,9 @@ def build_documents(
     }
 
     documents: list[Dict[str, Any]] = []
-    for doc_type in sorted(selected):
+    for doc_type in DOCUMENT_CREATION_ORDER:
+        if doc_type not in selected:
+            continue
         documents.append({
             "type": doc_type,
             "title": DOCUMENT_TITLES[doc_type],
@@ -751,6 +944,142 @@ def write_ms_error_log(run_id: str, failed_documents: list[Dict[str, Any]]) -> O
     except OSError as exc:
         print(f"Не удалось записать лог ответов МС: {exc}", file=sys.stderr)
         return None
+
+
+def same_entity(left: Dict[str, Any], right: Dict[str, Any]) -> bool:
+    left_href = left.get("meta", {}).get("href", "").split("?", 1)[0]
+    right_href = right.get("meta", {}).get("href", "").split("?", 1)[0]
+    return left_href == right_href
+
+
+def verify_dependent_document(
+    document_type: str,
+    document: Dict[str, Any],
+    cp: Dict[str, Any],
+    source_type: Optional[str] = None,
+    source: Optional[Dict[str, Any]] = None,
+) -> None:
+    if document.get("meta", {}).get("type") != document_type:
+        raise ValueError(f"МС вернул другой тип документа: {document.get('meta', {}).get('type')}")
+    if not document.get("id"):
+        raise ValueError("МС не вернул id созданного документа")
+    if not same_entity(document.get("agent", {}), cp):
+        raise ValueError("контрагент созданного документа не совпадает с тестовым КА")
+
+    if source_type and source:
+        relation_fields = {
+            "demand": ("demand", "demands"),
+            "supply": ("supply", "supplies"),
+            "paymentin": ("payments",),
+            "paymentout": ("payments",),
+            "cashin": ("cashIns",),
+            "purchasereturn": ("returns",),
+        }
+        related = False
+        for relation_field in relation_fields.get(source_type, ()):
+            relation = document.get(relation_field, [])
+            relations = relation.get("rows", []) if isinstance(relation, dict) and "rows" in relation else relation
+            if isinstance(relations, list):
+                related = any(same_entity(item, source) for item in relations)
+            else:
+                related = same_entity(relations, source)
+            if related:
+                break
+        if not related:
+            raise ValueError(f"не установлена связь с основанием {source_type}")
+
+    if document_type in {"salesreturn", "purchasereturn", "retailsalesreturn"}:
+        if not document_positions(document):
+            raise ValueError("в документе отсутствуют позиции")
+    if document_type == "retailsalesreturn":
+        if not same_entity(document.get("retailShift", {}), source.get("retailShift", {})):
+            raise ValueError("розничная смена не совпадает со сменой продажи")
+        if document.get("cashSum") is None or document.get("noCashSum") is None:
+            raise ValueError("в розничном возврате отсутствуют суммы оплаты")
+
+
+def create_and_verify_dependent_document(
+    document_type: str,
+    payload: Dict[str, Any],
+    cp: Dict[str, Any],
+    source_type: Optional[str] = None,
+    source: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    created = create_entity(document_type, payload)
+    document = api("GET", f"/entity/{document_type}/{created['id']}?expand=positions")
+    document = load_document_positions(document_type, document)
+    verify_dependent_document(document_type, document, cp, source_type, source)
+    return document
+
+
+def error_data(method: str, path: str, exc: Exception) -> Dict[str, Any]:
+    if isinstance(exc, ApiError):
+        return {
+            "method": exc.method,
+            "path": exc.path,
+            "status": exc.status,
+            "body": exc.body,
+        }
+    return {"method": method, "path": path, "status": None, "body": str(exc)}
+
+
+def print_error_details(error: Dict[str, Any]) -> None:
+    """Print MySklad error message and code without hiding the raw response."""
+    body = error.get("body", "")
+    try:
+        response = json.loads(body) if isinstance(body, str) else body
+    except (TypeError, json.JSONDecodeError):
+        response = None
+
+    errors = response.get("errors", []) if isinstance(response, dict) else []
+    if errors:
+        for item in errors:
+            print(
+                f"  message: {item.get('error', 'не указано')}; "
+                f"code: {item.get('code', 'не указан')}"
+            )
+        return
+
+    if body:
+        print(f"  message: {body}; code: не указан")
+
+
+def add_created_document(
+    report: Dict[str, Any], cp: Dict[str, Any], document_type: str, document: Dict[str, Any]
+) -> None:
+    report["createdDocuments"].append({
+        "counterpartyId": cp.get("id"),
+        "counterpartyName": cp.get("name"),
+        "type": document_type,
+        "title": DOCUMENT_TITLES[document_type],
+        "id": document.get("id"),
+        "name": document.get("name"),
+        "applicable": document.get("applicable"),
+        "href": document["meta"]["href"],
+    })
+
+
+def add_failed_document(
+    report: Dict[str, Any], cp: Dict[str, Any], document_type: str,
+    payload: Optional[Dict[str, Any]], error: Dict[str, Any],
+) -> None:
+    report["failedDocuments"].append({
+        "counterpartyId": cp.get("id"),
+        "counterpartyName": cp.get("name"),
+        "type": document_type,
+        "title": DOCUMENT_TITLES[document_type],
+        "error": error,
+        "payload": payload,
+    })
+
+
+def add_skipped_document(
+    report: Dict[str, Any], document_type: str, reason: str, cp: Optional[Dict[str, Any]] = None
+) -> None:
+    skipped = {"type": document_type, "title": DOCUMENT_TITLES[document_type], "reason": reason}
+    if cp:
+        skipped["counterpartyId"] = cp.get("id")
+    report["skippedDocuments"].append(skipped)
 
 
 def main() -> None:
@@ -880,8 +1209,9 @@ def main() -> None:
             commission_contract = create_commission_contract(cp_run_id, org, cp)
             print(f"Комиссионный договор: {commission_contract.get('name')}")
 
+        primary_selected = selected - DEPENDENT_DOCUMENT_TYPES
         documents = build_documents(
-            selected,
+            primary_selected,
             cp_run_id,
             org,
             cp,
@@ -894,6 +1224,7 @@ def main() -> None:
             commission_contract,
         )
 
+        created_by_type: Dict[str, Dict[str, Any]] = {}
         for doc in documents:
             document_index += 1
             doc_type = doc["type"]
@@ -904,34 +1235,97 @@ def main() -> None:
             ok, result = try_api("POST", f"/entity/{doc_type}", payload)
 
             if ok:
+                if doc_type in {"demand", "supply", "retaildemand"} and result.get("id"):
+                    expanded_ok, expanded_result = try_api(
+                        "GET", f"/entity/{doc_type}/{result['id']}?expand=positions"
+                    )
+                    if expanded_ok:
+                        result = expanded_result
                 print(f"  OK: id={result.get('id')} name={result.get('name')}")
-                report["createdDocuments"].append({
-                    "counterpartyId": cp.get("id"),
-                    "counterpartyName": cp.get("name"),
-                    "type": doc_type,
-                    "title": title,
-                    "id": result.get("id"),
-                    "name": result.get("name"),
-                    "applicable": result.get("applicable"),
-                    "href": result["meta"]["href"],
-                })
+                created_by_type[doc_type] = result
+                add_created_document(report, cp, doc_type, result)
             else:
                 print(f"  FAILED: status={result.get('status')}")
-                report["failedDocuments"].append({
-                    "counterpartyId": cp.get("id"),
-                    "counterpartyName": cp.get("name"),
-                    "type": doc_type,
-                    "title": title,
-                    "error": result,
-                    "payload": payload,
-                })
+                print_error_details(result)
+                add_failed_document(report, cp, doc_type, payload, result)
+
+        for doc_type in DOCUMENT_CREATION_ORDER:
+            if doc_type not in selected or doc_type not in DEPENDENT_DOCUMENT_TYPES:
+                continue
+
+            document_index += 1
+            print(f"[{document_index}/{total_documents}] {doc_type} — {DOCUMENT_TITLES[doc_type]}")
+            source_type: Optional[str] = None
+            source: Optional[Dict[str, Any]] = None
+            payload: Optional[Dict[str, Any]] = None
+
+            try:
+                if doc_type == "salesreturn":
+                    source_type, source = "demand", created_by_type.get("demand")
+                    if not source:
+                        raise LookupError("не создана отгрузка demand")
+                    source = load_document_positions("demand", source)
+                    if not document_positions(source):
+                        raise LookupError("у отгрузки demand отсутствуют позиции")
+                    payload = salesreturn_doc(source)
+                elif doc_type == "purchasereturn":
+                    source_type, source = "supply", created_by_type.get("supply")
+                    if not source:
+                        raise LookupError("не создана приёмка supply")
+                    source = load_document_positions("supply", source)
+                    if not document_positions(source):
+                        raise LookupError("у приёмки supply отсутствуют позиции")
+                    payload = purchasereturn_doc(source)
+                elif doc_type == "retailsalesreturn":
+                    source_type, source = "demand", created_by_type.get("retaildemand")
+                    if not source:
+                        raise LookupError("не создана розничная продажа retaildemand")
+                    source = load_document_positions("retaildemand", source)
+                    if not document_positions(source):
+                        raise LookupError("у розничной продажи retaildemand отсутствуют позиции")
+                    payload = retailsalesreturn_doc(source)
+                elif doc_type in {"factureout", "facturein"}:
+                    source_type, source = choose_facture_source(doc_type, created_by_type)
+                    if not source_type or not source:
+                        raise LookupError("не создано подходящее основание")
+                    payload = facture_doc(doc_type, source_type, source)
+                else:
+                    payload, reason = retireorder_doc(cp)
+                    if reason:
+                        raise LookupError(reason)
+
+                result = create_and_verify_dependent_document(
+                    doc_type, payload, cp, source_type, source
+                )
+                created_by_type[doc_type] = result
+                print(f"  OK: id={result.get('id')} name={result.get('name')}")
+                add_created_document(report, cp, doc_type, result)
+            except LookupError as exc:
+                print(f"  SKIPPED: {exc}")
+                add_skipped_document(report, doc_type, str(exc), cp)
+            except ApiError as exc:
+                if doc_type == "retireorder":
+                    print("  SKIPPED: создание запрещено настройками МС")
+                    add_skipped_document(report, doc_type, exc.body, cp)
+                    continue
+                error = error_data("POST", f"/entity/{doc_type}", exc)
+                print(f"  FAILED: status={error.get('status')}")
+                print_error_details(error)
+                add_failed_document(report, cp, doc_type, payload, error)
+            except Exception as exc:
+                error = error_data("POST", f"/entity/{doc_type}", exc)
+                print(f"  FAILED: status={error.get('status')}")
+                print_error_details(error)
+                add_failed_document(report, cp, doc_type, payload, error)
 
     ms_error_log_file = write_ms_error_log(run_id, report["failedDocuments"])
 
     report_file: Optional[str] = None
     if should_write_report:
-        report_file = f"mscontractor_docs_report_{run_id}.json"
-        with open(report_file, "w", encoding="utf-8") as f:
+        MS_ERROR_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        report_path = MS_ERROR_LOG_DIR / f"mscontractor_docs_report_{run_id}.json"
+        report_file = str(report_path)
+        with report_path.open("w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
 
     print("\nГотово.")

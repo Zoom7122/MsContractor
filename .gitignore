@@ -175,3 +175,5 @@ service-account.json
 *vendor*secret*
 *access_token*
 *refresh_token*
+
+scripts_for_test_data/Logs_MS_test_data/

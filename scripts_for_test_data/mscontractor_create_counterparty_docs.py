@@ -5,7 +5,7 @@ import os
 import shlex
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, Tuple
 
@@ -52,8 +52,8 @@ load_test_data_env()
 DEFAULT_COUNTERPARTY_COUNT = 2
 
 
-# Значения MS_COUNTERPARTY_COUNT, MS_WRITE_REPORT_JSON и MS_DOCUMENT_TYPES
-# задаются в окружении, а не присваиваются внутри Python-файла.
+# Значения MS_COUNTERPARTY_COUNT, MS_COUNTERPARTY_NAME, MS_COUNTERPARTY_PHONE,
+# MS_WRITE_REPORT_JSON и MS_DOCUMENT_TYPES задаются в окружении.
 # Типы документов можно передать через MS_DOCUMENT_TYPES, через запятую или пробел:
 # MS_DOCUMENT_TYPES=customerorder,demand,invoiceout
 # Аргументы --docs, --stats и --all имеют более высокий приоритет.
@@ -61,7 +61,10 @@ DEFAULT_COUNTERPARTY_COUNT = 2
 BASE_URL = os.getenv("MS_BASE_URL", "https://api.moysklad.ru/api/remap/1.2").rstrip("/")
 MS_LOGIN = os.getenv("MS_LOGIN", "")
 MS_PASSWORD = os.getenv("MS_PASSWORD", "")
+COUNTERPARTY_NAME = os.getenv("MS_COUNTERPARTY_NAME", "MSContractor DOCS TEST")
+COUNTERPARTY_PHONE = os.getenv("MS_COUNTERPARTY_PHONE", "+79990000000")
 REQUEST_DELAY_SECONDS = float(os.getenv("MS_REQUEST_DELAY_SECONDS", "0.25"))
+MS_ERROR_LOG_DIR = Path(__file__).with_name("Logs_MS_test_data")
 
 # Документы, которые участвуют в показателе "Сумма продаж" контрагента:
 # Отгрузка + Розничная продажа + Полученный отчет комиссионера
@@ -121,6 +124,16 @@ STORE_DOCUMENT_TYPES = {
 RETAIL_DOCUMENT_TYPES = {
     "retaildemand",
     "retailsalesreturn",
+}
+
+EXPENSE_ITEM_DOCUMENT_TYPES = {
+    "cashout",
+    "paymentout",
+}
+
+COMMISSION_REPORT_DOCUMENT_TYPES = {
+    "commissionreportin",
+    "commissionreportout",
 }
 
 DOCUMENT_TITLES = {
@@ -247,7 +260,10 @@ def selected_document_types(args: argparse.Namespace) -> Set[str]:
         return set(STAT_DOCUMENT_TYPES)
 
     raw_types = os.getenv("MS_DOCUMENT_TYPES")
-    if raw_types:
+    if raw_types is not None:
+        if not raw_types.strip():
+            return set()
+
         document_types = {
             document_type.lower()
             for document_type in raw_types.replace(",", " ").split()
@@ -371,21 +387,46 @@ def ensure_product(run_id: str) -> Dict[str, Any]:
     })
 
 
+def ensure_expense_item(run_id: str) -> Dict[str, Any]:
+    expense_item = get_first("expenseitem")
+    if expense_item:
+        return expense_item
+
+    print("Статья расходов не найдена. Создаю тестовую статью расходов...")
+    return create_entity("expenseitem", {
+        "name": f"MSContractor Test Expense {run_id}",
+        "description": "Создано скриптом для расходных документов mscontractor",
+    })
+
+
 def try_ensure_retail_store(
     run_id: str,
     org: Dict[str, Any],
     store: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    retail_store = get_first("retailstore")
-    if retail_store:
-        return retail_store
+    ok, data = try_api("GET", "/entity/retailstore?limit=100")
+    if not ok:
+        print("Не удалось получить список розничных точек.")
+        print(data.get("body", ""))
+        return None
 
-    print("Розничная точка не найдена. Пробую создать тестовую retailstore...")
+    for retail_store in data.get("rows", []):
+        if retail_store.get("active"):
+            return retail_store
+
+    price_type = get_first("pricetype")
+    if not price_type:
+        print("Не найдены типы цен. Розничные документы будут пропущены.")
+        return None
+
+    print("Активная розничная точка не найдена. Пробую создать тестовую retailstore...")
 
     ok, data = try_api("POST", "/entity/retailstore", {
         "name": f"MSContractor Test Retail Store {run_id}",
         "organization": meta(org),
         "store": meta(store),
+        "priceType": meta(price_type),
+        "active": True,
         "description": "Создано скриптом для теста розничных документов mscontractor",
     })
 
@@ -397,15 +438,52 @@ def try_ensure_retail_store(
     return None
 
 
+def ensure_retail_shift(run_id: str, retail_store: Dict[str, Any]) -> Dict[str, Any]:
+    ok, data = try_api("GET", "/entity/retailshift?limit=100")
+    if not ok:
+        raise RuntimeError(
+            "Не удалось получить список розничных смен: "
+            f"{data.get('body', '')}"
+        )
+
+    retail_store_href = retail_store["meta"]["href"]
+    for retail_shift in data.get("rows", []):
+        shift_store = retail_shift.get("retailStore", {}).get("meta", {}).get("href")
+        if shift_store == retail_store_href and not retail_shift.get("closeDate"):
+            return retail_shift
+
+    print("Открытая розничная смена не найдена. Создаю тестовую смену...")
+    return create_entity("retailshift", {
+        "name": f"MSContractor Test Shift {run_id}",
+        "retailStore": meta(retail_store),
+        "description": "Создано скриптом для розничных документов mscontractor",
+    })
+
+
 def create_counterparty(run_id: str) -> Dict[str, Any]:
     return create_entity("counterparty", {
         # Имя одинаковое намеренно: КА различаются по code/externalCode и ID.
-        "name": "MSContractor DOCS TEST",
+        "name": COUNTERPARTY_NAME,
         "description": "Тестовый КА для проверки документов mscontractor",
-        "phone": "+79990000000",
+        "phone": COUNTERPARTY_PHONE,
         "email": f"mscontractor-docs-{run_id}@example.com",
         "code": f"MSC-DOCS-{run_id}",
         "externalCode": f"mscontractor-docs-counterparty-{run_id}",
+    })
+
+
+def create_commission_contract(
+    run_id: str,
+    org: Dict[str, Any],
+    cp: Dict[str, Any],
+) -> Dict[str, Any]:
+    return create_entity("contract", {
+        "name": f"MSContractor Commission {run_id}",
+        "moment": now_moment(),
+        "ownAgent": meta(org),
+        "agent": meta(cp),
+        "contractType": "Commission",
+        "description": "Создано скриптом для отчётов комиссионера mscontractor",
     })
 
 
@@ -448,6 +526,7 @@ def product_doc(
     applicable: bool,
     store: Optional[Dict[str, Any]] = None,
     retail_store: Optional[Dict[str, Any]] = None,
+    retail_shift: Optional[Dict[str, Any]] = None,
     quantity: float = 1,
     price: int = 10000,
 ) -> Dict[str, Any]:
@@ -462,6 +541,8 @@ def product_doc(
         payload["store"] = meta(store)
     if retail_store:
         payload["retailStore"] = meta(retail_store)
+    if retail_shift:
+        payload["retailShift"] = meta(retail_shift)
 
     return payload
 
@@ -473,12 +554,15 @@ def money_doc(
     cp: Dict[str, Any],
     applicable: bool,
     amount: int,
+    expense_item: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     payload = base_doc(run_id, org, cp, doc_type, applicable)
     payload.update({
         "sum": amount,
         "paymentPurpose": f"MSContractor test payment. type={doc_type}, run={run_id}",
     })
+    if expense_item:
+        payload["expenseItem"] = meta(expense_item)
     return payload
 
 
@@ -489,9 +573,33 @@ def simple_sum_doc(
     cp: Dict[str, Any],
     applicable: bool,
     amount: int,
+    contract: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     payload = base_doc(run_id, org, cp, doc_type, applicable)
     payload["sum"] = amount
+    if contract:
+        payload["contract"] = meta(contract)
+    return payload
+
+
+def commission_report_doc(
+    run_id: str,
+    doc_type: str,
+    org: Dict[str, Any],
+    cp: Dict[str, Any],
+    applicable: bool,
+    amount: int,
+    contract: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    payload = simple_sum_doc(
+        run_id, doc_type, org, cp, applicable, amount, contract
+    )
+    payload.update({
+        "commissionPeriodStart": (datetime.now() - timedelta(days=1)).strftime(
+            "%Y-%m-%d 00:00:00.000"
+        ),
+        "commissionPeriodEnd": now_moment(),
+    })
     return payload
 
 
@@ -527,6 +635,9 @@ def build_documents(
     product: Optional[Dict[str, Any]],
     store: Optional[Dict[str, Any]],
     retail_store: Optional[Dict[str, Any]],
+    retail_shift: Optional[Dict[str, Any]],
+    expense_item: Optional[Dict[str, Any]],
+    commission_contract: Optional[Dict[str, Any]],
 ) -> list[Dict[str, Any]]:
     def p(
         doc_type: str,
@@ -535,6 +646,7 @@ def build_documents(
         *,
         need_store: bool = False,
         need_retail_store: bool = False,
+        need_retail_shift: bool = False,
     ) -> Dict[str, Any]:
         if product is None:
             raise RuntimeError(f"Для {doc_type} требуется товар")
@@ -548,6 +660,7 @@ def build_documents(
             applicable,
             store=store if need_store else None,
             retail_store=retail_store if need_retail_store else None,
+            retail_shift=retail_shift if need_retail_shift else None,
             quantity=quantity,
             price=price,
         )
@@ -560,9 +673,13 @@ def build_documents(
         "supply": lambda: p("supply", 5, 14000, need_store=True),
         "purchaseorder": lambda: p("purchaseorder", 6, 15000),
         "cashin": lambda: money_doc(run_id, "cashin", org, cp, applicable, 16000),
-        "cashout": lambda: money_doc(run_id, "cashout", org, cp, applicable, 17000),
+        "cashout": lambda: money_doc(
+            run_id, "cashout", org, cp, applicable, 17000, expense_item
+        ),
         "paymentin": lambda: money_doc(run_id, "paymentin", org, cp, applicable, 18000),
-        "paymentout": lambda: money_doc(run_id, "paymentout", org, cp, applicable, 19000),
+        "paymentout": lambda: money_doc(
+            run_id, "paymentout", org, cp, applicable, 19000, expense_item
+        ),
         "salesreturn": lambda: p("salesreturn", 1, 20000, need_store=True),
         "purchasereturn": lambda: p("purchasereturn", 1, 21000, need_store=True),
         "counterpartyadjustment": lambda: simple_sum_doc(
@@ -570,11 +687,11 @@ def build_documents(
         ),
         "facturein": lambda: facturein_doc(run_id, org, cp, applicable),
         "factureout": lambda: factureout_doc(run_id, org, cp, applicable),
-        "commissionreportin": lambda: simple_sum_doc(
-            run_id, "commissionreportin", org, cp, applicable, 23000
+        "commissionreportin": lambda: commission_report_doc(
+            run_id, "commissionreportin", org, cp, applicable, 23000, commission_contract
         ),
-        "commissionreportout": lambda: simple_sum_doc(
-            run_id, "commissionreportout", org, cp, applicable, 24000
+        "commissionreportout": lambda: commission_report_doc(
+            run_id, "commissionreportout", org, cp, applicable, 24000, commission_contract
         ),
         "retaildemand": lambda: p(
             "retaildemand",
@@ -582,6 +699,7 @@ def build_documents(
             25000,
             need_store=True,
             need_retail_store=True,
+            need_retail_shift=True,
         ),
         "retailsalesreturn": lambda: p(
             "retailsalesreturn",
@@ -611,6 +729,28 @@ def entity_info(entity: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         "name": entity.get("name"),
         "href": entity["meta"]["href"],
     }
+
+
+def write_ms_error_log(run_id: str, failed_documents: list[Dict[str, Any]]) -> Optional[Path]:
+    """Write MySklad responses for failed document creation requests."""
+    if not failed_documents:
+        return None
+
+    try:
+        MS_ERROR_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        log_file = MS_ERROR_LOG_DIR / f"mscontractor_document_errors_{run_id}.json"
+        log = {
+            "runId": run_id,
+            "createdAt": datetime.now().isoformat(timespec="seconds"),
+            "baseUrl": BASE_URL,
+            "failedDocuments": failed_documents,
+        }
+        with log_file.open("w", encoding="utf-8") as file:
+            json.dump(log, file, ensure_ascii=False, indent=2)
+        return log_file
+    except OSError as exc:
+        print(f"Не удалось записать лог ответов МС: {exc}", file=sys.stderr)
+        return None
 
 
 def main() -> None:
@@ -669,6 +809,8 @@ def main() -> None:
     store: Optional[Dict[str, Any]] = None
     product: Optional[Dict[str, Any]] = None
     retail_store: Optional[Dict[str, Any]] = None
+    retail_shift: Optional[Dict[str, Any]] = None
+    expense_item: Optional[Dict[str, Any]] = None
 
     if needs_store:
         print("Получаю/создаю склад...")
@@ -686,11 +828,23 @@ def main() -> None:
         if retail_store:
             print(f"Розничная точка: {retail_store.get('name')}")
 
+    if needs_retail_store and retail_store:
+        print("Получаю/создаю открытую розничную смену...")
+        retail_shift = ensure_retail_shift(run_id, retail_store)
+        print(f"Розничная смена: {retail_shift.get('name')}")
+
+    if selected & EXPENSE_ITEM_DOCUMENT_TYPES:
+        print("Получаю/создаю статью расходов...")
+        expense_item = ensure_expense_item(run_id)
+        print(f"Статья расходов: {expense_item.get('name')}")
+
     report["supportEntities"] = {
         "organization": entity_info(org),
         "store": entity_info(store),
         "product": entity_info(product),
         "retailStore": entity_info(retail_store),
+        "retailShift": entity_info(retail_shift),
+        "expenseItem": entity_info(expense_item),
     }
 
     # Если retailstore создать не удалось, не пытаемся отправлять заведомо битые retail payload'ы.
@@ -720,6 +874,12 @@ def main() -> None:
             f"{cp.get('name')} id={cp.get('id')}"
         )
 
+        commission_contract: Optional[Dict[str, Any]] = None
+        if selected & COMMISSION_REPORT_DOCUMENT_TYPES:
+            print("Создаю комиссионный договор...")
+            commission_contract = create_commission_contract(cp_run_id, org, cp)
+            print(f"Комиссионный договор: {commission_contract.get('name')}")
+
         documents = build_documents(
             selected,
             cp_run_id,
@@ -729,6 +889,9 @@ def main() -> None:
             product,
             store,
             retail_store,
+            retail_shift,
+            expense_item,
+            commission_contract,
         )
 
         for doc in documents:
@@ -763,6 +926,8 @@ def main() -> None:
                     "payload": payload,
                 })
 
+    ms_error_log_file = write_ms_error_log(run_id, report["failedDocuments"])
+
     report_file: Optional[str] = None
     if should_write_report:
         report_file = f"mscontractor_docs_report_{run_id}.json"
@@ -776,15 +941,16 @@ def main() -> None:
     print(f"Пропущено: {len(report['skippedDocuments'])}")
     if report_file:
         print(f"Отчёт: {report_file}")
+    if ms_error_log_file:
+        print(f"Лог ответов МС при ошибках: {ms_error_log_file}")
 
     if report["failedDocuments"]:
         print("\nЧасть документов не создалась.")
         if report_file:
             print("Подробности есть в report JSON.")
-        print(
-            "Особенно commissionreportin/commissionreportout могут требовать "
-            "дополнительной настройки комиссионной схемы аккаунта."
-        )
+        if ms_error_log_file:
+            print("Ответы МС также сохранены в отдельном JSON-логе.")
+        print("Проверь поле error у неуспешного документа.")
 
 
 if __name__ == "__main__":

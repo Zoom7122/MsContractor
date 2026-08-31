@@ -1,9 +1,7 @@
 <template>
-  <div class="empty-view" />
+  <el-card class="empty-view" shadow="never">
+    <el-empty description="Управление синхронизацией доступно на странице обзора" :image-size="80" />
+  </el-card>
 </template>
 
-<style scoped>
-.empty-view {
-  min-height: 100%;
-}
-</style>
+<style scoped src="../styles/pages/sync.css"></style>

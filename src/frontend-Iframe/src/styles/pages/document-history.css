@@ -1,0 +1,22 @@
+.documents-history-placeholder {
+  min-height: 100%;
+}
+
+.documents-history-placeholder__panel {
+  max-width: 760px;
+}
+
+.documents-history-placeholder__kicker {
+  display: inline-flex;
+  color: var(--app-color-primary-dark);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.documents-history-placeholder p {
+  max-width: 520px;
+  margin: 0;
+  color: var(--app-color-text-secondary);
+  font-size: 12px;
+}

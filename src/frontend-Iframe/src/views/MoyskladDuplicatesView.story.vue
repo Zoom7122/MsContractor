@@ -95,10 +95,4 @@ const mockDuplicatesData = {
   </Story>
 </template>
 
-<style>
-.story-page {
-  min-height: 100vh;
-  padding: 32px;
-  background: #f4f7fb;
-}
-</style>
+<style src="../styles/stories/story-page.css"></style>

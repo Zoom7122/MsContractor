@@ -1,11 +1,13 @@
 using System.Net;
 using MsContractor.BuildingBlocks.Health;
+using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
 using MsContractor.MoySkladEgressService.Services;
 using Npgsql;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.AddMsContractorLogging();
 builder.AddMsContractorHealth();
 
 // Add services to the container.
@@ -53,8 +55,12 @@ builder.Services.AddHttpClient<IMoySkladDocumentGateway, MoySkladDocumentGateway
 {
     AutomaticDecompression = DecompressionMethods.GZip
 });
+builder.Services.AddSingleton<IMoySkladResponseHandler, MoySkladResponseHandler>();
+builder.Services.AddSingleton<IMoySkladSingleDocumentResponseValidator, MoySkladSingleDocumentResponseValidator>();
+builder.Services.AddSingleton<IMoySkladBulkDocumentResponseValidator, MoySkladBulkDocumentResponseValidator>();
 builder.Services.AddScoped<IMoySkladDocumentDiscoveryService, MoySkladDocumentDiscoveryService>();
 builder.Services.AddScoped<IMoySkladDocumentChangeService, MoySkladDocumentChangeService>();
+builder.Services.AddScoped<IMoySkladDocumentAgentAndContractService, MoySkladDocumentAgentAndContractService>();
 builder.Services.AddSingleton<IMoySkladRateLimiter, ObservingMoySkladRateLimiter>();
 builder.Services.AddHealthChecks()
     .AddCheck<EgressReadinessHealthCheck>("egress-dependencies", tags: ["ready"]);

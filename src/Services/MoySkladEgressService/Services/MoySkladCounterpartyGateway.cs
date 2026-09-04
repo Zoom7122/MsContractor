@@ -5,6 +5,8 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Net.Http.Json;
 using MsContractor.Contracts.Internal;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MsContractor.MoySkladEgressService.Services;
 
@@ -38,13 +40,44 @@ public interface IMoySkladCounterpartyGateway
         Guid userId, string correlationId, CancellationToken cancellationToken);
 }
 
-public sealed class MoySkladCounterpartyGateway(
-    HttpClient httpClient,
-    IVendorTokenClient tokenClient,
-    IMoySkladRateLimiter rateLimiter,
-    ILogger<MoySkladCounterpartyGateway> logger) : IMoySkladCounterpartyGateway
+public sealed class MoySkladCounterpartyGateway : IMoySkladCounterpartyGateway
 {
     private static readonly TimeSpan MoscowOffset = TimeSpan.FromHours(3);
+    private readonly HttpClient httpClient;
+    private readonly IVendorTokenClient tokenClient;
+    private readonly IMoySkladRateLimiter rateLimiter;
+    private readonly ILogger<MoySkladCounterpartyGateway> logger;
+    private readonly IMoySkladResponseHandler responseHandler;
+
+    [ActivatorUtilitiesConstructor]
+    public MoySkladCounterpartyGateway(
+        HttpClient httpClient,
+        IVendorTokenClient tokenClient,
+        IMoySkladRateLimiter rateLimiter,
+        ILogger<MoySkladCounterpartyGateway> logger,
+        IMoySkladResponseHandler responseHandler)
+    {
+        this.httpClient = httpClient;
+        this.tokenClient = tokenClient;
+        this.rateLimiter = rateLimiter;
+        this.logger = logger;
+        this.responseHandler = responseHandler;
+    }
+
+    public MoySkladCounterpartyGateway(
+        HttpClient httpClient,
+        IVendorTokenClient tokenClient,
+        IMoySkladRateLimiter rateLimiter,
+        ILogger<MoySkladCounterpartyGateway> logger)
+        : this(
+            httpClient,
+            tokenClient,
+            rateLimiter,
+            logger,
+            new MoySkladResponseHandler(
+                new ForwardingLogger<MoySkladCounterpartyGateway, MoySkladResponseHandler>(logger)))
+    {
+    }
 
     public async Task<MoySkladRawResponse> GetAsync(
         Guid accountId,
@@ -95,6 +128,8 @@ public sealed class MoySkladCounterpartyGateway(
             request.Headers.Accept.ToString(),
             request.Headers.AcceptEncoding.ToString());
 
+        var context = new MoySkladRequestContext(
+            accountId, correlationId, null, null, "GET", query, "counterparty", null);
         var stopwatch = Stopwatch.StartNew();
         HttpResponseMessage response;
         try
@@ -104,23 +139,26 @@ public sealed class MoySkladCounterpartyGateway(
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new EgressException(503, "MOYSKLAD_UNAVAILABLE", "MoySklad request timed out.");
+            throw responseHandler.TransportFailure(
+                context, "MoySklad request timed out.", stopwatch.Elapsed, exception);
         }
         catch (HttpRequestException exception)
         {
-            throw new EgressException(
-                503,
-                "MOYSKLAD_UNAVAILABLE",
-                "MoySklad is unavailable.",
-                exception);
+            throw responseHandler.TransportFailure(
+                context, "MoySklad is unavailable.", stopwatch.Elapsed, exception);
         }
 
         using (response)
         {
             await rateLimiter.ObserveAsync(accountId, response, cancellationToken);
-            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            var responseBody = await responseHandler.ReadAsync(
+                response,
+                context,
+                stopwatch.Elapsed,
+                cancellationToken);
+            var json = responseBody.Body;
             logger.LogInformation(
                 "MoySklad counterparties response received: account_id={AccountId}, sync_run_id={SyncRunId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}, archived={Archived}, limit={Limit}, offset={Offset}, status={StatusCode}, content_type={ContentType}, headers={Headers}, duration_ms={DurationMs}",
                 accountId,
@@ -130,31 +168,22 @@ public sealed class MoySkladCounterpartyGateway(
                 archived,
                 limit,
                 offset,
-                (int)response.StatusCode,
+                responseBody.HttpStatus,
                 response.Content.Headers.ContentType?.MediaType,
                 SafeHeaders(response),
                 stopwatch.Elapsed.TotalMilliseconds);
 
-            if (!response.IsSuccessStatusCode)
-            {
-                logger.LogError(
-                    "MoySklad request failed: status={StatusCode}, message={ErrorMessage}, account_id={AccountId}, sync_run_id={SyncRunId}, archived={Archived}, limit={Limit}, offset={Offset}, correlation_id={CorrelationId}",
-                    (int)response.StatusCode,
-                    ExtractErrorMessage(json),
-                    accountId,
-                    syncRunId,
-                    archived,
-                    limit,
-                    offset,
-                    correlationId);
-                ThrowForStatus(response.StatusCode);
-            }
             if (string.IsNullOrWhiteSpace(json))
-                throw new EgressException(502, "MOYSKLAD_INVALID_RESPONSE", "MoySklad returned an empty response.");
+                throw responseHandler.ValidationFailure(
+                    context,
+                    responseBody.HttpStatus,
+                    "MoySklad returned an empty response.",
+                    json,
+                    stopwatch.Elapsed);
 
             return new MoySkladRawResponse(
                 json,
-                (int)response.StatusCode,
+                responseBody.HttpStatus,
                 response.Content.Headers.ContentType?.MediaType,
                 SafeHeaders(response));
         }
@@ -197,9 +226,6 @@ public sealed class MoySkladCounterpartyGateway(
             archived = true
         }).ToArray();
 
-        logger.LogInformation(
-            "MoySklad counterparty batch archive payload: {Payload}",
-            JsonSerializer.Serialize(payload));
         return PostBatchAsync(accountId, payload, mergeJobId, userId, correlationId, cancellationToken);
     }
 
@@ -225,33 +251,41 @@ public sealed class MoySkladCounterpartyGateway(
             "Sending MoySklad counterparty mutation: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, counterparty_id={CounterpartyId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}",
             accountId, mergeJobId, operationId, counterpartyId, userId, correlationId);
 
+        var context = new MoySkladRequestContext(
+            accountId, correlationId, mergeJobId, operationId, "PUT",
+            $"entity/counterparty/{counterpartyId:D}", "counterparty", counterpartyId);
+        var stopwatch = Stopwatch.StartNew();
         HttpResponseMessage response;
         try
         {
             response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new EgressException(503, "MOYSKLAD_UNAVAILABLE", "MoySklad request timed out.");
+            throw responseHandler.TransportFailure(
+                context, "MoySklad request timed out.", stopwatch.Elapsed, exception);
         }
         catch (HttpRequestException exception)
         {
-            throw new EgressException(503, "MOYSKLAD_UNAVAILABLE", "MoySklad is unavailable.", exception);
+            throw responseHandler.TransportFailure(
+                context, "MoySklad is unavailable.", stopwatch.Elapsed, exception);
         }
 
         using (response)
         {
             await rateLimiter.ObserveAsync(accountId, response, cancellationToken);
-            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            var responseBody = await responseHandler.ReadAsync(
+                response, context, stopwatch.Elapsed, cancellationToken);
+            var json = responseBody.Body;
             logger.LogInformation(
                 "MoySklad counterparty mutation completed: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, counterparty_id={CounterpartyId}, status={StatusCode}, correlation_id={CorrelationId}",
-                accountId, mergeJobId, operationId, counterpartyId, (int)response.StatusCode, correlationId);
-            if (!response.IsSuccessStatusCode)
-                ThrowForMutationStatus(response.StatusCode);
+                accountId, mergeJobId, operationId, counterpartyId, responseBody.HttpStatus, correlationId);
             if (string.IsNullOrWhiteSpace(json))
-                throw new EgressException(502, "MOYSKLAD_INVALID_RESPONSE", "MoySklad returned an empty response.");
+                throw responseHandler.ValidationFailure(
+                    context, responseBody.HttpStatus, "MoySklad returned an empty response.", json,
+                    stopwatch.Elapsed);
             return new MoySkladRawResponse(
-                json, (int)response.StatusCode,
+                json, responseBody.HttpStatus,
                 response.Content.Headers.ContentType?.MediaType, SafeHeaders(response));
         }
     }
@@ -276,123 +310,50 @@ public sealed class MoySkladCounterpartyGateway(
         request.Headers.TryAddWithoutValidation("Accept", "application/json;charset=utf-8");
 
         logger.LogInformation(
-            "MoySklad batch archive request: method={Method}, url={Url}, body={Body}",
-            request.Method, new Uri(httpClient.BaseAddress!, request.RequestUri!), JsonSerializer.Serialize(payload));
-        logger.LogInformation(
             "Sending MoySklad counterparty batch archive: account_id={AccountId}, merge_job_id={MergeJobId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}",
             accountId, mergeJobId, userId, correlationId);
 
+        var context = new MoySkladRequestContext(
+            accountId, correlationId, mergeJobId, null, "POST", "entity/counterparty",
+            "counterparty", null);
+        var stopwatch = Stopwatch.StartNew();
         HttpResponseMessage response;
         try
         {
             response = await httpClient.SendAsync(
                 request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new EgressException(503, "MOYSKLAD_UNAVAILABLE", "MoySklad request timed out.");
+            throw responseHandler.TransportFailure(
+                context, "MoySklad request timed out.", stopwatch.Elapsed, exception);
         }
         catch (HttpRequestException exception)
         {
-            throw new EgressException(503, "MOYSKLAD_UNAVAILABLE", "MoySklad is unavailable.", exception);
+            throw responseHandler.TransportFailure(
+                context, "MoySklad is unavailable.", stopwatch.Elapsed, exception);
         }
 
         using (response)
         {
             await rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+            var responseBody = await responseHandler.ReadAsync(
+                response, context, stopwatch.Elapsed, cancellationToken);
             logger.LogInformation(
                 "MoySklad counterparty batch archive completed: account_id={AccountId}, merge_job_id={MergeJobId}, status={StatusCode}, correlation_id={CorrelationId}",
-                accountId, mergeJobId, (int)response.StatusCode, correlationId);
-            var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            logger.LogInformation(
-                "MoySklad batch archive response: status={StatusCode}, reason={ReasonPhrase}, body={Body}",
-                (int)response.StatusCode, response.ReasonPhrase, json);
-            if (!response.IsSuccessStatusCode)
-            {
-                logger.LogWarning(
-                    "MoySklad counterparty batch archive rejected: status={StatusCode}, error={ErrorMessage}",
-                    (int)response.StatusCode, ExtractErrorMessage(json));
-                ThrowForMutationStatus(response.StatusCode);
-            }
+                accountId, mergeJobId, responseBody.HttpStatus, correlationId);
+            var json = responseBody.Body;
             if (string.IsNullOrWhiteSpace(json))
-                throw new EgressException(502, "MOYSKLAD_INVALID_RESPONSE", "MoySklad returned an empty response.");
-            return new MoySkladRawResponse(json, (int)response.StatusCode,
+                throw responseHandler.ValidationFailure(
+                    context, responseBody.HttpStatus, "MoySklad returned an empty response.", json,
+                    stopwatch.Elapsed);
+            return new MoySkladRawResponse(json, responseBody.HttpStatus,
                 response.Content.Headers.ContentType?.MediaType, SafeHeaders(response));
         }
     }
 
     private static string FormatMoySkladTimestamp(DateTimeOffset value) =>
         value.ToOffset(MoscowOffset).ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
-
-    private static string ExtractErrorMessage(string body)
-    {
-        if (string.IsNullOrWhiteSpace(body))
-            return "MoySklad returned an empty error response.";
-
-        var trimmed = body.Trim();
-        try
-        {
-            using var document = JsonDocument.Parse(trimmed);
-            if (document.RootElement.ValueKind == JsonValueKind.Object &&
-                document.RootElement.TryGetProperty("errors", out var errors) &&
-                errors.ValueKind == JsonValueKind.Array)
-            {
-                var messages = errors
-                    .EnumerateArray()
-                    .Where(item => item.ValueKind == JsonValueKind.Object &&
-                                   item.TryGetProperty("error", out var error) &&
-                                   error.ValueKind == JsonValueKind.String)
-                    .Select(item => item.GetProperty("error").GetString())
-                    .Where(message => !string.IsNullOrWhiteSpace(message))
-                    .Select(message => message!.Trim())
-                    .ToArray();
-                if (messages.Length > 0)
-                    return Truncate(string.Join(" | ", messages));
-            }
-        }
-        catch (JsonException)
-        {
-            // Fall back to the raw response below.
-        }
-
-        return Truncate(trimmed);
-    }
-
-    private static string Truncate(string value) =>
-        value.Length <= 4096 ? value : value[..4096];
-
-    private static void ThrowForStatus(HttpStatusCode statusCode)
-    {
-        if ((int)statusCode is >= 200 and <= 299)
-            return;
-
-        throw statusCode switch
-        {
-            HttpStatusCode.Unauthorized =>
-                new EgressException(502, "MOYSKLAD_UNAUTHORIZED", "MoySklad rejected the access token."),
-            HttpStatusCode.Forbidden =>
-                new EgressException(502, "MOYSKLAD_FORBIDDEN", "MoySklad denied access."),
-            HttpStatusCode.TooManyRequests =>
-                new EgressException(429, "MOYSKLAD_RATE_LIMITED", "MoySklad rate limit exceeded."),
-            _ when (int)statusCode >= 500 =>
-                new EgressException(503, "MOYSKLAD_UNAVAILABLE", "MoySklad is unavailable."),
-            _ => new EgressException(502, "MOYSKLAD_INVALID_RESPONSE", "MoySklad returned an unexpected status.")
-        };
-    }
-
-    private static void ThrowForMutationStatus(HttpStatusCode statusCode)
-    {
-        throw statusCode switch
-        {
-            HttpStatusCode.BadRequest => new EgressException(400, "MOYSKLAD_VALIDATION_FAILED", "MoySklad rejected the counterparty update."),
-            HttpStatusCode.Unauthorized => new EgressException(401, "MOYSKLAD_UNAUTHORIZED", "MoySklad rejected the access token."),
-            HttpStatusCode.Forbidden => new EgressException(403, "MOYSKLAD_FORBIDDEN", "MoySklad denied access."),
-            HttpStatusCode.NotFound => new EgressException(404, "MOYSKLAD_NOT_FOUND", "MoySklad counterparty was not found."),
-            HttpStatusCode.TooManyRequests => new EgressException(429, "MOYSKLAD_RATE_LIMITED", "MoySklad rate limit exceeded."),
-            _ when (int)statusCode >= 500 => new EgressException(503, "MOYSKLAD_UNAVAILABLE", "MoySklad is unavailable."),
-            _ => new EgressException(502, "MOYSKLAD_INVALID_RESPONSE", "MoySklad returned an unexpected status.")
-        };
-    }
 
     private static IReadOnlyDictionary<string, string> SafeHeaders(HttpResponseMessage response)
     {

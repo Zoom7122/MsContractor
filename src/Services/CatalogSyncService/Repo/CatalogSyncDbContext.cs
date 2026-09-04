@@ -15,6 +15,7 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
     public DbSet<MergeJob> MergeJobs => Set<MergeJob>();
     public DbSet<MergeOperation> MergeOperations => Set<MergeOperation>();
     public DbSet<CounterpartyDocument> CounterpartyDocuments => Set<CounterpartyDocument>();
+    public DbSet<CounterpartyDocumentAdditionalData> CounterpartyDocumentAdditionalData => Set<CounterpartyDocumentAdditionalData>();
     internal Guid? TenantAccountId => tenantAccountId;
 
     public Task SetTenantAsync(Guid accountId, CancellationToken cancellationToken)
@@ -136,8 +137,26 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
         {
             entity.ToTable("counterparty_documents");
             entity.HasKey(item => new { item.AccountId, item.DocumentType, item.DocumentId });
+            entity.HasAlternateKey(item => item.DocumentId);
             entity.Property(item => item.DocumentType).HasMaxLength(64).IsRequired();
             entity.HasIndex(item => new { item.AccountId, item.CounterpartyId });
+            entity.HasOne(item => item.Counterparty)
+                .WithMany(item => item.Documents)
+                .HasForeignKey(item => new { item.CounterpartyId, item.AccountId })
+                .HasPrincipalKey(item => new { item.Id, item.AccountId })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<CounterpartyDocumentAdditionalData>(entity =>
+        {
+            entity.ToTable("counterparty_document_additional_data");
+            entity.HasKey(item => item.DocumentId);
+            entity.Property(item => item.Contract).HasColumnType("uuid");
+            entity.HasOne<CounterpartyDocument>()
+                .WithOne()
+                .HasForeignKey<CounterpartyDocumentAdditionalData>(item => item.DocumentId)
+                .HasPrincipalKey<CounterpartyDocument>(item => item.DocumentId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

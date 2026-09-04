@@ -12,6 +12,12 @@ public sealed class MergeRetryableException(string message, Exception innerExcep
 
 public interface IMergeProcessor
 {
+    /// <summary>
+    /// Запуск merge операции
+    /// </summary>
+    /// <param name="command"></param>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
     Task ProcessAsync(MergeRequested command, CancellationToken cancellationToken);
 }
 
@@ -27,24 +33,30 @@ public sealed partial class MergeProcessor(
     ILogger<MergeProcessor> logger) : IMergeProcessor
 {
     public const string ConsumerName = "duplicates-merge-v1";
+    private const int CommissionReportBatchSize = 950;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private int MaxAttempts => Math.Max(1, configuration.GetValue("Merge:MaxOperationAttempts", 5));
 
     public async Task ProcessAsync(MergeRequested command, CancellationToken cancellationToken)
     {
+        #region Validation
+        //чтобы операции были scoped по id
         await dbContext.SetTenantAsync(command.AccountId, cancellationToken);
+
 
         if (await dbContext.InboxMessages.AnyAsync(
                 item => item.MessageId == command.MessageId && item.ConsumerName == ConsumerName,
                 cancellationToken))
             return;
 
+        //Загрузка задачи
         var job = await dbContext.MergeJobs
             .Include(item => item.Operations)
             .SingleOrDefaultAsync(
                 item => item.Id == command.MergeJobId && item.AccountId == command.AccountId,
                 cancellationToken)
             ?? throw new MergeCommandRejectedException("Merge job was not found.");
+        
         var snapshot = DeserializeAndVerify(job, command);
         using var scope = logger.BeginScope(new Dictionary<string, object?>
         {
@@ -62,12 +74,18 @@ public sealed partial class MergeProcessor(
 
         await EnsureDocumentChangeOperationAsync(job, cancellationToken);
 
+        #endregion Validation
+
+
+        //комит задачи ранинг
         var now = timeProvider.GetUtcNow();
         job.Status = MergeJobStatuses.Running;
         job.StartedAt ??= now;
         job.UpdatedAt = now;
         await dbContext.SaveChangesAsync(cancellationToken);
 
+
+        //есть ли запись об операции 
         var discovery = job.Operations.Single(item => item.OperationType == MergeOperationTypes.DiscoverDocuments);
         if (!MergeOperationStatuses.IsTerminal(discovery.Status))
         {
@@ -124,6 +142,12 @@ public sealed partial class MergeProcessor(
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// добавляет в таблицу merge_operations одну служебную запись о смене документов
+    /// </summary>
+    /// <param name="job"> Задача </param>
+    /// <param name="cancellationToken"> токен отмены </param>
+    /// <returns></returns>
     private async Task EnsureDocumentChangeOperationAsync(MergeJob job, CancellationToken cancellationToken)
     {
         if (job.Operations.Any(item => item.OperationType == MergeOperationTypes.ChangeDocumentCounterparties))
@@ -156,6 +180,15 @@ public sealed partial class MergeProcessor(
         await transaction.CommitAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="job"></param>
+    /// <param name="operation"></param>
+    /// <param name="duplicateCounterpartyIds"></param>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
+    /// <exception cref="MergeRetryableException"></exception>
     private async Task<bool> ExecuteDocumentChangeAsync(
         MergeJob job,
         MergeOperation operation,
@@ -178,49 +211,60 @@ public sealed partial class MergeProcessor(
                 return true;
             }
 
-            var documents = rows
-                .Select(item => new MoySkladDocumentChangeItem(item.DocumentType, item.DocumentId))
-                .ToArray();
-            var response = await documentChangeClient.ChangeCounterpartyAsync(
-                job.AccountId,
-                job.MainCounterpartyId,
-                documents,
-                job.Id,
-                operation.Id,
-                job.RequestedByUserId,
-                job.CorrelationId,
-                cancellationToken);
-            ValidateDocumentChangeResponse(job.MainCounterpartyId, documents, response);
-
-            var changedKeys = response.ChangedDocuments
-                .Select(item => (item.DocumentType, item.DocumentId))
-                .ToHashSet();
-            var now = timeProvider.GetUtcNow();
-            foreach (var row in rows.Where(item => changedKeys.Contains((item.DocumentType, item.DocumentId))))
+            var commissionRows = rows.Where(item => IsCommissionReport(item.DocumentType)).ToArray();
+            if (commissionRows.Length > 0)
             {
-                row.CounterpartyId = job.MainCounterpartyId;
-                row.UpdatedAt = now;
+                var commissionIds = commissionRows.Select(item => item.DocumentId).ToArray();
+                var contracts = await dbContext.CounterpartyDocumentAdditionalData
+                    .Where(item => commissionIds.Contains(item.DocumentId))
+                    .ToDictionaryAsync(item => item.DocumentId, item => item.Contract, cancellationToken);
+
+                foreach (var chunk in commissionRows.Chunk(CommissionReportBatchSize))
+                {
+                    var documents = chunk.Select(item => new MoySkladDocumentChangeAgentAndContractItem(
+                        item.DocumentType,
+                        item.DocumentId,
+                        contracts.GetValueOrDefault(item.DocumentId))).ToArray();
+                    var response = await documentChangeClient.ChangeAgentAndContractAsync(
+                        job.AccountId,
+                        job.MainCounterpartyId,
+                        documents,
+                        job.Id,
+                        operation.Id,
+                        job.RequestedByUserId,
+                        job.CorrelationId,
+                        cancellationToken);
+                    var requested = documents.Select(item => new MoySkladDocumentChangeItem(
+                        item.DocumentType, item.DocumentId)).ToArray();
+                    ValidateDocumentChangeResponse(job.MainCounterpartyId, requested, response);
+                    await ApplyChangedDocumentsAsync(chunk, response, job.MainCounterpartyId, cancellationToken);
+                    ThrowIfDocumentChangeFailed(response);
+                }
             }
+
+            var ordinaryRows = rows.Where(item => !IsCommissionReport(item.DocumentType)).ToArray();
+            if (ordinaryRows.Length > 0)
+            {
+                var documents = ordinaryRows
+                    .Select(item => new MoySkladDocumentChangeItem(item.DocumentType, item.DocumentId))
+                    .ToArray();
+                var response = await documentChangeClient.ChangeCounterpartyAsync(
+                    job.AccountId,
+                    job.MainCounterpartyId,
+                    documents,
+                    job.Id,
+                    operation.Id,
+                    job.RequestedByUserId,
+                    job.CorrelationId,
+                    cancellationToken);
+                ValidateDocumentChangeResponse(job.MainCounterpartyId, documents, response);
+                await ApplyChangedDocumentsAsync(ordinaryRows, response, job.MainCounterpartyId, cancellationToken);
+                ThrowIfDocumentChangeFailed(response);
+            }
+
+            Complete(operation);
             await dbContext.SaveChangesAsync(cancellationToken);
-
-            if (response.Failures.Count == 0)
-            {
-                Complete(operation);
-                await dbContext.SaveChangesAsync(cancellationToken);
-                return true;
-            }
-
-            var allRetryable = response.Failures.All(item => item.Retryable);
-            var representative = response.Failures.FirstOrDefault(item => !item.Retryable) ?? response.Failures[0];
-            var error = new MergeEgressException(
-                representative.Code,
-                $"Document counterparty change failed for {response.Failures.Count} document(s). {representative.Message}",
-                allRetryable ? 503 : 400);
-            if (await HandleFailureAsync(operation, error, cancellationToken))
-                throw new MergeRetryableException("Document counterparty change will be retried.", error);
-
-            await FailJobAsync(job, cancellationToken);
-            return false;
+            return true;
         }
         catch (Exception exception) when (IsOperationFailure(exception))
         {
@@ -230,6 +274,40 @@ public sealed partial class MergeProcessor(
             await FailJobAsync(job, cancellationToken);
             return false;
         }
+    }
+
+    private async Task ApplyChangedDocumentsAsync(
+        IReadOnlyList<CounterpartyDocument> rows,
+        MoySkladDocumentChangeCounterpartyResponse response,
+        Guid mainCounterpartyId,
+        CancellationToken cancellationToken)
+    {
+        var changedKeys = response.ChangedDocuments
+            .Select(item => (item.DocumentType, item.DocumentId))
+            .ToHashSet();
+        var now = timeProvider.GetUtcNow();
+        foreach (var row in rows.Where(item => changedKeys.Contains((item.DocumentType, item.DocumentId))))
+        {
+            row.CounterpartyId = mainCounterpartyId;
+            row.UpdatedAt = now;
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static void ThrowIfDocumentChangeFailed(MoySkladDocumentChangeCounterpartyResponse response)
+    {
+        if (response.Failures.Count == 0)
+            return;
+
+        var allRetryable = response.Failures.All(item => item.Retryable);
+        var representative = response.Failures.FirstOrDefault(item => !item.Retryable) ?? response.Failures[0];
+        throw new MergeEgressException(
+            representative.Code,
+            $"Document counterparty change failed for {response.Failures.Count} document(s). " +
+            $"document_type={representative.DocumentType}, document_id={representative.DocumentId:D}, " +
+            $"endpoint={representative.Endpoint ?? "unknown"}, http_status={representative.StatusCode}, " +
+            $"retryable={representative.Retryable}. {representative.Message}",
+            allRetryable ? 503 : 400);
     }
 
     private static void ValidateDocumentChangeResponse(
@@ -255,6 +333,15 @@ public sealed partial class MergeProcessor(
         }
     }
 
+    /// <summary>
+    /// запрашивает документы из Egress для основного КА и всех дублей
+    /// </summary>
+    /// <param name="job"></param>
+    /// <param name="operation"></param>
+    /// <param name="duplicateCounterpartyIds"></param>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
+    /// <exception cref="MergeRetryableException"></exception>
     private async Task<bool> ExecuteDocumentDiscoveryAsync(
         MergeJob job,
         MergeOperation operation,
@@ -265,6 +352,7 @@ public sealed partial class MergeProcessor(
         try
         {
             var counterpartyIds = duplicateCounterpartyIds.Append(job.MainCounterpartyId).ToArray();
+            
             var response = await documentDiscoveryClient.DiscoverAsync(
                 job.AccountId,
                 counterpartyIds,
@@ -273,6 +361,7 @@ public sealed partial class MergeProcessor(
                 job.RequestedByUserId,
                 job.CorrelationId,
                 cancellationToken);
+
             await ReplaceDocumentSnapshotAsync(job.AccountId, counterpartyIds, response.Documents, cancellationToken);
             Complete(operation);
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -292,6 +381,15 @@ public sealed partial class MergeProcessor(
         }
     }
 
+/// <summary>
+/// Это обновление локального снимка документов перед их переносом в МС
+/// </summary>
+/// <param name="accountId"></param>
+/// <param name="counterpartyIds"></param>
+/// <param name="documents"></param>
+/// <param name="cancellationToken"></param>
+/// <returns></returns>
+/// <exception cref="JsonException"></exception>
     private async Task ReplaceDocumentSnapshotAsync(
         Guid accountId,
         IReadOnlyCollection<Guid> counterpartyIds,
@@ -300,11 +398,13 @@ public sealed partial class MergeProcessor(
     {
         var knownCounterpartyIds = counterpartyIds.ToHashSet();
         var uniqueDocumentKeys = new HashSet<(string DocumentType, Guid DocumentId)>();
+        var uniqueDocumentIds = new HashSet<Guid>();
         foreach (var document in documents)
         {
             if (string.IsNullOrWhiteSpace(document.DocumentType) || document.DocumentId == Guid.Empty ||
                 document.CounterpartyId == Guid.Empty || !knownCounterpartyIds.Contains(document.CounterpartyId) ||
-                !uniqueDocumentKeys.Add((document.DocumentType, document.DocumentId)))
+                !uniqueDocumentKeys.Add((document.DocumentType, document.DocumentId)) ||
+                !uniqueDocumentIds.Add(document.DocumentId))
             {
                 throw new JsonException("MoySklad document discovery response is inconsistent.");
             }
@@ -323,9 +423,20 @@ public sealed partial class MergeProcessor(
             DocumentId = document.DocumentId,
             UpdatedAt = now
         }));
+        dbContext.CounterpartyDocumentAdditionalData.AddRange(documents
+            .Where(document => IsCommissionReport(document.DocumentType))
+            .Select(document => new CounterpartyDocumentAdditionalData
+            {
+                DocumentId = document.DocumentId,
+                Contract = document.ContractId
+            }));
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
+
+    private static bool IsCommissionReport(string documentType) =>
+        string.Equals(documentType, "commissionreportin", StringComparison.Ordinal) ||
+        string.Equals(documentType, "commissionreportout", StringComparison.Ordinal);
 
     private async Task ExecuteArchiveBatchAsync(
         MergeJob job,
@@ -384,6 +495,13 @@ public sealed partial class MergeProcessor(
         return parsedById;
     }
 
+
+    /// <summary>
+    /// маркирует что делается операция 
+    /// </summary>
+    /// <param name="operation"></param>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
     private async Task MarkRunningAsync(MergeOperation operation, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
@@ -424,7 +542,8 @@ public sealed partial class MergeProcessor(
             : SafeMessage(exception);
         operation.CompletedAt = operation.UpdatedAt;
         await dbContext.SaveChangesAsync(cancellationToken);
-        logger.LogWarning(
+        logger.LogError(
+            exception,
             "Merge operation failed: operation_id={OperationId}, operation_type={OperationType}, counterparty_id={CounterpartyId}, status={Status}, error_code={ErrorCode}, error_message={ErrorMessage}",
             operation.Id, operation.OperationType, operation.CounterpartyId, operation.Status, operation.ErrorCode, operation.ErrorMessage);
         return false;

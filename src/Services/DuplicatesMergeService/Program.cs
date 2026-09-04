@@ -1,4 +1,5 @@
 using MsContractor.BuildingBlocks.Health;
+using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
 using Microsoft.EntityFrameworkCore;
 using MsContractor.CatalogSyncService.Repo;
@@ -7,6 +8,7 @@ using Confluent.Kafka;
 using MsContractor.CatalogSyncService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.AddMsContractorLogging();
 builder.AddMsContractorHealth();
 
 // Add services to the container.

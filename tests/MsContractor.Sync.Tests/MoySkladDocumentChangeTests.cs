@@ -93,6 +93,211 @@ public sealed class MoySkladDocumentChangeGatewayTests
         Assert.False(failure.Retryable);
     }
 
+    [Fact]
+    public async Task ChangeCounterpartyAsync_RejectsWrongAgentOnSuccessfulPut()
+    {
+        var document = Documents("demand", 1)[0];
+        var gateway = Gateway((_, _) => Task.FromResult(JsonResponse(Changed(document, Guid.NewGuid()))));
+
+        var exception = await Assert.ThrowsAsync<EgressException>(() => gateway.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            Guid.NewGuid(), "demand", [document], CancellationToken.None));
+
+        Assert.Equal("MOYSKLAD_RESPONSE_VALIDATION_FAILED", exception.Code);
+        Assert.Contains("expected_agent_id=", exception.ValidationError);
+        Assert.False(exception.Retryable);
+    }
+
+    [Fact]
+    public async Task ChangeCounterpartyAsync_RejectsMalformedSuccessfulPut()
+    {
+        var document = Documents("demand", 1)[0];
+        var gateway = Gateway((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("not-json", Encoding.UTF8, "application/json")
+        }));
+
+        var exception = await Assert.ThrowsAsync<EgressException>(() => gateway.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            Guid.NewGuid(), "demand", [document], CancellationToken.None));
+
+        Assert.Equal("MOYSKLAD_RESPONSE_VALIDATION_FAILED", exception.Code);
+        Assert.Equal(200, exception.HttpStatus);
+    }
+
+    [Fact]
+    public async Task ChangeCounterpartyAsync_MatchesBulkResponseByDocumentIdInsteadOfOrder()
+    {
+        var target = Guid.NewGuid();
+        var documents = Documents("demand", 3);
+        var gateway = Gateway((_, _) => Task.FromResult(JsonResponse(
+            documents.Reverse().Select(item => Changed(item, target)).ToArray())));
+
+        var result = await gateway.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            target, "demand", documents, CancellationToken.None);
+
+        Assert.Equal(documents, result.ChangedDocuments);
+        Assert.Empty(result.Failures);
+    }
+
+    [Fact]
+    public async Task ChangeCounterpartyAsync_ReturnsSpecificMissingBulkDocument()
+    {
+        var target = Guid.NewGuid();
+        var documents = Documents("demand", 3);
+        var gateway = Gateway((_, _) => Task.FromResult(JsonResponse(new[]
+        {
+            Changed(documents[2], target), Changed(documents[0], target)
+        })));
+
+        var result = await gateway.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            target, "demand", documents, CancellationToken.None);
+
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal(documents[1].DocumentId, failure.DocumentId);
+        Assert.Equal("MOYSKLAD_RESPONSE_VALIDATION_FAILED", failure.Code);
+        Assert.Contains("missing", failure.Message);
+    }
+
+    [Fact]
+    public async Task ChangeCounterpartyAsync_ReturnsSpecificWrongAgentBulkDocument()
+    {
+        var target = Guid.NewGuid();
+        var documents = Documents("demand", 2);
+        var gateway = Gateway((_, _) => Task.FromResult(JsonResponse(new[]
+        {
+            Changed(documents[0], target), Changed(documents[1], Guid.NewGuid())
+        })));
+
+        var result = await gateway.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            target, "demand", documents, CancellationToken.None);
+
+        Assert.Equal([documents[0]], result.ChangedDocuments);
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal(documents[1].DocumentId, failure.DocumentId);
+        Assert.Contains("actual_agent_id=", failure.Message);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest, "{\"errors\":[{\"code\":3008,\"error\":\"rejected\"}]}", "MOYSKLAD_HTTP_ERROR", false)]
+    [InlineData(HttpStatusCode.BadRequest, "not-json", "MOYSKLAD_UNSTRUCTURED_ERROR_RESPONSE", false)]
+    [InlineData(HttpStatusCode.TooManyRequests, "{\"errors\":[{\"code\":429,\"error\":\"limit\"}]}", "MOYSKLAD_RATE_LIMITED", true)]
+    [InlineData(HttpStatusCode.InternalServerError, "{\"errors\":[{\"code\":1000,\"error\":\"temporary\"}]}", "MOYSKLAD_HTTP_ERROR", true)]
+    public async Task ChangeCounterpartyAsync_NormalizesHttpErrors(
+        HttpStatusCode status, string body, string code, bool retryable)
+    {
+        var document = Documents("demand", 1)[0];
+        var gateway = Gateway((_, _) => Task.FromResult(new HttpResponseMessage(status)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        }));
+
+        var exception = await Assert.ThrowsAsync<EgressException>(() => gateway.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            Guid.NewGuid(), "demand", [document], CancellationToken.None));
+
+        Assert.Equal(code, exception.Code);
+        Assert.Equal((int)status, exception.HttpStatus);
+        Assert.Equal(retryable, exception.Retryable);
+        if (body == "not-json") Assert.Equal("not-json", exception.SanitizedResponseBody);
+        else Assert.NotNull(exception.MoySkladErrorCode);
+    }
+
+    [Fact]
+    public async Task ChangeCounterpartyAsync_SanitizesSensitiveDiagnosticResponse()
+    {
+        var document = Documents("demand", 1)[0];
+        const string secret = "secret-access-token";
+        var gateway = Gateway((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(
+                $"{{\"access_token\":\"{secret}\",\"errors\":[{{\"code\":3008,\"error\":\"Authorization=Bearer {secret}\"}}]}}",
+                Encoding.UTF8,
+                "application/json")
+        }));
+
+        var exception = await Assert.ThrowsAsync<EgressException>(() => gateway.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            Guid.NewGuid(), "demand", [document], CancellationToken.None));
+
+        Assert.DoesNotContain(secret, exception.SanitizedResponseBody);
+        Assert.DoesNotContain(secret, exception.MoySkladErrorMessage);
+        Assert.Contains("[REDACTED]", exception.SanitizedResponseBody);
+    }
+
+    [Fact]
+    public async Task ChangeAgentAndContractAsync_PutsAgentAndContractAndValidatesBoth()
+    {
+        var mainId = Guid.NewGuid();
+        var contractId = Guid.NewGuid();
+        var document = new MoySkladDocumentChangeAgentAndContractItem("commissionreportin", Guid.NewGuid(), contractId);
+        var gateway = Gateway(async (request, cancellationToken) =>
+        {
+            var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            using var json = JsonDocument.Parse(body);
+            Assert.EndsWith($"/entity/counterparty/{mainId:D}",
+                json.RootElement.GetProperty("agent").GetProperty("meta").GetProperty("href").GetString());
+            Assert.EndsWith($"/entity/contract/{contractId:D}",
+                json.RootElement.GetProperty("contract").GetProperty("meta").GetProperty("href").GetString());
+            return JsonResponse(ChangedWithContract(
+                new MoySkladDocumentChangeItem(document.DocumentType, document.DocumentId), mainId, contractId));
+        });
+
+        var result = await gateway.ChangeAgentAndContractAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation", mainId,
+            document.DocumentType, [document], CancellationToken.None);
+
+        Assert.Equal([new MoySkladDocumentChangeItem(document.DocumentType, document.DocumentId)], result.ChangedDocuments);
+        Assert.Empty(result.Failures);
+    }
+
+    [Fact]
+    public async Task ChangeAgentAndContractAsync_WithNullContractSendsOnlyAgent()
+    {
+        var mainId = Guid.NewGuid();
+        var document = new MoySkladDocumentChangeAgentAndContractItem("demand", Guid.NewGuid(), null);
+        var gateway = Gateway(async (request, cancellationToken) =>
+        {
+            var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            using var json = JsonDocument.Parse(body);
+            Assert.True(json.RootElement.TryGetProperty("agent", out _));
+            Assert.False(json.RootElement.TryGetProperty("contract", out _));
+            return JsonResponse(Changed(new MoySkladDocumentChangeItem(document.DocumentType, document.DocumentId), mainId));
+        });
+
+        var result = await gateway.ChangeAgentAndContractAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation", mainId,
+            document.DocumentType, [document], CancellationToken.None);
+
+        Assert.Single(result.ChangedDocuments);
+        Assert.Empty(result.Failures);
+    }
+
+    [Fact]
+    public async Task ChangeContractAgentsAsync_UsesBatchForSeveralUniqueContracts()
+    {
+        var mainId = Guid.NewGuid();
+        var contracts = new[] { Guid.NewGuid(), Guid.NewGuid() };
+        var gateway = Gateway(async (request, cancellationToken) =>
+        {
+            Assert.Equal(HttpMethod.Post, request.Method);
+            Assert.Equal("/api/remap/1.2/entity/contract/batch", request.RequestUri!.AbsolutePath);
+            var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            using var json = JsonDocument.Parse(body);
+            Assert.Equal(2, json.RootElement.GetArrayLength());
+            return JsonResponse(contracts.Select(id => Changed(new MoySkladDocumentChangeItem("contract", id), mainId)).ToArray());
+        });
+
+        var result = await gateway.ChangeContractAgentsAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation", mainId,
+            contracts, CancellationToken.None);
+
+        Assert.Equal(2, result.ChangedDocuments.Count);
+    }
+
     private static MoySkladDocumentGateway Gateway(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> callback) =>
         new(
@@ -123,6 +328,14 @@ public sealed class MoySkladDocumentChangeGatewayTests
         }
     };
 
+    private static object ChangedWithContract(MoySkladDocumentChangeItem item, Guid mainId, Guid contractId) => new
+    {
+        id = item.DocumentId,
+        meta = new { type = item.DocumentType },
+        agent = new { meta = new { href = $"https://api.moysklad.ru/api/remap/1.2/entity/counterparty/{mainId:D}" } },
+        contract = new { meta = new { href = $"https://api.moysklad.ru/api/remap/1.2/entity/contract/{contractId:D}" } }
+    };
+
     private static HttpResponseMessage JsonResponse(object body) => new(HttpStatusCode.OK)
     {
         Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
@@ -151,6 +364,38 @@ public sealed class MoySkladDocumentChangeGatewayTests
 
 public sealed class MoySkladDocumentChangeServiceTests
 {
+    [Fact]
+    public async Task ChangeAgentAndContractAsync_DeduplicatesContractsAndBlocksOnlyTheirDocuments()
+    {
+        var sharedContract = Guid.NewGuid();
+        var failedContract = Guid.NewGuid();
+        var first = new MoySkladDocumentChangeAgentAndContractItem("commissionreportin", Guid.NewGuid(), sharedContract);
+        var second = new MoySkladDocumentChangeAgentAndContractItem("commissionreportin", Guid.NewGuid(), sharedContract);
+        var blocked = new MoySkladDocumentChangeAgentAndContractItem("commissionreportin", Guid.NewGuid(), failedContract);
+        var withoutContract = new MoySkladDocumentChangeAgentAndContractItem("commissionreportin", Guid.NewGuid(), null);
+        var gateway = new RecordingGateway
+        {
+            ContractCallback = ids => new MoySkladDocumentChangeChunkResult(
+                ids.Where(id => id != failedContract).Select(id => new MoySkladDocumentChangeItem("contract", id)).ToArray(),
+                [new MoySkladDocumentChangeFailure("contract", failedContract, "MOYSKLAD_3008", "rejected", 400, false)])
+        };
+        var service = new MoySkladDocumentAgentAndContractService(gateway,
+            new MoySkladDocumentChangeOptions { DocumentTypes = ["commissionreportin"] },
+            NullLogger<MoySkladDocumentAgentAndContractService>.Instance);
+
+        var response = await service.ChangeAgentAndContractAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            new MoySkladDocumentChangeAgentAndContractRequest(Guid.NewGuid(), [first, second, blocked, withoutContract]),
+            CancellationToken.None);
+
+        Assert.Equal(new[] { sharedContract, failedContract }.OrderBy(id => id),
+            gateway.ContractCalls.Single().OrderBy(id => id));
+        Assert.Equal(new[] { first.DocumentId, second.DocumentId, withoutContract.DocumentId },
+            gateway.AgentAndContractCalls.Single().Documents.Select(item => item.DocumentId));
+        Assert.Equal(3, response.ChangedCount);
+        Assert.Equal(blocked.DocumentId, Assert.Single(response.Failures).DocumentId);
+    }
+
     [Theory]
     [InlineData(1001, 2, 1000, 1)]
     [InlineData(2000, 2, 1000, 1000)]
@@ -208,7 +453,10 @@ public sealed class MoySkladDocumentChangeServiceTests
     private sealed class RecordingGateway : IMoySkladDocumentGateway
     {
         public List<MutationCall> Calls { get; } = [];
+        public List<Guid[]> ContractCalls { get; } = [];
+        public List<AgentAndContractCall> AgentAndContractCalls { get; } = [];
         public Func<MutationCall, MoySkladDocumentChangeChunkResult>? Callback { get; init; }
+        public Func<IReadOnlyList<Guid>, MoySkladDocumentChangeChunkResult>? ContractCallback { get; init; }
 
         public Task<MoySkladDocumentChangeChunkResult> ChangeCounterpartyAsync(
             Guid accountId, Guid requestedByUserId, Guid mergeJobId, Guid operationId,
@@ -224,9 +472,31 @@ public sealed class MoySkladDocumentChangeServiceTests
             Guid accountId, Guid requestedByUserId, string correlationId, string documentType,
             IReadOnlyList<Guid> counterpartyIds, int limit, int offset, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<MoySkladDocumentChangeChunkResult> ChangeContractAgentsAsync(
+            Guid accountId, Guid requestedByUserId, Guid mergeJobId, Guid operationId, string correlationId,
+            Guid mainCounterpartyId, IReadOnlyList<Guid> contractIds, CancellationToken cancellationToken)
+        {
+            ContractCalls.Add(contractIds.ToArray());
+            return Task.FromResult(ContractCallback?.Invoke(contractIds) ?? new MoySkladDocumentChangeChunkResult(
+                contractIds.Select(id => new MoySkladDocumentChangeItem("contract", id)).ToArray(), []));
+        }
+
+        public Task<MoySkladDocumentChangeChunkResult> ChangeAgentAndContractAsync(
+            Guid accountId, Guid requestedByUserId, Guid mergeJobId, Guid operationId, string correlationId,
+            Guid mainCounterpartyId, string documentType,
+            IReadOnlyList<MoySkladDocumentChangeAgentAndContractItem> documents, CancellationToken cancellationToken)
+        {
+            var call = new AgentAndContractCall(documentType, documents.ToArray());
+            AgentAndContractCalls.Add(call);
+            return Task.FromResult(new MoySkladDocumentChangeChunkResult(
+                documents.Select(item => new MoySkladDocumentChangeItem(item.DocumentType, item.DocumentId)).ToArray(), []));
+        }
     }
 
     private sealed record MutationCall(string DocumentType, IReadOnlyList<MoySkladDocumentChangeItem> Documents);
+    private sealed record AgentAndContractCall(
+        string DocumentType, IReadOnlyList<MoySkladDocumentChangeAgentAndContractItem> Documents);
 }
 
 public sealed class InternalDocumentChangeControllerTests
@@ -276,7 +546,7 @@ public sealed class InternalDocumentChangeControllerTests
             context.Request.Headers[InternalApiHeaders.MergeJobId] = Guid.NewGuid().ToString("D");
             context.Request.Headers[InternalApiHeaders.OperationId] = Guid.NewGuid().ToString("D");
         }
-        return new InternalDocumentsController(new NoopDiscovery(), service, configuration)
+        return new InternalDocumentsController(new NoopDiscovery(), service, new NoopAgentAndContractService(), configuration)
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };
@@ -313,5 +583,13 @@ public sealed class InternalDocumentChangeControllerTests
             Guid accountId, Guid requestedByUserId, string correlationId,
             IReadOnlyList<Guid> counterpartyIds, CancellationToken cancellationToken) =>
             Task.FromResult(new MoySkladDocumentDiscoveryResponse([], []));
+    }
+
+    private sealed class NoopAgentAndContractService : IMoySkladDocumentAgentAndContractService
+    {
+        public Task<MoySkladDocumentChangeCounterpartyResponse> ChangeAgentAndContractAsync(
+            Guid accountId, Guid requestedByUserId, Guid mergeJobId, Guid operationId, string correlationId,
+            MoySkladDocumentChangeAgentAndContractRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 }

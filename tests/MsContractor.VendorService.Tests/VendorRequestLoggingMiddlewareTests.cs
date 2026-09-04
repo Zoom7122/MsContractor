@@ -7,9 +7,11 @@ namespace MsContractor.VendorService.Tests;
 public sealed class VendorRequestLoggingMiddlewareTests
 {
     [Theory]
-    [InlineData(StatusCodes.Status400BadRequest)]
-    [InlineData(StatusCodes.Status500InternalServerError)]
-    public async Task InvokeAsync_LogsClientAndServerErrorsAtErrorLevel(int statusCode)
+    [InlineData(StatusCodes.Status400BadRequest, LogLevel.Warning)]
+    [InlineData(StatusCodes.Status500InternalServerError, LogLevel.Error)]
+    public async Task InvokeAsync_LogsClientAndServerErrorsAtExpectedLevel(
+        int statusCode,
+        LogLevel expectedLevel)
     {
         var loggerProvider = new TestLoggerProvider();
         using var loggerFactory = LoggerFactory.Create(builder => builder.AddProvider(loggerProvider));
@@ -27,7 +29,7 @@ public sealed class VendorRequestLoggingMiddlewareTests
         var completedRequest = Assert.Single(
             loggerProvider.Entries,
             entry => entry.Message.StartsWith("VendorService request completed", StringComparison.Ordinal));
-        Assert.Equal(LogLevel.Error, completedRequest.Level);
+        Assert.Equal(expectedLevel, completedRequest.Level);
     }
 
     [Fact]

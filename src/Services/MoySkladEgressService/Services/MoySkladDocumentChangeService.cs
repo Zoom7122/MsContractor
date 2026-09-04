@@ -66,26 +66,35 @@ public sealed class MoySkladDocumentChangeService(
                     failures.AddRange(result.Failures);
                     foreach (var failure in result.Failures)
                     {
-                        logger.LogWarning(
-                            "MoySklad document counterparty item failed: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, document_id={DocumentId}, status={StatusCode}, error_code={ErrorCode}, error_message={ErrorMessage}",
-                            accountId, mergeJobId, operationId, correlationId, failure.DocumentType,
-                            failure.DocumentId, failure.StatusCode, failure.Code, failure.Message);
+                        logger.LogError(
+                            "MoySklad document counterparty item failed: account_id={AccountId}, merge_job_id={MergeJobId}, merge_operation_id={OperationId}, correlation_id={CorrelationId}, http_method={HttpMethod}, entity_type={DocumentType}, entity_id={DocumentId}, http_status={StatusCode}, error_code={ErrorCode}, error_message={ErrorMessage}, retryable={Retryable}",
+                            accountId, mergeJobId, operationId, correlationId,
+                            chunk.Length == 1 ? "PUT" : "POST",
+                            failure.DocumentType, failure.DocumentId, failure.StatusCode, failure.Code,
+                            failure.Message, failure.Retryable);
                     }
                 }
                 catch (EgressException exception)
                 {
-                    var retryable = exception.StatusCode == 429 || exception.StatusCode >= 500;
                     failures.AddRange(chunk.Select(item => new MoySkladDocumentChangeFailure(
                         item.DocumentType,
                         item.DocumentId,
                         exception.Code,
                         exception.SafeMessage,
-                        exception.StatusCode,
-                        retryable)));
-                    logger.LogWarning(
-                        "MoySklad document counterparty chunk failed: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, chunk_size={ChunkSize}, error_code={ErrorCode}, error_message={ErrorMessage}",
+                        exception.HttpStatus ?? exception.StatusCode,
+                        exception.Retryable,
+                        chunk.Length == 1
+                            ? $"entity/{documentType}/{item.DocumentId:D}"
+                            : $"entity/{documentType}/batch",
+                        exception.MoySkladErrorCode,
+                        exception.MoySkladErrorMessage,
+                        exception.ValidationError)));
+                    logger.Log(
+                        exception.Retryable ? LogLevel.Warning : LogLevel.Error,
+                        "MoySklad document counterparty chunk failed: account_id={AccountId}, merge_job_id={MergeJobId}, merge_operation_id={OperationId}, correlation_id={CorrelationId}, entity_type={DocumentType}, chunk_size={ChunkSize}, http_status={HttpStatus}, error_code={ErrorCode}, error_message={ErrorMessage}, moysklad_error_code={MoySkladErrorCode}, moysklad_error_message={MoySkladErrorMessage}, response_validation_error={ValidationError}, retryable={Retryable}",
                         accountId, mergeJobId, operationId, correlationId, documentType, chunk.Length,
-                        exception.Code, exception.SafeMessage);
+                        exception.HttpStatus, exception.Code, exception.SafeMessage, exception.MoySkladErrorCode,
+                        exception.MoySkladErrorMessage, exception.ValidationError, exception.Retryable);
                 }
             }
         }
@@ -99,5 +108,6 @@ public sealed class MoySkladDocumentChangeService(
             changed,
             skipped,
             failures);
+
     }
 }

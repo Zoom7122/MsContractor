@@ -92,7 +92,7 @@ public sealed class SyncRequestedConsumer(
             }
             catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
             {
-                logger.LogError(
+                logger.LogWarning(
                     exception,
                     "Sync command processing did not reach a durable terminal state; offset will not be committed for {TopicPartitionOffset}.",
                     result.TopicPartitionOffset);

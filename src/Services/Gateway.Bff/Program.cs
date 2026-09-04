@@ -1,10 +1,12 @@
 using MsContractor.BuildingBlocks.Health;
+using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
 using MsContractor.Gateway.Bff.Middleware;
 using MsContractor.Gateway.Bff.Services;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.AddMsContractorLogging();
 builder.AddMsContractorHealth();
 
 // Add services to the container.

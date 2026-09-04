@@ -96,6 +96,105 @@ public sealed class MoySkladDocumentGatewayTests
     }
 
     [Theory]
+    [InlineData("commissionreportin", true)]
+    [InlineData("commissionreportout", false)]
+    public async Task GetPageAsync_ReadsCommissionContractId(string documentType, bool contractHasId)
+    {
+        var counterpartyId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        var contractId = Guid.NewGuid();
+        object contract = contractHasId
+            ? new { id = contractId }
+            : new
+            {
+                meta = new
+                {
+                    href = $"https://api.moysklad.ru/api/remap/1.2/entity/contract/{contractId:D}"
+                }
+            };
+        var body = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            meta = new { size = 1, limit = 1000, offset = 0 },
+            rows = new[]
+            {
+                new
+                {
+                    id = documentId,
+                    agent = new
+                    {
+                        meta = new
+                        {
+                            href = $"https://api.moysklad.ru/api/remap/1.2/entity/counterparty/{counterpartyId:D}",
+                            type = "counterparty"
+                        }
+                    },
+                    contract
+                }
+            }
+        });
+        var gateway = CreateGateway((_, _) => Task.FromResult(Response(HttpStatusCode.OK, body)));
+
+        var page = await gateway.GetPageAsync(
+            Guid.NewGuid(), Guid.NewGuid(), "correlation-id", documentType,
+            [counterpartyId], 1000, 0, CancellationToken.None);
+
+        Assert.Equal(contractId, Assert.Single(page.Rows).ContractId);
+    }
+
+    [Fact]
+    public async Task GetPageAsync_DoesNotReadContractForNonCommissionDocument()
+    {
+        var counterpartyId = Guid.NewGuid();
+        var contractId = Guid.NewGuid();
+        var body = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            meta = new { size = 1, limit = 1000, offset = 0 },
+            rows = new[]
+            {
+                new
+                {
+                    id = Guid.NewGuid(),
+                    agent = new { meta = new { href = $"https://api.moysklad.ru/api/remap/1.2/entity/counterparty/{counterpartyId:D}", type = "counterparty" } },
+                    contract = new { id = contractId }
+                }
+            }
+        });
+        var gateway = CreateGateway((_, _) => Task.FromResult(Response(HttpStatusCode.OK, body)));
+
+        var page = await gateway.GetPageAsync(
+            Guid.NewGuid(), Guid.NewGuid(), "correlation-id", "demand",
+            [counterpartyId], 1000, 0, CancellationToken.None);
+
+        Assert.Null(Assert.Single(page.Rows).ContractId);
+    }
+
+    [Fact]
+    public async Task GetPageAsync_ReturnsNullForInvalidCommissionContract()
+    {
+        var counterpartyId = Guid.NewGuid();
+        var body = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            meta = new { size = 1, limit = 1000, offset = 0 },
+            rows = new[]
+            {
+                new
+                {
+                    id = Guid.NewGuid(),
+                    agent = new { meta = new { href = $"https://api.moysklad.ru/api/remap/1.2/entity/counterparty/{counterpartyId:D}", type = "counterparty" } },
+                    contract = new { meta = new { href = "https://api.moysklad.ru/api/remap/1.2/entity/contract/not-a-guid" } }
+                }
+            }
+        });
+        var gateway = CreateGateway((_, _) => Task.FromResult(Response(HttpStatusCode.OK, body)));
+
+        var page = await gateway.GetPageAsync(
+            Guid.NewGuid(), Guid.NewGuid(), "correlation-id", "commissionreportin",
+            [counterpartyId], 1000, 0, CancellationToken.None);
+
+        Assert.Null(Assert.Single(page.Rows).ContractId);
+    }
+
+    [Theory]
     [InlineData("not-json")]
     [InlineData("{}")]
     [InlineData("{\"meta\":{\"size\":0,\"limit\":1000,\"offset\":0}}")]
@@ -110,16 +209,16 @@ public sealed class MoySkladDocumentGatewayTests
             [Guid.NewGuid()], 1000, 0, CancellationToken.None));
 
         Assert.Equal(502, exception.StatusCode);
-        Assert.Equal("MOYSKLAD_DOCUMENT_DISCOVERY_INVALID_RESPONSE", exception.Code);
+        Assert.Equal("MOYSKLAD_RESPONSE_VALIDATION_FAILED", exception.Code);
     }
 
     [Theory]
-    [InlineData(HttpStatusCode.BadRequest, 502, "MOYSKLAD_DOCUMENT_DISCOVERY_INVALID_RESPONSE")]
-    [InlineData(HttpStatusCode.Unauthorized, 502, "MOYSKLAD_UNAUTHORIZED")]
-    [InlineData(HttpStatusCode.Forbidden, 502, "MOYSKLAD_FORBIDDEN")]
+    [InlineData(HttpStatusCode.BadRequest, 400, "MOYSKLAD_HTTP_ERROR")]
+    [InlineData(HttpStatusCode.Unauthorized, 401, "MOYSKLAD_HTTP_ERROR")]
+    [InlineData(HttpStatusCode.Forbidden, 403, "MOYSKLAD_HTTP_ERROR")]
     [InlineData(HttpStatusCode.TooManyRequests, 429, "MOYSKLAD_RATE_LIMITED")]
-    [InlineData(HttpStatusCode.InternalServerError, 503, "MOYSKLAD_UNAVAILABLE")]
-    [InlineData(HttpStatusCode.ServiceUnavailable, 503, "MOYSKLAD_UNAVAILABLE")]
+    [InlineData(HttpStatusCode.InternalServerError, 503, "MOYSKLAD_HTTP_ERROR")]
+    [InlineData(HttpStatusCode.ServiceUnavailable, 503, "MOYSKLAD_HTTP_ERROR")]
     public async Task GetPageAsync_MapsHttpErrorsAndStillObservesRateLimit(
         HttpStatusCode upstreamStatus,
         int expectedStatus,
@@ -188,7 +287,7 @@ public sealed class MoySkladDocumentGatewayTests
         var log = string.Join('\n', logger.Entries.Select(entry => entry.Message));
         Assert.DoesNotContain("secret-token", log);
         Assert.DoesNotContain("Authorization", log, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("code=123", log);
+        Assert.Contains("moysklad_error_code=123", log);
         Assert.Contains("parameter=filter", log);
     }
 
@@ -667,6 +766,17 @@ public sealed class MoySkladDocumentDiscoveryServiceTests
             string correlationId, Guid mainCounterpartyId, string documentType,
             IReadOnlyList<MoySkladDocumentChangeItem> documents, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<MoySkladDocumentChangeChunkResult> ChangeContractAgentsAsync(
+            Guid accountId, Guid requestedByUserId, Guid mergeJobId, Guid operationId, string correlationId,
+            Guid mainCounterpartyId, IReadOnlyList<Guid> contractIds, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<MoySkladDocumentChangeChunkResult> ChangeAgentAndContractAsync(
+            Guid accountId, Guid requestedByUserId, Guid mergeJobId, Guid operationId, string correlationId,
+            Guid mainCounterpartyId, string documentType,
+            IReadOnlyList<MoySkladDocumentChangeAgentAndContractItem> documents, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed record DocumentPageCall(
@@ -813,7 +923,7 @@ public sealed class InternalDocumentsControllerTests
         if (correlationId is not null)
             context.Request.Headers[InternalApiHeaders.CorrelationId] = correlationId;
 
-        return new InternalDocumentsController(service, new NoopDocumentChangeService(), configuration)
+        return new InternalDocumentsController(service, new NoopDocumentChangeService(), new NoopAgentAndContractService(), configuration)
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };
@@ -852,6 +962,14 @@ public sealed class InternalDocumentsControllerTests
                 ? Task.FromResult(new MoySkladDocumentDiscoveryResponse([], []))
                 : Task.FromException<MoySkladDocumentDiscoveryResponse>(Exception);
         }
+    }
+
+    private sealed class NoopAgentAndContractService : IMoySkladDocumentAgentAndContractService
+    {
+        public Task<MoySkladDocumentChangeCounterpartyResponse> ChangeAgentAndContractAsync(
+            Guid accountId, Guid requestedByUserId, Guid mergeJobId, Guid operationId, string correlationId,
+            MoySkladDocumentChangeAgentAndContractRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 }
 

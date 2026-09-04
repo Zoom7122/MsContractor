@@ -19,6 +19,18 @@ public sealed class DocumentDiscoveryEgressClient(
     HttpClient httpClient,
     IConfiguration configuration) : IDocumentDiscoveryEgressClient
 {
+    /// <summary>
+    /// Запрос документов от МС
+    /// </summary>
+    /// <param name="accountId"></param>
+    /// <param name="counterpartyIds"></param>
+    /// <param name="mergeJobId"></param>
+    /// <param name="operationId"></param>
+    /// <param name="userId"></param>
+    /// <param name="correlationId"></param>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
+    /// <exception cref="MergeEgressException"></exception>
     public async Task<MoySkladDocumentDiscoveryResponse> DiscoverAsync(
         Guid accountId,
         IReadOnlyList<Guid> counterpartyIds,

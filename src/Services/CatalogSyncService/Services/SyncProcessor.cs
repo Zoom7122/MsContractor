@@ -79,12 +79,19 @@ public sealed class SyncProcessor(
         CancellationToken cancellationToken)
     {
         // A full synchronization starts from an empty account-scoped catalog.
-        // This delete is intentionally committed before any MoySklad requests.
+        // Remove dependent document snapshots first, otherwise their FK blocks
+        // deletion of the counterparties they reference.
+        await using var cleanupTransaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var deletedDocumentsCount = await dbContext.CounterpartyDocuments
+            .Where(item => item.AccountId == command.AccountId)
+            .ExecuteDeleteAsync(cancellationToken);
         var deletedCount = await dbContext.Counterparties
             .Where(item => item.AccountId == command.AccountId)
             .ExecuteDeleteAsync(cancellationToken);
+        await cleanupTransaction.CommitAsync(cancellationToken);
         logger.LogInformation(
-            "Existing counterparties cleared before full sync: deleted_count={DeletedCount}",
+            "Existing full-sync snapshot cleared before loading MoySklad: deleted_document_count={DeletedDocumentsCount}, deleted_counterparty_count={DeletedCount}",
+            deletedDocumentsCount,
             deletedCount);
 
         var snapshot = await LoadSnapshotAsync(command, null, null, cancellationToken);

@@ -8,7 +8,7 @@ public sealed class VendorRequestCorrelationMiddlewareTests
 {
     [Theory]
     [InlineData(StatusCodes.Status200OK, LogLevel.Information)]
-    [InlineData(StatusCodes.Status400BadRequest, LogLevel.Error)]
+    [InlineData(StatusCodes.Status400BadRequest, LogLevel.Warning)]
     [InlineData(StatusCodes.Status500InternalServerError, LogLevel.Error)]
     public async Task InvokeAsync_LogsCompletionAtExpectedLevel(int statusCode, LogLevel expectedLevel)
     {

@@ -45,28 +45,21 @@ public sealed class VendorRequestLoggingMiddleware(
             }
             finally
             {
-                if (context.Response.StatusCode >= StatusCodes.Status400BadRequest)
+                var completionLogLevel = context.Response.StatusCode switch
                 {
-                    logger.LogError(
-                        "VendorService request completed at {CompletedAtUtc}: {Method} {Path} returned {StatusCode} in {DurationMs} ms with correlation {CorrelationId}",
-                        DateTimeOffset.UtcNow,
-                        context.Request.Method,
-                        context.Request.Path,
-                        context.Response.StatusCode,
-                        stopwatch.Elapsed.TotalMilliseconds,
-                        correlationId);
-                }
-                else
-                {
-                    logger.LogInformation(
-                        "VendorService request completed at {CompletedAtUtc}: {Method} {Path} returned {StatusCode} in {DurationMs} ms with correlation {CorrelationId}",
-                        DateTimeOffset.UtcNow,
-                        context.Request.Method,
-                        context.Request.Path,
-                        context.Response.StatusCode,
-                        stopwatch.Elapsed.TotalMilliseconds,
-                        correlationId);
-                }
+                    >= StatusCodes.Status500InternalServerError => LogLevel.Error,
+                    >= StatusCodes.Status400BadRequest => LogLevel.Warning,
+                    _ => LogLevel.Information
+                };
+                logger.Log(
+                    completionLogLevel,
+                    "VendorService request completed at {CompletedAtUtc}: {Method} {Path} returned {StatusCode} in {DurationMs} ms with correlation {CorrelationId}",
+                    DateTimeOffset.UtcNow,
+                    context.Request.Method,
+                    context.Request.Path,
+                    context.Response.StatusCode,
+                    stopwatch.Elapsed.TotalMilliseconds,
+                    correlationId);
             }
         }
     }

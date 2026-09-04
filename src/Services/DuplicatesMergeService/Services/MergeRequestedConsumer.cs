@@ -66,6 +66,7 @@ public sealed class MergeRequestedConsumer(
 
             try
             {
+                //Запуск Merge операции
                 await using var scope = scopeFactory.CreateAsyncScope();
                 await scope.ServiceProvider.GetRequiredService<IMergeProcessor>()
                     .ProcessAsync(command!, stoppingToken);
@@ -81,7 +82,7 @@ public sealed class MergeRequestedConsumer(
             }
             catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
             {
-                logger.LogError(
+                logger.LogWarning(
                     exception,
                     "Merge processing did not reach durable terminal state; offset will not be committed: message_id={MessageId}, merge_job_id={MergeJobId}, account_id={AccountId}",
                     command!.MessageId, command.MergeJobId, command.AccountId);
@@ -118,7 +119,7 @@ public sealed class MergeRequestedConsumer(
         }
         catch (ProduceException<string, string> exception)
         {
-            logger.LogError(
+            logger.LogWarning(
                 exception,
                 "Could not publish merge dead letter; source offset will not be committed: topic={Topic}, partition={Partition}, offset={Offset}, error_code={ErrorCode}",
                 result.Topic, result.Partition.Value, result.Offset.Value, errorCode);

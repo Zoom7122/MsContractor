@@ -19,9 +19,27 @@ public sealed class SyncProcessorTests
 
         var accountId = Guid.NewGuid();
         var otherAccountId = Guid.NewGuid();
-        dbContext.Counterparties.AddRange(
-            Existing(accountId, "Старый текущего аккаунта"),
-            Existing(otherAccountId, "Контрагент другого аккаунта"));
+        var existingCurrent = Existing(accountId, "Старый текущего аккаунта");
+        var existingOther = Existing(otherAccountId, "Контрагент другого аккаунта");
+        dbContext.Counterparties.AddRange(existingCurrent, existingOther);
+        await dbContext.SaveChangesAsync();
+        dbContext.CounterpartyDocuments.AddRange(
+            new CounterpartyDocument
+            {
+                AccountId = accountId,
+                CounterpartyId = existingCurrent.Id,
+                DocumentType = "salesreturn",
+                DocumentId = Guid.NewGuid(),
+                UpdatedAt = DateTimeOffset.UtcNow
+            },
+            new CounterpartyDocument
+            {
+                AccountId = otherAccountId,
+                CounterpartyId = existingOther.Id,
+                DocumentType = "salesreturn",
+                DocumentId = Guid.NewGuid(),
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
         await dbContext.SaveChangesAsync();
 
         var moySkladId = Guid.NewGuid();
@@ -51,6 +69,10 @@ public sealed class SyncProcessorTests
         Assert.Equal(moySkladId, current[0].Id);
         Assert.Single(other);
         Assert.Equal("Контрагент другого аккаунта", other[0].Name);
+        var remainingDocuments = await dbContext.CounterpartyDocuments.ToListAsync();
+        Assert.Single(remainingDocuments);
+        Assert.Equal(otherAccountId, remainingDocuments[0].AccountId);
+        Assert.Equal(existingOther.Id, remainingDocuments[0].CounterpartyId);
         Assert.True(catalogWasEmptyAtFirstRequest);
         Assert.Equal(3, egress.Requests.Count);
         var run = await dbContext.SyncRuns.SingleAsync(item => item.Status != "historical");

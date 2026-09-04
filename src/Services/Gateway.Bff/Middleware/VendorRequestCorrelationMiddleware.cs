@@ -73,9 +73,12 @@ public sealed class VendorRequestCorrelationMiddleware(
                             value?.Contains("SameSite=None", StringComparison.OrdinalIgnoreCase) == true));
                 }
 
-                var completionLogLevel = context.Response.StatusCode >= StatusCodes.Status400BadRequest
-                    ? LogLevel.Error
-                    : LogLevel.Information;
+                var completionLogLevel = context.Response.StatusCode switch
+                {
+                    >= StatusCodes.Status500InternalServerError => LogLevel.Error,
+                    >= StatusCodes.Status400BadRequest => LogLevel.Warning,
+                    _ => LogLevel.Information
+                };
                 logger.Log(
                     completionLogLevel,
                     "Gateway request completed at {CompletedAtUtc}: {Method} {Path} returned {StatusCode} in {DurationMs} ms; proxiedToVendorService={ProxiedToVendorService}; correlation {CorrelationId}",

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MsContractor.MoySkladEgressService.Services;
 using MsContractor.Contracts.Internal;
@@ -8,6 +9,16 @@ namespace MsContractor.Sync.Tests;
 
 public sealed class EgressGatewayTests
 {
+    [Theory]
+    [InlineData(typeof(MoySkladCounterpartyGateway))]
+    [InlineData(typeof(MoySkladDocumentGateway))]
+    public void TypedHttpClientFactory_HasUnambiguousPreferredConstructor(Type gatewayType)
+    {
+        var factory = ActivatorUtilities.CreateFactory(gatewayType, [typeof(HttpClient)]);
+
+        Assert.NotNull(factory);
+    }
+
     [Fact]
     public async Task UpdateAsync_SendsOnlyExplicitNonNullFields()
     {
@@ -160,20 +171,45 @@ public sealed class EgressGatewayTests
             CancellationToken.None));
 
         var error = Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Error);
-        Assert.Contains("message=Первая ошибка | Вторая ошибка", error.Message);
-        Assert.Contains("status=400", error.Message);
-        Assert.Contains("archived=True", error.Message);
-        Assert.Contains("limit=1000", error.Message);
-        Assert.Contains("offset=2000", error.Message);
+        Assert.Contains("moysklad_error_message=Первая ошибка | Вторая ошибка", error.Message);
+        Assert.Contains("http_status=400", error.Message);
+        Assert.Contains("endpoint=entity/counterparty?filter=archived%3Dtrue&limit=1000&offset=2000", error.Message);
         Assert.Contains("correlation_id=correlation-id", error.Message);
         Assert.DoesNotContain("secret-token", error.Message);
         Assert.DoesNotContain("Authorization", error.Message);
     }
 
+    [Fact]
+    public async Task GetAsync_LogsEscapedMoySkladCyrillicAsReadableText()
+    {
+        var logger = new CaptureLogger<MoySkladCounterpartyGateway>();
+        var gateway = CreateGateway(
+            _ => Response(
+                HttpStatusCode.PreconditionFailed,
+                """{"message":"\u0423\u043A\u0430\u0437\u0430\u043D\u043D\u044B\u0439 \u0434\u043E\u0433\u043E\u0432\u043E\u0440"}"""),
+            logger);
+
+        await Assert.ThrowsAsync<EgressException>(() => gateway.GetAsync(
+            Guid.NewGuid(),
+            false,
+            1,
+            0,
+            null,
+            null,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "correlation-id",
+            CancellationToken.None));
+
+        var error = Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Error);
+        Assert.Contains("response_body={\"message\":\"Указанный договор\"}", error.Message);
+        Assert.DoesNotContain("\\u0423", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData("{\"message\":\"unknown shape\"}", "{\"message\":\"unknown shape\"}")]
     [InlineData("not-json error", "not-json error")]
-    [InlineData("   ", "MoySklad returned an empty error response.")]
+    [InlineData("   ", "response_body=")]
     public async Task GetAsync_LogsFallbackForUnknownErrorBody(string body, string expectedMessage)
     {
         var logger = new CaptureLogger<MoySkladCounterpartyGateway>();
@@ -193,15 +229,16 @@ public sealed class EgressGatewayTests
 
         Assert.Contains(
             logger.Entries,
-            entry => entry.Level == LogLevel.Error && entry.Message.Contains($"message={expectedMessage}"));
+            entry => entry.Level == LogLevel.Error && entry.Message.Contains(
+                expectedMessage == "response_body=" ? expectedMessage : $"response_body={expectedMessage}"));
     }
 
     [Fact]
-    public async Task GetAsync_TruncatesUnknownErrorBodyTo4096Characters()
+    public async Task GetAsync_TruncatesUnknownErrorBodyToConfiguredDiagnosticLimit()
     {
         var logger = new CaptureLogger<MoySkladCounterpartyGateway>();
         var gateway = CreateGateway(
-            _ => Response(HttpStatusCode.BadRequest, new string('x', 5000)),
+            _ => Response(HttpStatusCode.BadRequest, new string('x', MoySkladResponseHandler.MaximumDiagnosticBodyLength + 100)),
             logger);
 
         await Assert.ThrowsAsync<EgressException>(() => gateway.GetAsync(
@@ -217,8 +254,8 @@ public sealed class EgressGatewayTests
             CancellationToken.None));
 
         var error = Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Error);
-        Assert.Contains($"message={new string('x', 4096)},", error.Message);
-        Assert.DoesNotContain(new string('x', 4097), error.Message);
+        Assert.Contains($"response_body={new string('x', MoySkladResponseHandler.MaximumDiagnosticBodyLength)}", error.Message);
+        Assert.DoesNotContain(new string('x', MoySkladResponseHandler.MaximumDiagnosticBodyLength + 1), error.Message);
     }
 
     private static MoySkladCounterpartyGateway CreateGateway(

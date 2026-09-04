@@ -43,9 +43,26 @@ namespace MsContractor.CatalogSyncService.Repo.Migrations
 
                     b.HasKey("AccountId", "DocumentType", "DocumentId");
 
+                    b.HasAlternateKey("DocumentId");
+
                     b.HasIndex("AccountId", "CounterpartyId");
 
+                    b.HasIndex("CounterpartyId", "AccountId");
+
                     b.ToTable("counterparty_documents", "catalog_sync");
+                });
+
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.CounterpartyDocumentAdditionalData", b =>
+                {
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("Contract")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("DocumentId");
+
+                    b.ToTable("counterparty_document_additional_data", "catalog_sync");
                 });
 
             modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.Counterparty", b =>
@@ -330,6 +347,26 @@ namespace MsContractor.CatalogSyncService.Repo.Migrations
                         .HasForeignKey("LastSyncRunId", "AccountId")
                         .HasPrincipalKey("Id", "AccountId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.CounterpartyDocument", b =>
+                {
+                    b.HasOne("MsContractor.CatalogSyncService.Repo.Counterparty", "Counterparty")
+                        .WithMany("Documents")
+                        .HasForeignKey("CounterpartyId", "AccountId")
+                        .HasPrincipalKey("Id", "AccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.CounterpartyDocumentAdditionalData", b =>
+                {
+                    b.HasOne("MsContractor.CatalogSyncService.Repo.CounterpartyDocument", null)
+                        .WithOne()
+                        .HasForeignKey("MsContractor.CatalogSyncService.Repo.CounterpartyDocumentAdditionalData", "DocumentId")
+                        .HasPrincipalKey("MsContractor.CatalogSyncService.Repo.CounterpartyDocument", "DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

@@ -28,6 +28,37 @@ public sealed class TenantDatabaseContextTests
             fixture.Context.SetTenantAsync(Guid.NewGuid(), CancellationToken.None));
     }
 
+    [Fact]
+    public async Task CounterpartyDocument_ReferencesCounterpartyInSameAccount()
+    {
+        await using var fixture = await CreateAsync();
+
+        var entityType = fixture.Context.Model.FindEntityType(typeof(CounterpartyDocument))!;
+        var foreignKey = Assert.Single(entityType.GetForeignKeys(), foreignKey =>
+            foreignKey.PrincipalEntityType.ClrType == typeof(Counterparty));
+
+        Assert.Equal(["CounterpartyId", "AccountId"],
+            foreignKey.Properties.Select(property => property.Name));
+        Assert.Equal(["Id", "AccountId"],
+            foreignKey.PrincipalKey.Properties.Select(property => property.Name));
+        Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior);
+    }
+
+    [Fact]
+    public void CounterpartyDocumentAdditionalData_ReferencesDocumentByIdWithCascadeDelete()
+    {
+        using var context = new CatalogSyncDbContext(
+            new DbContextOptionsBuilder<CatalogSyncDbContext>().UseSqlite("Data Source=:memory:").Options);
+
+        var entityType = context.Model.FindEntityType(typeof(CounterpartyDocumentAdditionalData))!;
+        var foreignKey = Assert.Single(entityType.GetForeignKeys());
+
+        Assert.Equal(["DocumentId"], foreignKey.Properties.Select(property => property.Name));
+        Assert.Equal(typeof(CounterpartyDocument), foreignKey.PrincipalEntityType.ClrType);
+        Assert.Equal(["DocumentId"], foreignKey.PrincipalKey.Properties.Select(property => property.Name));
+        Assert.Equal(DeleteBehavior.Cascade, foreignKey.DeleteBehavior);
+    }
+
     private static async Task<Fixture> CreateAsync()
     {
         var connection = new SqliteConnection("Data Source=:memory:");

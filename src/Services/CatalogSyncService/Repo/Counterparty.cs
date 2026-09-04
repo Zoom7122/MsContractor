@@ -19,6 +19,7 @@ public sealed class Counterparty
     public DateTimeOffset? MoySkladUpdatedAt { get; set; }
     public Guid LastSyncRunId { get; set; }
     public SyncRun LastSyncRun { get; set; } = null!;
+    public ICollection<CounterpartyDocument> Documents { get; set; } = [];
     public string RawJson { get; set; } = "{}";
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

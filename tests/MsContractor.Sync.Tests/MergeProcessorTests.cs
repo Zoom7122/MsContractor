@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Net;
+using System.Net.Http.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -67,6 +69,109 @@ public sealed class MergeProcessorTests
         Assert.Equal(MergeOperationStatuses.Failed,
             job.Operations.Single(item => item.OperationType == MergeOperationTypes.UpdateMainCounterparty).Status);
         Assert.Empty(fixture.Egress.ArchiveCalls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsAdditionalContractOnlyForCommissionReports()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var contractId = Guid.NewGuid();
+        var commissionInId = Guid.NewGuid();
+        var commissionOutId = Guid.NewGuid();
+        fixture.Documents.Documents =
+        [
+            new MoySkladDocumentReference("demand", Guid.NewGuid(), fixture.Main.Id, Guid.NewGuid()),
+            new MoySkladDocumentReference("commissionreportin", commissionInId, fixture.Duplicates[0].Id, contractId),
+            new MoySkladDocumentReference("commissionreportout", commissionOutId, fixture.Duplicates[0].Id)
+        ];
+        var command = await fixture.CreateJobAsync();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        fixture.Db.ChangeTracker.Clear();
+        var additionalData = await fixture.Db.CounterpartyDocumentAdditionalData
+            .OrderBy(item => item.DocumentId)
+            .ToListAsync();
+        Assert.Equal(2, additionalData.Count);
+        Assert.Contains(additionalData, item => item.DocumentId == commissionInId && item.Contract == contractId);
+        Assert.Contains(additionalData, item => item.DocumentId == commissionOutId && item.Contract is null);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_TransfersCommissionReportsWithContractsBeforeOrdinaryDocuments()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 2);
+        var contractId = Guid.NewGuid();
+        var firstCommission = Guid.NewGuid();
+        var secondCommission = Guid.NewGuid();
+        fixture.Documents.Documents =
+        [
+            new MoySkladDocumentReference("commissionreportin", firstCommission, fixture.Duplicates[0].Id, contractId),
+            new MoySkladDocumentReference("commissionreportout", secondCommission, fixture.Duplicates[1].Id),
+            new MoySkladDocumentReference("demand", Guid.NewGuid(), fixture.Duplicates[0].Id)
+        ];
+        var command = await fixture.CreateJobAsync();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        var commissionCall = Assert.Single(fixture.DocumentChanges.AgentAndContractCalls);
+        Assert.Equal(new[] { firstCommission, secondCommission }, commissionCall.Select(item => item.DocumentId));
+        Assert.Equal(contractId, commissionCall.Single(item => item.DocumentId == firstCommission).Contract);
+        Assert.Null(commissionCall.Single(item => item.DocumentId == secondCommission).Contract);
+        Assert.Equal(["agent-and-contract", "counterparty"], fixture.DocumentChanges.CallOrder);
+        Assert.Single(fixture.DocumentChanges.Calls);
+        Assert.Equal("demand", fixture.DocumentChanges.Calls.Single().Single().DocumentType);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ChunksCommissionReportsBy950()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        fixture.Documents.Documents = Enumerable.Range(0, 951)
+            .Select(_ => new MoySkladDocumentReference(
+                "commissionreportout", Guid.NewGuid(), fixture.Duplicates[0].Id))
+            .ToArray();
+        var command = await fixture.CreateJobAsync();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        Assert.Equal([950, 1], fixture.DocumentChanges.AgentAndContractCalls.Select(call => call.Count));
+        Assert.Empty(fixture.DocumentChanges.Calls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_RetriesOnlyCommissionReportsNotYetTransferred()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1, maxAttempts: 2);
+        var changedId = Guid.NewGuid();
+        var failedId = Guid.NewGuid();
+        fixture.Documents.Documents =
+        [
+            new MoySkladDocumentReference("commissionreportin", changedId, fixture.Duplicates[0].Id),
+            new MoySkladDocumentReference("commissionreportout", failedId, fixture.Duplicates[0].Id)
+        ];
+        fixture.DocumentChanges.AgentAndContractResponse = (mainId, documents) =>
+            new MoySkladDocumentChangeCounterpartyResponse(
+                mainId,
+                documents.Count,
+                1,
+                0,
+                1,
+                [new MoySkladDocumentChangeItem(documents[0].DocumentType, documents[0].DocumentId)],
+                [],
+                [new MoySkladDocumentChangeFailure(
+                    documents[1].DocumentType, documents[1].DocumentId, "MOYSKLAD_429", "rate limit", 429, true)]);
+        var command = await fixture.CreateJobAsync();
+
+        await Assert.ThrowsAsync<MergeRetryableException>(() => fixture.Processor.ProcessAsync(command, CancellationToken.None));
+        fixture.DocumentChanges.AgentAndContractResponse = null;
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        Assert.Equal(2, fixture.DocumentChanges.AgentAndContractCalls.Count);
+        Assert.Equal(new[] { changedId, failedId },
+            fixture.DocumentChanges.AgentAndContractCalls[0].Select(item => item.DocumentId));
+        Assert.Equal([failedId], fixture.DocumentChanges.AgentAndContractCalls[1].Select(item => item.DocumentId));
     }
 
     [Fact]
@@ -305,7 +410,10 @@ public sealed class MergeProcessorTests
     private sealed class FakeDocumentChangeEgressClient : IDocumentChangeEgressClient
     {
         public List<IReadOnlyList<MoySkladDocumentChangeItem>> Calls { get; } = [];
+        public List<IReadOnlyList<MoySkladDocumentChangeAgentAndContractItem>> AgentAndContractCalls { get; } = [];
+        public List<string> CallOrder { get; } = [];
         public Func<Guid, IReadOnlyList<MoySkladDocumentChangeItem>, MoySkladDocumentChangeCounterpartyResponse>? Response { get; set; }
+        public Func<Guid, IReadOnlyList<MoySkladDocumentChangeAgentAndContractItem>, MoySkladDocumentChangeCounterpartyResponse>? AgentAndContractResponse { get; set; }
 
         public Task<MoySkladDocumentChangeCounterpartyResponse> ChangeCounterpartyAsync(
             Guid accountId, Guid mainCounterpartyId, IReadOnlyList<MoySkladDocumentChangeItem> documents,
@@ -313,10 +421,26 @@ public sealed class MergeProcessorTests
             CancellationToken cancellationToken)
         {
             Calls.Add(documents.ToArray());
+            CallOrder.Add("counterparty");
             return Task.FromResult(Response?.Invoke(mainCounterpartyId, documents) ??
                 new MoySkladDocumentChangeCounterpartyResponse(
                     mainCounterpartyId, documents.Count, documents.Count, 0, 0,
                     documents.ToArray(), [], []));
+        }
+
+        public Task<MoySkladDocumentChangeCounterpartyResponse> ChangeAgentAndContractAsync(
+            Guid accountId, Guid mainCounterpartyId,
+            IReadOnlyList<MoySkladDocumentChangeAgentAndContractItem> documents,
+            Guid mergeJobId, Guid operationId, Guid userId, Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            AgentAndContractCalls.Add(documents.ToArray());
+            CallOrder.Add("agent-and-contract");
+            var changed = documents.Select(item => new MoySkladDocumentChangeItem(
+                item.DocumentType, item.DocumentId)).ToArray();
+            return Task.FromResult(AgentAndContractResponse?.Invoke(mainCounterpartyId, documents) ??
+                new MoySkladDocumentChangeCounterpartyResponse(
+                    mainCounterpartyId, documents.Count, changed.Length, 0, 0, changed, [], []));
         }
     }
 
@@ -393,4 +517,49 @@ public sealed class MergeProcessorTests
         LastSyncRun = run, LastSyncRunId = run.Id,
         CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
     };
+}
+
+public sealed class DocumentChangeEgressClientTests
+{
+    [Fact]
+    public async Task ChangeAgentAndContractAsync_SendsDedicatedEndpointAndContractPayload()
+    {
+        var accountId = Guid.NewGuid();
+        var mainId = Guid.NewGuid();
+        var document = new MoySkladDocumentChangeAgentAndContractItem(
+            "commissionreportin", Guid.NewGuid(), Guid.NewGuid());
+        var client = new DocumentChangeEgressClient(
+            new HttpClient(new CallbackHandler(async (request, cancellationToken) =>
+            {
+                Assert.Equal(HttpMethod.Post, request.Method);
+                Assert.Equal(
+                    $"/internal/accounts/{accountId:D}/documents/change-agent-and-contract",
+                    request.RequestUri!.AbsolutePath);
+                Assert.Equal("key", request.Headers.GetValues(InternalApiHeaders.ApiKey).Single());
+                var payload = await request.Content!.ReadFromJsonAsync<MoySkladDocumentChangeAgentAndContractRequest>(cancellationToken);
+                Assert.Equal(mainId, payload!.MainCounterpartyId);
+                Assert.Equal(document, Assert.Single(payload.Documents!));
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(new MoySkladDocumentChangeCounterpartyResponse(
+                        mainId, 1, 1, 0, 0,
+                        [new MoySkladDocumentChangeItem(document.DocumentType, document.DocumentId)], [], []))
+                };
+            })) { BaseAddress = new Uri("http://egress/") },
+            new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?> { ["InternalApi:Key"] = "key" }).Build());
+
+        var response = await client.ChangeAgentAndContractAsync(
+            accountId, mainId, [document], Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            CancellationToken.None);
+
+        Assert.Single(response.ChangedDocuments);
+    }
+
+    private sealed class CallbackHandler(
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> callback) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) => callback(request, cancellationToken);
+    }
 }

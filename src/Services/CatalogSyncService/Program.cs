@@ -1,11 +1,13 @@
 using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
 using MsContractor.BuildingBlocks.Health;
+using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
 using MsContractor.CatalogSyncService.Repo;
 using MsContractor.CatalogSyncService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.AddMsContractorLogging();
 builder.AddMsContractorHealth();
 builder.Services.AddControllers();
 builder.Services.AddMsContractorOpenApi();

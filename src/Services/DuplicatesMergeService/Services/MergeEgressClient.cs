@@ -31,6 +31,19 @@ public interface IMergeEgressClient
 
 public sealed class MergeEgressClient(HttpClient httpClient, IConfiguration configuration) : IMergeEgressClient
 {
+
+    /// <summary>
+    /// Обновление основного КА зарос в engress
+    /// </summary>
+    /// <param name="accountId"></param>
+    /// <param name="counterpartyId"></param>
+    /// <param name="update"></param>
+    /// <param name="mergeJobId"></param>
+    /// <param name="operationId"></param>
+    /// <param name="userId"></param>
+    /// <param name="correlationId"></param>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
     public Task<MergeEgressResponse> UpdateAsync(
         Guid accountId, Guid counterpartyId, MergeMainCounterpartyDto update,
         Guid mergeJobId, Guid operationId, Guid userId, Guid correlationId,

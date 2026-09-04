@@ -7,4 +7,5 @@ public sealed class CounterpartyDocument
     public string DocumentType { get; set; } = null!;
     public Guid DocumentId { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+    public Counterparty Counterparty { get; set; } = null!;
 }

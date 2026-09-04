@@ -14,6 +14,16 @@ public interface IDocumentChangeEgressClient
         Guid userId,
         Guid correlationId,
         CancellationToken cancellationToken);
+
+    Task<MoySkladDocumentChangeCounterpartyResponse> ChangeAgentAndContractAsync(
+        Guid accountId,
+        Guid mainCounterpartyId,
+        IReadOnlyList<MoySkladDocumentChangeAgentAndContractItem> documents,
+        Guid mergeJobId,
+        Guid operationId,
+        Guid userId,
+        Guid correlationId,
+        CancellationToken cancellationToken);
 }
 
 public sealed class DocumentChangeEgressClient(
@@ -30,11 +40,51 @@ public sealed class DocumentChangeEgressClient(
         Guid correlationId,
         CancellationToken cancellationToken)
     {
+        return await SendAsync(
+            accountId,
+            "change-counterparty",
+            new MoySkladDocumentChangeCounterpartyRequest(mainCounterpartyId, documents),
+            mergeJobId,
+            operationId,
+            userId,
+            correlationId,
+            cancellationToken);
+    }
+
+    public Task<MoySkladDocumentChangeCounterpartyResponse> ChangeAgentAndContractAsync(
+        Guid accountId,
+        Guid mainCounterpartyId,
+        IReadOnlyList<MoySkladDocumentChangeAgentAndContractItem> documents,
+        Guid mergeJobId,
+        Guid operationId,
+        Guid userId,
+        Guid correlationId,
+        CancellationToken cancellationToken) =>
+        SendAsync(
+            accountId,
+            "change-agent-and-contract",
+            new MoySkladDocumentChangeAgentAndContractRequest(mainCounterpartyId, documents),
+            mergeJobId,
+            operationId,
+            userId,
+            correlationId,
+            cancellationToken);
+
+    private async Task<MoySkladDocumentChangeCounterpartyResponse> SendAsync<TRequest>(
+        Guid accountId,
+        string operation,
+        TRequest payload,
+        Guid mergeJobId,
+        Guid operationId,
+        Guid userId,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
-            $"internal/accounts/{accountId:D}/documents/change-counterparty")
+            $"internal/accounts/{accountId:D}/documents/{operation}")
         {
-            Content = JsonContent.Create(new MoySkladDocumentChangeCounterpartyRequest(mainCounterpartyId, documents))
+            Content = JsonContent.Create(payload)
         };
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.ApiKey, configuration["InternalApi:Key"]);
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.MergeJobId, mergeJobId.ToString("D"));

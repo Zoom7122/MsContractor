@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace MsContractor.Contracts.Internal;
 
 public static class InternalApiHeaders
@@ -30,7 +32,8 @@ public sealed record MoySkladDocumentDiscoveryRequest(
 public sealed record MoySkladDocumentReference(
     string DocumentType,
     Guid DocumentId,
-    Guid CounterpartyId);
+    Guid CounterpartyId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? ContractId = null);
 
 public sealed record MoySkladDocumentTypeCount(
     string DocumentType,
@@ -48,6 +51,15 @@ public sealed record MoySkladDocumentChangeItem(
     string DocumentType,
     Guid DocumentId);
 
+public sealed record MoySkladDocumentChangeAgentAndContractRequest(
+    Guid MainCounterpartyId,
+    IReadOnlyList<MoySkladDocumentChangeAgentAndContractItem>? Documents);
+
+public sealed record MoySkladDocumentChangeAgentAndContractItem(
+    string DocumentType,
+    Guid DocumentId,
+    Guid? Contract);
+
 public sealed record MoySkladDocumentChangeSkippedItem(
     string DocumentType,
     Guid DocumentId,
@@ -59,7 +71,11 @@ public sealed record MoySkladDocumentChangeFailure(
     string Code,
     string Message,
     int StatusCode,
-    bool Retryable);
+    bool Retryable,
+    string? Endpoint = null,
+    string? MoySkladErrorCode = null,
+    string? MoySkladErrorMessage = null,
+    string? ValidationError = null);
 
 public sealed record MoySkladDocumentChangeCounterpartyResponse(
     Guid MainCounterpartyId,

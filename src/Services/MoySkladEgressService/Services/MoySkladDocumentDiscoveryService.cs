@@ -68,7 +68,11 @@ public sealed class MoySkladDocumentDiscoveryService(
                     if (!requestedIds.Contains(counterpartyId))
                         throw InvalidResponse("MoySklad returned a document for an unexpected counterparty.");
 
-                    documents.Add(new MoySkladDocumentReference(documentType, row.DocumentId, counterpartyId));
+                    documents.Add(new MoySkladDocumentReference(
+                        documentType,
+                        row.DocumentId,
+                        counterpartyId,
+                        IsCommissionReport(documentType) ? row.ContractId : null));
                 }
 
                 loadedCount += page.Rows.Count;
@@ -117,6 +121,10 @@ public sealed class MoySkladDocumentDiscoveryService(
         if (page.Rows.Count > PageSize)
             throw Incomplete("MoySklad returned a document page larger than requested.");
     }
+
+    private static bool IsCommissionReport(string documentType) =>
+        string.Equals(documentType, "commissionreportin", StringComparison.Ordinal) ||
+        string.Equals(documentType, "commissionreportout", StringComparison.Ordinal);
 
     private static Guid ParseCounterpartyId(string href, string? type)
     {

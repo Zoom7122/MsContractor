@@ -27,7 +27,8 @@ public static class SupportedMoySkladDocumentTypes
 public sealed record MoySkladDocumentPageRow(
     Guid DocumentId,
     string AgentHref,
-    string? AgentType);
+    string? AgentType,
+    Guid? ContractId = null);
 
 public sealed record MoySkladDocumentPage(
     int Size,

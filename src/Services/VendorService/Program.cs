@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.EntityFrameworkCore;
 using MsContractor.BuildingBlocks.Health;
+using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
 using MsContractor.VendorService.Middleware;
 using MsContractor.VendorService.Repo;
@@ -8,6 +9,7 @@ using MsContractor.VendorService.Services;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.AddMsContractorLogging();
 builder.AddMsContractorHealth();
 
 builder.Services.AddControllers()
@@ -69,23 +71,24 @@ builder.Services.AddHealthChecks()
     .AddCheck<VendorReadinessHealthCheck>("vendor-dependencies", tags: ["ready"]);
 
 var app = builder.Build();
+var startupLogger = app.Services.GetRequiredService<ILoggerFactory>()
+    .CreateLogger("MsContractor.VendorService.Startup");
 
 await using (var scope = app.Services.CreateAsyncScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<VendorDbContext>();
-    Console.WriteLine("Applying PostgreSQL migrations.");
+    startupLogger.LogInformation("Applying PostgreSQL migrations.");
     await dbContext.Database.MigrateAsync();
 
     var canConnect = await dbContext.Database.CanConnectAsync();
-
-    Console.WriteLine(
-        canConnect
-            ? "PostgreSQL connection check succeeded."
-            : "PostgreSQL connection check failed.");
+    if (canConnect)
+        startupLogger.LogInformation("PostgreSQL connection check succeeded.");
+    else
+        startupLogger.LogWarning("PostgreSQL connection check failed.");
 
     var redis = scope.ServiceProvider.GetRequiredService<IConnectionMultiplexer>();
     await redis.GetDatabase().PingAsync().WaitAsync(TimeSpan.FromSeconds(30));
-    Console.WriteLine("Redis connection check succeeded.");
+    startupLogger.LogInformation("Redis connection check succeeded.");
 }
 
 app.MapMsContractorOpenApi();

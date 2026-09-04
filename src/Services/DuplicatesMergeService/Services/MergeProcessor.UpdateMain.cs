@@ -5,6 +5,15 @@ namespace MsContractor.DuplicatesMergeService.Services;
 
 public sealed partial class MergeProcessor
 {
+    /// <summary>
+    /// Запроса на отправку в engress на обновление КА
+    /// </summary>
+    /// <param name="job"></param>
+    /// <param name="operation"></param>
+    /// <param name="snapshot"></param>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
+    /// <exception cref="MergeRetryableException"></exception>
     private async Task<bool> ExecuteUpdateMainAsync(
         MergeJob job,
         MergeOperation operation,
@@ -17,9 +26,13 @@ public sealed partial class MergeProcessor
             var response = await egressClient.UpdateAsync(
                 job.AccountId, operation.CounterpartyId, snapshot,
                 job.Id, operation.Id, job.RequestedByUserId, job.CorrelationId, cancellationToken);
+
             var parsed = parser.ParseOne(response.Json);
+
             EnsureResponse(operation.CounterpartyId, parsed, archivedRequired: false);
+
             var local = await FindLocalAsync(job.AccountId, operation.CounterpartyId, cancellationToken);
+            
             normalizer.Apply(local, parsed, timeProvider.GetUtcNow());
             Complete(operation);
             await dbContext.SaveChangesAsync(cancellationToken);

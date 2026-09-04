@@ -152,6 +152,17 @@ DEPENDENT_DOCUMENT_TYPES = {
     "retireorder",
 }
 
+# Зависимые документы создаются от реального документа-основания. Добавляем его
+# автоматически, чтобы `--docs salesreturn` не завершался пропуском из-за
+# отсутствующего demand.
+DOCUMENT_DEPENDENCIES = {
+    "salesreturn": {"demand"},
+    "purchasereturn": {"supply"},
+    "retailsalesreturn": {"retaildemand"},
+    "factureout": {"demand"},
+    "facturein": {"supply"},
+}
+
 DOCUMENT_CREATION_ORDER = (
     "customerorder", "demand", "purchaseorder", "supply", "paymentin",
     "paymentout", "cashin", "cashout", "retaildemand", "invoiceout",
@@ -283,11 +294,11 @@ def write_report_json() -> bool:
 
 def selected_document_types(args: argparse.Namespace) -> Set[str]:
     if args.all:
-        return set(ALL_DOCUMENT_TYPES)
+        return expand_document_dependencies(set(ALL_DOCUMENT_TYPES))
     if args.docs:
-        return set(args.docs)
+        return expand_document_dependencies(set(args.docs))
     if args.stats:
-        return set(STAT_DOCUMENT_TYPES)
+        return expand_document_dependencies(set(STAT_DOCUMENT_TYPES))
 
     raw_types = os.getenv("MS_DOCUMENT_TYPES")
     if raw_types is not None:
@@ -323,7 +334,14 @@ def selected_document_types(args: argparse.Namespace) -> Set[str]:
             )
         document_types.update(optional_document_types)
 
-    return document_types
+    return expand_document_dependencies(document_types)
+
+
+def expand_document_dependencies(document_types: Set[str]) -> Set[str]:
+    expanded = set(document_types)
+    for document_type in document_types:
+        expanded.update(DOCUMENT_DEPENDENCIES.get(document_type, set()))
+    return expanded
 
 
 def print_document_types() -> None:
@@ -409,6 +427,14 @@ def get_first(entity_type: str) -> Optional[Dict[str, Any]]:
     return rows[0] if rows else None
 
 
+def get_first_price_type() -> Optional[Dict[str, Any]]:
+    """Return a price type from its dedicated MySklad settings endpoint."""
+    ok, data = try_api("GET", "/context/companysettings/pricetype")
+    if not ok or not isinstance(data, list):
+        return None
+    return data[0] if data else None
+
+
 def create_entity(entity_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     return api("POST", f"/entity/{entity_type}", payload)
 
@@ -469,7 +495,7 @@ def try_ensure_retail_store(
         if retail_store.get("active"):
             return retail_store
 
-    price_type = get_first("pricetype")
+    price_type = get_first_price_type()
     if not price_type:
         print("Не найдены типы цен. Розничные документы будут пропущены.")
         return None

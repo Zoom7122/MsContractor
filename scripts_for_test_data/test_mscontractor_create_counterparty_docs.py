@@ -1,4 +1,5 @@
 import importlib.util
+import argparse
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -38,6 +39,32 @@ def source(entity_type: str, entity_id: str) -> dict:
 
 
 class DependentDocumentPayloadTests(unittest.TestCase):
+    def test_get_first_price_type_uses_company_settings_endpoint(self) -> None:
+        price_type = entity("pricetype", "price-type-id")
+
+        with patch.object(ms_docs, "try_api", return_value=(True, [price_type])) as api_mock:
+            result = ms_docs.get_first_price_type()
+
+        self.assertEqual(price_type, result)
+        api_mock.assert_called_once_with("GET", "/context/companysettings/pricetype")
+
+    def test_selected_dependent_documents_add_required_sources(self) -> None:
+        args = argparse.Namespace(
+            all=False,
+            docs=["salesreturn", "purchasereturn", "retailsalesreturn", "factureout", "facturein"],
+            stats=False,
+        )
+
+        selected = ms_docs.selected_document_types(args)
+
+        self.assertEqual(
+            {
+                "salesreturn", "purchasereturn", "retailsalesreturn", "factureout", "facturein",
+                "demand", "supply", "retaildemand",
+            },
+            selected,
+        )
+
     def test_salesreturn_uses_demand_positions_without_read_only_fields(self) -> None:
         demand = source("demand", "demand-id")
 

@@ -27,8 +27,14 @@ var egressOptions = new EgressOptions
 };
 var documentChangeOptions = MoySkladDocumentChangeOptions.Parse(
     builder.Configuration["DOCUMENTS_PUT_CHANGE"]);
+var agentAndContractOptions = MoySkladDocumentAgentAndContractOptions.Parse(
+    builder.Configuration["DOCUMENTS_CHANGE_AGENT_AND_CONTRACT"]);
+var documentDiscoveryOptions = MoySkladDocumentDiscoveryOptions.Parse(
+    builder.Configuration["DOCUMENTS_DISCOVERY"]);
 builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(egressOptions));
 builder.Services.AddSingleton(documentChangeOptions);
+builder.Services.AddSingleton(agentAndContractOptions);
+builder.Services.AddSingleton(documentDiscoveryOptions);
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     ConnectionMultiplexer.Connect(
         builder.Configuration["Redis:ConnectionString"]

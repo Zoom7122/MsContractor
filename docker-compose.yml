@@ -9,6 +9,8 @@ x-service-env: &service-env
   Kafka__BootstrapServers: kafka:${KAFKA_INTERNAL_PORT}
   InternalApi__Key: ${INTERNAL_API_KEY:?Set INTERNAL_API_KEY to a non-empty secret before starting Compose}
   DOCUMENTS_PUT_CHANGE: ${DOCUMENTS_PUT_CHANGE:?Set DOCUMENTS_PUT_CHANGE to a non-empty comma-separated list}
+  DOCUMENTS_CHANGE_AGENT_AND_CONTRACT: ${DOCUMENTS_CHANGE_AGENT_AND_CONTRACT:?Set DOCUMENTS_CHANGE_AGENT_AND_CONTRACT to a non-empty comma-separated list}
+  DOCUMENTS_DISCOVERY: ${DOCUMENTS_DISCOVERY:?Set DOCUMENTS_DISCOVERY to a non-empty comma-separated list}
 
   Services__GatewayBff__BaseUrl: http://gateway-bff:${SERVICE_INTERNAL_PORT}
   Services__VendorService__BaseUrl: http://vendor-service:${SERVICE_INTERNAL_PORT}

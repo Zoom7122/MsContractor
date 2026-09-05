@@ -17,7 +17,12 @@ public static class SupportedMoySkladDocumentTypes
         "retaildemand",
         "counterpartyadjustment",
         "commissionreportin",
-        "commissionreportout"
+        "commissionreportout",
+        "salesreturn",
+        "purchasereturn",
+        "retailsalesreturn",
+        "factureout",
+        "facturein"
     ]);
 
     public static bool Contains(string documentType) =>
@@ -28,7 +33,8 @@ public sealed record MoySkladDocumentPageRow(
     Guid DocumentId,
     string AgentHref,
     string? AgentType,
-    Guid? ContractId = null);
+    Guid? ContractId = null,
+    string? RawJson = null);
 
 public sealed record MoySkladDocumentPage(
     int Size,
@@ -41,17 +47,39 @@ public sealed class MoySkladDocumentChangeOptions
 {
     public required IReadOnlyList<string> DocumentTypes { get; init; }
 
-    public static MoySkladDocumentChangeOptions Parse(string? value)
+    public static MoySkladDocumentChangeOptions Parse(string? value, string variableName = "DOCUMENTS_PUT_CHANGE")
     {
         if (string.IsNullOrWhiteSpace(value))
-            throw new InvalidOperationException("DOCUMENTS_PUT_CHANGE must contain a comma-separated document type list.");
+            throw new InvalidOperationException($"{variableName} must contain a comma-separated document type list.");
         var types = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (types.Length == 0 || types.Distinct(StringComparer.Ordinal).Count() != types.Length ||
             types.Any(type => !SupportedMoySkladDocumentTypes.Contains(type)))
         {
-            throw new InvalidOperationException("DOCUMENTS_PUT_CHANGE contains duplicate or unsupported document types.");
+            throw new InvalidOperationException($"{variableName} contains duplicate or unsupported document types.");
         }
         return new MoySkladDocumentChangeOptions { DocumentTypes = types };
+    }
+}
+
+public sealed class MoySkladDocumentAgentAndContractOptions
+{
+    public required IReadOnlyList<string> DocumentTypes { get; init; }
+
+    public static MoySkladDocumentAgentAndContractOptions Parse(string? value)
+    {
+        var options = MoySkladDocumentChangeOptions.Parse(value, "DOCUMENTS_CHANGE_AGENT_AND_CONTRACT");
+        return new MoySkladDocumentAgentAndContractOptions { DocumentTypes = options.DocumentTypes };
+    }
+}
+
+public sealed class MoySkladDocumentDiscoveryOptions
+{
+    public required IReadOnlyList<string> DocumentTypes { get; init; }
+
+    public static MoySkladDocumentDiscoveryOptions Parse(string? value)
+    {
+        var options = MoySkladDocumentChangeOptions.Parse(value, "DOCUMENTS_DISCOVERY");
+        return new MoySkladDocumentDiscoveryOptions { DocumentTypes = options.DocumentTypes };
     }
 }
 

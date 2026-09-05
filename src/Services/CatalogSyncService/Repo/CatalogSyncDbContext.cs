@@ -15,7 +15,8 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
     public DbSet<MergeJob> MergeJobs => Set<MergeJob>();
     public DbSet<MergeOperation> MergeOperations => Set<MergeOperation>();
     public DbSet<CounterpartyDocument> CounterpartyDocuments => Set<CounterpartyDocument>();
-    public DbSet<CounterpartyDocumentAdditionalData> CounterpartyDocumentAdditionalData => Set<CounterpartyDocumentAdditionalData>();
+    public DbSet<DocumentAdditionalCommission> DocumentAdditionalCommissions => Set<DocumentAdditionalCommission>();
+    public DbSet<DocumentAdditionalData> DocumentAdditionalData => Set<DocumentAdditionalData>();
     internal Guid? TenantAccountId => tenantAccountId;
 
     public Task SetTenantAsync(Guid accountId, CancellationToken cancellationToken)
@@ -147,14 +148,26 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
-        modelBuilder.Entity<CounterpartyDocumentAdditionalData>(entity =>
+        modelBuilder.Entity<DocumentAdditionalCommission>(entity =>
         {
-            entity.ToTable("counterparty_document_additional_data");
+            entity.ToTable("document_additional_commission");
             entity.HasKey(item => item.DocumentId);
             entity.Property(item => item.Contract).HasColumnType("uuid");
             entity.HasOne<CounterpartyDocument>()
                 .WithOne()
-                .HasForeignKey<CounterpartyDocumentAdditionalData>(item => item.DocumentId)
+                .HasForeignKey<DocumentAdditionalCommission>(item => item.DocumentId)
+                .HasPrincipalKey<CounterpartyDocument>(item => item.DocumentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DocumentAdditionalData>(entity =>
+        {
+            entity.ToTable("document_additional_data");
+            entity.HasKey(item => item.DocumentId);
+            entity.Property(item => item.RawJson).HasColumnType("jsonb").IsRequired();
+            entity.HasOne<CounterpartyDocument>()
+                .WithOne()
+                .HasForeignKey<DocumentAdditionalData>(item => item.DocumentId)
                 .HasPrincipalKey<CounterpartyDocument>(item => item.DocumentId)
                 .OnDelete(DeleteBehavior.Cascade);
         });

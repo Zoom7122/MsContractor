@@ -90,6 +90,8 @@ public sealed class MoySkladDocumentGatewayTests
         Assert.Equal(documentId, row.DocumentId);
         Assert.Equal("counterparty", row.AgentType);
         Assert.EndsWith(counterpartyId.ToString("D"), row.AgentHref);
+        using var raw = System.Text.Json.JsonDocument.Parse(row.RawJson!);
+        Assert.Equal("ignored", raw.RootElement.GetProperty("name").GetString());
         Assert.Equal(1, page.Size);
         Assert.Equal(1000, page.Limit);
         Assert.Equal(0, page.Offset);
@@ -307,6 +309,7 @@ public sealed class MoySkladDocumentGatewayTests
             limiter);
         var service = new MoySkladDocumentDiscoveryService(
             gateway,
+            new MoySkladDocumentDiscoveryOptions { DocumentTypes = SupportedMoySkladDocumentTypes.All },
             new CaptureLogger<MoySkladDocumentDiscoveryService>());
 
         var result = await service.DiscoverAsync(
@@ -341,6 +344,7 @@ public sealed class MoySkladDocumentGatewayTests
             limiter: limiter);
         var service = new MoySkladDocumentDiscoveryService(
             gateway,
+            new MoySkladDocumentDiscoveryOptions { DocumentTypes = SupportedMoySkladDocumentTypes.All },
             new CaptureLogger<MoySkladDocumentDiscoveryService>());
 
         var exception = await Assert.ThrowsAsync<EgressException>(() => service.DiscoverAsync(
@@ -453,6 +457,39 @@ public sealed class MoySkladDocumentDiscoveryServiceTests
         Assert.All(result.Counts, item => Assert.Equal(0, item.Count));
         Assert.Equal(SupportedMoySkladDocumentTypes.All, gateway.Calls.Select(call => call.DocumentType));
         Assert.All(gateway.Calls, call => Assert.Equal(0, call.Offset));
+    }
+
+    [Fact]
+    public async Task DiscoverAsync_VisitsOnlyConfiguredDocumentTypes()
+    {
+        var gateway = new FakeDocumentGateway(call => Task.FromResult(EmptyPage(call.Offset)));
+        var service = Service(gateway, "demand");
+
+        var result = await service.DiscoverAsync(
+            Guid.NewGuid(), Guid.NewGuid(), "correlation-id", [Guid.NewGuid()], CancellationToken.None);
+
+        Assert.Equal(["demand"], result.Counts.Select(item => item.DocumentType));
+        Assert.Equal(["demand"], gateway.Calls.Select(call => call.DocumentType));
+    }
+
+    [Fact]
+    public async Task DiscoverAsync_PreservesRawDocumentJson()
+    {
+        var counterpartyId = Guid.NewGuid();
+        const string rawJson = "{\"id\":\"raw-document\",\"customField\":\"preserved\"}";
+        var gateway = new FakeDocumentGateway(call => Task.FromResult(
+            call.DocumentType == "salesreturn"
+                ? Page(1, 0, new MoySkladDocumentPageRow(
+                    Guid.NewGuid(),
+                    $"https://api.moysklad.ru/api/remap/1.2/entity/counterparty/{counterpartyId:D}",
+                    "counterparty",
+                    RawJson: rawJson))
+                : EmptyPage(call.Offset)));
+
+        var result = await Service(gateway, "salesreturn").DiscoverAsync(
+            Guid.NewGuid(), Guid.NewGuid(), "correlation-id", [counterpartyId], CancellationToken.None);
+
+        Assert.Equal(rawJson, Assert.Single(result.Documents).RawJson);
     }
 
     [Theory]
@@ -697,8 +734,13 @@ public sealed class MoySkladDocumentDiscoveryServiceTests
         Assert.Equal(1, result.Counts.Single(item => item.DocumentType == "demand").Count);
     }
 
-    private static MoySkladDocumentDiscoveryService Service(FakeDocumentGateway gateway) =>
-        new(gateway, new CaptureLogger<MoySkladDocumentDiscoveryService>());
+    private static MoySkladDocumentDiscoveryService Service(
+        FakeDocumentGateway gateway,
+        params string[] documentTypes) =>
+        new(gateway, DiscoveryOptions(documentTypes), new CaptureLogger<MoySkladDocumentDiscoveryService>());
+
+    private static MoySkladDocumentDiscoveryOptions DiscoveryOptions(params string[] documentTypes) =>
+        new() { DocumentTypes = documentTypes.Length == 0 ? SupportedMoySkladDocumentTypes.All : documentTypes };
 
     private static FakeDocumentGateway PagedGateway(int size, Guid counterpartyId) =>
         new(call => Task.FromResult(

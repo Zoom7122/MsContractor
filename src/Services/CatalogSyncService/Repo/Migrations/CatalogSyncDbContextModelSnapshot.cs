@@ -52,7 +52,7 @@ namespace MsContractor.CatalogSyncService.Repo.Migrations
                     b.ToTable("counterparty_documents", "catalog_sync");
                 });
 
-            modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.CounterpartyDocumentAdditionalData", b =>
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.DocumentAdditionalCommission", b =>
                 {
                     b.Property<Guid>("DocumentId")
                         .HasColumnType("uuid");
@@ -62,7 +62,21 @@ namespace MsContractor.CatalogSyncService.Repo.Migrations
 
                     b.HasKey("DocumentId");
 
-                    b.ToTable("counterparty_document_additional_data", "catalog_sync");
+                    b.ToTable("document_additional_commission", "catalog_sync");
+                });
+
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.DocumentAdditionalData", b =>
+                {
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RawJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.HasKey("DocumentId");
+
+                    b.ToTable("document_additional_data", "catalog_sync");
                 });
 
             modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.Counterparty", b =>
@@ -360,11 +374,21 @@ namespace MsContractor.CatalogSyncService.Repo.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.CounterpartyDocumentAdditionalData", b =>
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.DocumentAdditionalCommission", b =>
                 {
                     b.HasOne("MsContractor.CatalogSyncService.Repo.CounterpartyDocument", null)
                         .WithOne()
-                        .HasForeignKey("MsContractor.CatalogSyncService.Repo.CounterpartyDocumentAdditionalData", "DocumentId")
+                        .HasForeignKey("MsContractor.CatalogSyncService.Repo.DocumentAdditionalCommission", "DocumentId")
+                        .HasPrincipalKey("MsContractor.CatalogSyncService.Repo.CounterpartyDocument", "DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Repo.DocumentAdditionalData", b =>
+                {
+                    b.HasOne("MsContractor.CatalogSyncService.Repo.CounterpartyDocument", null)
+                        .WithOne()
+                        .HasForeignKey("MsContractor.CatalogSyncService.Repo.DocumentAdditionalData", "DocumentId")
                         .HasPrincipalKey("MsContractor.CatalogSyncService.Repo.CounterpartyDocument", "DocumentId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();

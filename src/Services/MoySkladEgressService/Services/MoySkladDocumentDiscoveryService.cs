@@ -14,6 +14,7 @@ public interface IMoySkladDocumentDiscoveryService
 
 public sealed class MoySkladDocumentDiscoveryService(
     IMoySkladDocumentGateway gateway,
+    MoySkladDocumentDiscoveryOptions options,
     ILogger<MoySkladDocumentDiscoveryService> logger) : IMoySkladDocumentDiscoveryService
 {
     public const int PageSize = 1000;
@@ -27,9 +28,9 @@ public sealed class MoySkladDocumentDiscoveryService(
     {
         var requestedIds = counterpartyIds.ToHashSet();
         var documents = new List<MoySkladDocumentReference>();
-        var counts = new List<MoySkladDocumentTypeCount>(SupportedMoySkladDocumentTypes.All.Count);
+        var counts = new List<MoySkladDocumentTypeCount>(options.DocumentTypes.Count);
 
-        foreach (var documentType in SupportedMoySkladDocumentTypes.All)
+        foreach (var documentType in options.DocumentTypes)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var documentIds = new HashSet<Guid>();
@@ -69,10 +70,11 @@ public sealed class MoySkladDocumentDiscoveryService(
                         throw InvalidResponse("MoySklad returned a document for an unexpected counterparty.");
 
                     documents.Add(new MoySkladDocumentReference(
-                        documentType,
-                        row.DocumentId,
-                        counterpartyId,
-                        IsCommissionReport(documentType) ? row.ContractId : null));
+                    documentType,
+                    row.DocumentId,
+                    counterpartyId,
+                    IsCommissionReport(documentType) ? row.ContractId : null,
+                    row.RawJson));
                 }
 
                 loadedCount += page.Rows.Count;

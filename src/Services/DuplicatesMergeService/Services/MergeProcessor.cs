@@ -215,7 +215,7 @@ public sealed partial class MergeProcessor(
             if (commissionRows.Length > 0)
             {
                 var commissionIds = commissionRows.Select(item => item.DocumentId).ToArray();
-                var contracts = await dbContext.CounterpartyDocumentAdditionalData
+                var contracts = await dbContext.DocumentAdditionalCommissions
                     .Where(item => commissionIds.Contains(item.DocumentId))
                     .ToDictionaryAsync(item => item.DocumentId, item => item.Contract, cancellationToken);
 
@@ -423,12 +423,20 @@ public sealed partial class MergeProcessor(
             DocumentId = document.DocumentId,
             UpdatedAt = now
         }));
-        dbContext.CounterpartyDocumentAdditionalData.AddRange(documents
+        dbContext.DocumentAdditionalCommissions.AddRange(documents
             .Where(document => IsCommissionReport(document.DocumentType))
-            .Select(document => new CounterpartyDocumentAdditionalData
+            .Select(document => new DocumentAdditionalCommission
             {
                 DocumentId = document.DocumentId,
                 Contract = document.ContractId
+            }));
+        dbContext.DocumentAdditionalData.AddRange(documents
+            .Where(document => IsRawAdditionalDataDocument(document.DocumentType) &&
+                               !string.IsNullOrWhiteSpace(document.RawJson))
+            .Select(document => new DocumentAdditionalData
+            {
+                DocumentId = document.DocumentId,
+                RawJson = document.RawJson!
             }));
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -437,6 +445,9 @@ public sealed partial class MergeProcessor(
     private static bool IsCommissionReport(string documentType) =>
         string.Equals(documentType, "commissionreportin", StringComparison.Ordinal) ||
         string.Equals(documentType, "commissionreportout", StringComparison.Ordinal);
+
+    private static bool IsRawAdditionalDataDocument(string documentType) =>
+        documentType is "salesreturn" or "purchasereturn" or "retailsalesreturn" or "factureout" or "facturein";
 
     private async Task ExecuteArchiveBatchAsync(
         MergeJob job,

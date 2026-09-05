@@ -200,9 +200,37 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                     responseBody.Body, stopwatch.Elapsed);
             }
 
-            var rows = new List<MoySkladDocumentPageRow>(payload.Rows.Count);
-            foreach (var row in payload.Rows)
+            JsonElement[] rawRows;
+            try
             {
+                using var rawPayload = JsonDocument.Parse(responseBody.Body);
+                if (!rawPayload.RootElement.TryGetProperty("rows", out var rawRowsElement) ||
+                    rawRowsElement.ValueKind != JsonValueKind.Array)
+                {
+                    throw new JsonException("Document rows are missing.");
+                }
+
+                rawRows = rawRowsElement.EnumerateArray().Select(row => row.Clone()).ToArray();
+            }
+            catch (JsonException exception)
+            {
+                throw responseHandler.ValidationFailure(
+                    context, responseBody.HttpStatus,
+                    $"MoySklad returned document rows without raw JSON: {exception.Message}",
+                    responseBody.Body, stopwatch.Elapsed);
+            }
+
+            if (rawRows.Length != payload.Rows.Count)
+            {
+                throw responseHandler.ValidationFailure(
+                    context, responseBody.HttpStatus, "MoySklad returned inconsistent document rows.",
+                    responseBody.Body, stopwatch.Elapsed);
+            }
+
+            var rows = new List<MoySkladDocumentPageRow>(payload.Rows.Count);
+            for (var index = 0; index < payload.Rows.Count; index++)
+            {
+                var row = payload.Rows[index];
                 if (row?.Agent?.Meta?.Href is null)
                     throw responseHandler.ValidationFailure(
                         context, responseBody.HttpStatus, "MoySklad returned a document without agent metadata.",
@@ -212,7 +240,8 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                     row.Id,
                     row.Agent.Meta.Href,
                     row.Agent.Meta.Type,
-                    IsCommissionReport(documentType) ? TryReadContractId(row.Contract) : null));
+                    IsCommissionReport(documentType) ? TryReadContractId(row.Contract) : null,
+                    rawRows[index].GetRawText()));
             }
 
             return new MoySkladDocumentPage(

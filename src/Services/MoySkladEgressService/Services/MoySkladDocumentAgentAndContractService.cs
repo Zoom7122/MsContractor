@@ -11,7 +11,7 @@ public interface IMoySkladDocumentAgentAndContractService
 
 public sealed class MoySkladDocumentAgentAndContractService(
     IMoySkladDocumentGateway gateway,
-    MoySkladDocumentChangeOptions options,
+    MoySkladDocumentAgentAndContractOptions options,
     ILogger<MoySkladDocumentAgentAndContractService> logger) : IMoySkladDocumentAgentAndContractService
 {
     public async Task<MoySkladDocumentChangeCounterpartyResponse> ChangeAgentAndContractAsync(

@@ -27,6 +27,17 @@ public sealed class MoySkladDocumentChangeOptionsTests
         var options = MoySkladDocumentChangeOptions.Parse("demand,customerorder");
         Assert.Equal(["demand", "customerorder"], options.DocumentTypes);
     }
+
+    [Fact]
+    public void Parse_AcceptsDocumentsWithRawAdditionalData()
+    {
+        var options = MoySkladDocumentDiscoveryOptions.Parse(
+            "salesreturn,purchasereturn,retailsalesreturn,factureout,facturein");
+
+        Assert.Equal(
+            ["salesreturn", "purchasereturn", "retailsalesreturn", "factureout", "facturein"],
+            options.DocumentTypes);
+    }
 }
 
 public sealed class MoySkladDocumentChangeGatewayTests
@@ -380,7 +391,7 @@ public sealed class MoySkladDocumentChangeServiceTests
                 [new MoySkladDocumentChangeFailure("contract", failedContract, "MOYSKLAD_3008", "rejected", 400, false)])
         };
         var service = new MoySkladDocumentAgentAndContractService(gateway,
-            new MoySkladDocumentChangeOptions { DocumentTypes = ["commissionreportin"] },
+            new MoySkladDocumentAgentAndContractOptions { DocumentTypes = ["commissionreportin"] },
             NullLogger<MoySkladDocumentAgentAndContractService>.Instance);
 
         var response = await service.ChangeAgentAndContractAsync(

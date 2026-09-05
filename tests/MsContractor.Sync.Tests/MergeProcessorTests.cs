@@ -89,12 +89,48 @@ public sealed class MergeProcessorTests
         await fixture.Processor.ProcessAsync(command, CancellationToken.None);
 
         fixture.Db.ChangeTracker.Clear();
-        var additionalData = await fixture.Db.CounterpartyDocumentAdditionalData
+        var additionalData = await fixture.Db.DocumentAdditionalCommissions
             .OrderBy(item => item.DocumentId)
             .ToListAsync();
         Assert.Equal(2, additionalData.Count);
         Assert.Contains(additionalData, item => item.DocumentId == commissionInId && item.Contract == contractId);
         Assert.Contains(additionalData, item => item.DocumentId == commissionOutId && item.Contract is null);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsRawJsonOnlyForSpecialDocuments()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var documentTypes = new[]
+        {
+            "salesreturn", "purchasereturn", "retailsalesreturn", "factureout", "facturein"
+        };
+        var specialDocuments = documentTypes.Select(documentType =>
+        {
+            var documentId = Guid.NewGuid();
+            return new MoySkladDocumentReference(
+                documentType,
+                documentId,
+                fixture.Duplicates[0].Id,
+                RawJson: $"{{\"id\":\"{documentId:D}\",\"documentType\":\"{documentType}\",\"customField\":\"preserved\"}}");
+        }).ToArray();
+        fixture.Documents.Documents =
+        [
+            .. specialDocuments,
+            new MoySkladDocumentReference("demand", Guid.NewGuid(), fixture.Duplicates[0].Id, RawJson: "{\"customField\":\"ignored\"}")
+        ];
+        var command = await fixture.CreateJobAsync();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        fixture.Db.ChangeTracker.Clear();
+        var additionalData = await fixture.Db.DocumentAdditionalData
+            .OrderBy(item => item.DocumentId)
+            .ToListAsync();
+
+        Assert.Equal(specialDocuments.Select(item => item.DocumentId).Order(),
+            additionalData.Select(item => item.DocumentId));
+        Assert.All(additionalData, item => Assert.Contains("\"customField\":\"preserved\"", item.RawJson));
     }
 
     [Fact]

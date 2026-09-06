@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using MsContractor.MoySkladEgressService.Clients;
-using MsContractor.MoySkladEgressService.Contracts;
+using MsContractor.Contracts.Internal;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
 

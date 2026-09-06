@@ -86,7 +86,8 @@ public sealed class MigrationSnapshotDiagnosticTests
             "20260901000100_AddCounterpartyDocumentCounterpartyForeignKey",
             "20260902000100_AddCounterpartyDocumentAdditionalData",
             "20260904000100_AddSalesReturnAdditionalData",
-            "20260904000200_RenameDocumentAdditionalTables"
+            "20260904000200_RenameDocumentAdditionalTables",
+            "20260906125521_PersistSalesReturnRecreationRequest"
         ];
         Assert.Equal(expected, context.GetService<IMigrationsAssembly>().Migrations.Keys);
     }

@@ -18,6 +18,53 @@ namespace MsContractor.Sync.Tests;
 public sealed class MoySkladDocumentGatewayTests
 {
     [Fact]
+    public async Task SalesReturnDiscoveryLoadsAllPositionPagesIntoTheSnapshot()
+    {
+        var id = Guid.NewGuid(); var agent = Guid.NewGuid();
+        var limiter = new FakeRateLimiter();
+        var token = new FakeTokenClient();
+        var calls = new List<string>();
+        var gateway = CreateGateway((request, _) =>
+        {
+            calls.Add(request.RequestUri!.PathAndQuery);
+            if (!request.RequestUri.AbsolutePath.Contains("/positions"))
+                return Task.FromResult(Response(HttpStatusCode.OK, System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    meta = new { size = 1, limit = 1000, offset = 0 },
+                    rows = new[] { new { id, agent = new { meta = new { href = $"https://api.moysklad.ru/api/remap/1.2/entity/counterparty/{agent}", type = "counterparty" } },
+                        positions = new { meta = new { size = 1001 } } } }
+                })));
+            var offset = request.RequestUri.Query.Contains("offset=1000") ? 1000 : 0;
+            return Task.FromResult(Response(HttpStatusCode.OK, System.Text.Json.JsonSerializer.Serialize(new
+            {
+                meta = new { size = 1001, limit = 1000, offset },
+                rows = Enumerable.Range(offset, offset == 0 ? 1000 : 1).Select(index => new { id = Guid.NewGuid(), quantity = 1, price = index }).ToArray()
+            })));
+        }, token, limiter);
+        var result = await gateway.GetPageAsync(Guid.NewGuid(), Guid.NewGuid(), "correlation", "salesreturn", [agent], 1000, 0, default);
+        using var raw = System.Text.Json.JsonDocument.Parse(Assert.Single(result.Rows).RawJson!);
+        Assert.Equal(1001, raw.RootElement.GetProperty("positions").GetArrayLength());
+        Assert.Equal(1000, raw.RootElement.GetProperty("positions")[1000].GetProperty("price").GetInt32());
+        Assert.Equal(3, calls.Count);
+        Assert.Equal(1, token.Calls);
+        Assert.Equal(3, limiter.WaitCalls);
+        Assert.Equal(3, limiter.ObserveCalls);
+    }
+
+    [Fact]
+    public async Task SalesReturnDiscoveryRejectsIncompletePositionsBeforeMergeCanDelete()
+    {
+        var id = Guid.NewGuid(); var agent = Guid.NewGuid();
+        var gateway = CreateGateway((request, _) => Task.FromResult(Response(HttpStatusCode.OK,
+            request.RequestUri!.AbsolutePath.Contains("/positions")
+            ? "{\"meta\":{\"size\":2,\"limit\":1000,\"offset\":0},\"rows\":[]}"
+            : System.Text.Json.JsonSerializer.Serialize(new { meta = new { size = 1, limit = 1000, offset = 0 }, rows = new[]
+                { new { id, agent = new { meta = new { href = $"https://api.moysklad.ru/api/remap/1.2/entity/counterparty/{agent}", type = "counterparty" } } } } }))));
+        var error = await Assert.ThrowsAsync<EgressException>(() => gateway.GetPageAsync(Guid.NewGuid(), Guid.NewGuid(), "correlation", "salesreturn", [agent], 1000, 0, default));
+        Assert.Equal("SALESRETURN_POSITIONS_INCOMPLETE", error.Code);
+    }
+
+    [Fact]
     public async Task GetPageAsync_BuildsOneEncodedMultiAgentRequestAndUsesExistingDependencies()
     {
         var counterparties = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };

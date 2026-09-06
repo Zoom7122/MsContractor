@@ -66,7 +66,7 @@ public interface IMoySkladDocumentGateway
 
 }
 
-public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
+public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly HttpClient httpClient;
@@ -247,12 +247,16 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                         context, responseBody.HttpStatus, "MoySklad returned a document without agent metadata.",
                         responseBody.Body, stopwatch.Elapsed);
 
+                var rawJson = rawRows[index].GetRawText();
+                if (documentType == "salesreturn")
+                    rawJson = await CompleteSalesReturnPositionsAsync(accountId, requestedByUserId, correlationId,
+                        row.Id, rawJson, accessToken, cancellationToken);
                 rows.Add(new MoySkladDocumentPageRow(
                     row.Id,
                     row.Agent.Meta.Href,
                     row.Agent.Meta.Type,
                     IsCommissionReport(documentType) ? TryReadContractId(row.Contract) : null,
-                    rawRows[index].GetRawText()));
+                    rawJson));
             }
 
             return new MoySkladDocumentPage(

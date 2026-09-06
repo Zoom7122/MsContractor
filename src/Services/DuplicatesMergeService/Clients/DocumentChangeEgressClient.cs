@@ -5,6 +5,9 @@ namespace MsContractor.DuplicatesMergeService.Clients;
 
 public interface IDocumentChangeEgressClient
 {
+    Task<RecreateSalesReturnsResponse> RecreateSalesReturnsAsync(Guid accountId, RecreateSalesReturnsRequest request,
+        Guid mergeJobId, Guid operationId, Guid userId, Guid correlationId, CancellationToken cancellationToken);
+
     Task<MoySkladDocumentChangeCounterpartyResponse> ChangeCounterpartyAsync(
         Guid accountId,
         Guid mainCounterpartyId,
@@ -30,6 +33,11 @@ public sealed class DocumentChangeEgressClient(
     HttpClient httpClient,
     IConfiguration configuration) : IDocumentChangeEgressClient
 {
+    public Task<RecreateSalesReturnsResponse> RecreateSalesReturnsAsync(Guid accountId, RecreateSalesReturnsRequest request,
+        Guid mergeJobId, Guid operationId, Guid userId, Guid correlationId, CancellationToken cancellationToken) =>
+        SendAsync<RecreateSalesReturnsRequest, RecreateSalesReturnsResponse>(accountId, "salesreturn/recreate", request,
+            mergeJobId, operationId, userId, correlationId, cancellationToken);
+
     public async Task<MoySkladDocumentChangeCounterpartyResponse> ChangeCounterpartyAsync(
         Guid accountId,
         Guid mainCounterpartyId,
@@ -40,7 +48,7 @@ public sealed class DocumentChangeEgressClient(
         Guid correlationId,
         CancellationToken cancellationToken)
     {
-        return await SendAsync(
+        return await SendAsync<MoySkladDocumentChangeCounterpartyRequest, MoySkladDocumentChangeCounterpartyResponse>(
             accountId,
             "change-counterparty",
             new MoySkladDocumentChangeCounterpartyRequest(mainCounterpartyId, documents),
@@ -60,7 +68,7 @@ public sealed class DocumentChangeEgressClient(
         Guid userId,
         Guid correlationId,
         CancellationToken cancellationToken) =>
-        SendAsync(
+        SendAsync<MoySkladDocumentChangeAgentAndContractRequest, MoySkladDocumentChangeCounterpartyResponse>(
             accountId,
             "change-agent-and-contract",
             new MoySkladDocumentChangeAgentAndContractRequest(mainCounterpartyId, documents),
@@ -70,7 +78,7 @@ public sealed class DocumentChangeEgressClient(
             correlationId,
             cancellationToken);
 
-    private async Task<MoySkladDocumentChangeCounterpartyResponse> SendAsync<TRequest>(
+    private async Task<TResponse> SendAsync<TRequest, TResponse>(
         Guid accountId,
         string operation,
         TRequest payload,
@@ -78,7 +86,7 @@ public sealed class DocumentChangeEgressClient(
         Guid operationId,
         Guid userId,
         Guid correlationId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) where TResponse : class
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
@@ -122,12 +130,12 @@ public sealed class DocumentChangeEgressClient(
                 throw new MergeEgressException(
                     error?.Code ?? "EGRESS_UNAVAILABLE",
                     error?.Message ?? "MoySklad Egress Service returned an error.",
-                    (int)response.StatusCode);
+                    error?.Code == "SALESRETURN_OPERATION_BUSY" ? 503 : (int)response.StatusCode);
             }
 
             try
             {
-                return await response.Content.ReadFromJsonAsync<MoySkladDocumentChangeCounterpartyResponse>(cancellationToken)
+                return await response.Content.ReadFromJsonAsync<TResponse>(cancellationToken)
                     ?? throw new MergeEgressException(
                         "EGRESS_INVALID_RESPONSE",
                         "MoySklad Egress Service returned an empty document change response.",

@@ -1,6 +1,6 @@
 using System.Text.Json.Nodes;
 
-namespace MsContractor.MoySkladEgressService.Contracts;
+namespace MsContractor.Contracts.Internal;
 
 public sealed record RecreateSalesReturnsRequest(Guid MainCounterpartyId, IReadOnlyList<RecreateSalesReturnItem> Documents);
 public sealed record RecreateSalesReturnItem(Guid OldDocumentId, Guid DuplicateCounterpartyId,
@@ -37,4 +37,4 @@ public sealed class SalesReturnCopyData
 public sealed record RecreateSalesReturnsResponse(Guid OperationId, Guid MainCounterpartyId,
     IReadOnlyList<RecreateSalesReturnResult> Documents);
 public sealed record RecreateSalesReturnResult(Guid OldDocumentId, Guid? NewDocumentId,
-    string Stage, string Status, string? ErrorCode, string? Error, bool Retryable);
+    string Stage, string Status, string? ErrorCode, string? Error, bool Retryable, SalesReturnCopyData? Data = null);

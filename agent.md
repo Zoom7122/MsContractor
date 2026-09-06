@@ -98,7 +98,7 @@ Consumers use `EnableAutoCommit=false`. Design for duplicate delivery: check inb
 
 ## PostgreSQL Rules
 
-- `EgressDbContext` owns schema `egress`: `salesreturn_operations`, `salesreturn_claims`. Salesreturn recreation persists intent before remote writes and uses a stable syncId on creation retries. Its recovery worker uses scoped repositories.
+- `EgressDbContext` owns schema `egress`: `salesreturn_operations`, `salesreturn_claims`. Salesreturn recreation persists intent before remote writes and uses a stable syncId on creation retries. Its recovery worker uses scoped repositories. Merge invokes recreation after ordinary documents, persists the immutable request on its operation and atomically applies confirmed new document IDs; discovery supplies complete salesreturn positions.
 - `VendorDbContext` owns schema `vendor`: `installations`, `outbox_messages`.
 - `CatalogSyncDbContext` owns schema `catalog_sync`: `sync_runs`, `sync_watermarks`, `inbox_messages`, `counterparties`, `outbox_messages`, `merge_jobs`, `merge_operations`.
 - Egress, Vendor, Catalog Sync, and Duplicates Merge call `Database.MigrateAsync()` at startup. Migration files live under each owning DbContext's `Persistence/Migrations` directory. No repository-local `dotnet-ef` tool or documented migration-generation command exists; do not invent one. Verify/install an agreed matching EF tool before generating, and target the owning project/context explicitly.

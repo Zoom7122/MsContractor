@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using MsContractor.MoySkladEgressService.Contracts;
+using MsContractor.Contracts.Internal;
 using MsContractor.MoySkladEgressService.Gateways;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
@@ -141,7 +141,8 @@ public sealed class SalesReturnRecreationService(ISalesReturnOperationRepository
     { item.ErrorCode = exception.Code; item.Error = exception.SafeMessage; item.Retryable = exception.Retryable; }
     private static RecreateSalesReturnsResponse Result(SalesReturnOperation operation) => new(operation.OperationId, operation.MainCounterpartyId,
         operation.Items.Select(x => new RecreateSalesReturnResult(x.OldDocumentId, x.NewDocumentId, x.Stage,
-            x.Stage == "Completed" ? "Completed" : x.Pending ? "Pending" : "Failed", x.ErrorCode, x.Error, x.Pending)).ToArray());
+            x.Stage == "Completed" ? "Completed" : x.Pending ? "Pending" : "Failed", x.ErrorCode, x.Error, x.Pending, x.Stage == "Completed"
+                ? JsonSerializer.Deserialize<SalesReturnCopyData>(x.Payload, SalesReturnPayloadBuilder.JsonOptions) : null)).ToArray());
     private static JsonNode Canonical(JsonNode? node) => node switch
     {
         JsonObject obj => new JsonObject(obj.OrderBy(x => x.Key, StringComparer.Ordinal).Select(x =>

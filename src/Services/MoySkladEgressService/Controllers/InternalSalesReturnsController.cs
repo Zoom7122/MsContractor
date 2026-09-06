@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using MsContractor.BuildingBlocks.Security;
 using MsContractor.Contracts.Internal;
-using MsContractor.MoySkladEgressService.Contracts;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
 using MsContractor.MoySkladEgressService.Services;

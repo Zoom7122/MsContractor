@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using MsContractor.CatalogSyncService.Persistence;
 using MsContractor.CatalogSyncService.Models;
+using MsContractor.DuplicatesMergeService.Models;
 
 namespace MsContractor.DuplicatesMergeService.Repositories;
 
@@ -16,6 +17,8 @@ public interface IDocumentSnapshotRepository
     Task<IReadOnlyList<CounterpartyDocument>> GetForCounterpartiesAsync(Guid accountId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
     Task<IReadOnlyDictionary<Guid, Guid?>> GetCommissionsAsync(Guid accountId, IReadOnlyCollection<Guid> documentIds, CancellationToken cancellationToken);
     Task ReplaceAsync(Guid accountId, IReadOnlyCollection<Guid> counterpartyIds, IReadOnlyCollection<CounterpartyDocument> rows, IReadOnlyCollection<DocumentAdditionalCommission> commissions, IReadOnlyCollection<DocumentAdditionalData> additionalData, CancellationToken cancellationToken);
+    Task<IReadOnlyDictionary<Guid, string>> GetAdditionalDataAsync(Guid accountId, IReadOnlyCollection<Guid> documentIds, CancellationToken cancellationToken);
+    Task ApplyRecreatedAsync(Guid accountId, Guid mainId, IReadOnlyList<RecreatedDocumentSnapshot> documents, CancellationToken cancellationToken);
     Task SaveProgressAsync(Guid accountId, CancellationToken cancellationToken);
 }
 
@@ -49,6 +52,43 @@ public sealed class DocumentSnapshotRepository(CatalogSyncDbContext dbContext) :
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
+    public async Task<IReadOnlyDictionary<Guid, string>> GetAdditionalDataAsync(Guid accountId, IReadOnlyCollection<Guid> documentIds, CancellationToken cancellationToken)
+    {
+        await dbContext.SetTenantAsync(accountId, cancellationToken);
+        return await dbContext.DocumentAdditionalData.AsNoTracking().Where(x => documentIds.Contains(x.DocumentId) &&
+            dbContext.CounterpartyDocuments.Any(d => d.AccountId == accountId && d.DocumentType == "salesreturn" && d.DocumentId == x.DocumentId))
+            .ToDictionaryAsync(x => x.DocumentId, x => x.RawJson, cancellationToken);
+    }
+
+    public async Task ApplyRecreatedAsync(Guid accountId, Guid mainId, IReadOnlyList<RecreatedDocumentSnapshot> documents, CancellationToken cancellationToken)
+    {
+        await dbContext.SetTenantAsync(accountId, cancellationToken);
+        if (documents.Count == 0) return;
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        foreach (var document in documents)
+        {
+            var old = await dbContext.CounterpartyDocuments.SingleOrDefaultAsync(x => x.AccountId == accountId &&
+                x.DocumentType == "salesreturn" && x.DocumentId == document.OldId, cancellationToken);
+            var replacement = await dbContext.CounterpartyDocuments.SingleOrDefaultAsync(x => x.AccountId == accountId &&
+                x.DocumentType == "salesreturn" && x.DocumentId == document.NewId, cancellationToken);
+            if (replacement is not null)
+            {
+                if (old is not null || replacement.CounterpartyId != mainId)
+                    throw new InvalidOperationException("Recreated document conflicts with the local snapshot.");
+                continue; // A replay after committing a partial Egress response.
+            }
+            if (old is null || old.CounterpartyId != document.DuplicateId || document.NewId == document.OldId)
+                throw new InvalidOperationException("Source document does not match this account and duplicate.");
+            dbContext.CounterpartyDocuments.Remove(old);
+            await dbContext.SaveChangesAsync(cancellationToken); // cascades old additional data before new keys are inserted
+            dbContext.CounterpartyDocuments.Add(new CounterpartyDocument { AccountId = accountId,
+                CounterpartyId = mainId, DocumentType = "salesreturn", DocumentId = document.NewId, UpdatedAt = document.UpdatedAt });
+            dbContext.DocumentAdditionalData.Add(new DocumentAdditionalData { DocumentId = document.NewId, RawJson = document.RawJson });
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     public async Task SaveProgressAsync(Guid accountId, CancellationToken cancellationToken)
     {
         await dbContext.SetTenantAsync(accountId, cancellationToken);

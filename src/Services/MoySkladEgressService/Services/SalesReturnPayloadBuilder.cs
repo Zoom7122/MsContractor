@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
-using MsContractor.MoySkladEgressService.Contracts;
+using MsContractor.Contracts.Internal;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
 using MsContractor.MoySkladEgressService.Models.Options;
 

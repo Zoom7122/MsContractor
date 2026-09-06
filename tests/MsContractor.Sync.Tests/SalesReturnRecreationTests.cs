@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using MsContractor.MoySkladEgressService.Contracts;
+using MsContractor.Contracts.Internal;
 using MsContractor.MoySkladEgressService.Gateways;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;

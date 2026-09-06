@@ -183,7 +183,7 @@ public sealed partial class MergeProcessor(
         try
         {
             var rows = await documentSnapshots.GetForCounterpartiesAsync(job.AccountId, duplicateCounterpartyIds, cancellationToken);
-            if (rows.Count == 0)
+            if (rows.Count == 0 && operation.SalesReturnRequestJson is null)
             {
                 Complete(operation);
                 await repository.SaveProgressAsync(job.AccountId, cancellationToken);
@@ -219,7 +219,7 @@ public sealed partial class MergeProcessor(
                 }
             }
 
-            var ordinaryRows = rows.Where(item => !IsCommissionReport(item.DocumentType)).ToArray();
+            var ordinaryRows = rows.Where(item => !IsCommissionReport(item.DocumentType) && item.DocumentType != "salesreturn").ToArray();
             if (ordinaryRows.Length > 0)
             {
                 var documents = ordinaryRows
@@ -238,6 +238,8 @@ public sealed partial class MergeProcessor(
                 await ApplyChangedDocumentsAsync(ordinaryRows, response, job.MainCounterpartyId, cancellationToken);
                 ThrowIfDocumentChangeFailed(response);
             }
+
+            await ExecuteSalesReturnRecreationAsync(job, operation, rows.Where(x => x.DocumentType == "salesreturn").ToArray(), cancellationToken);
 
             Complete(operation);
             await repository.SaveProgressAsync(job.AccountId, cancellationToken);

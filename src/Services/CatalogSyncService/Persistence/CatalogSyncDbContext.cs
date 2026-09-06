@@ -120,6 +120,7 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
 
         modelBuilder.Entity<MergeOperation>(entity =>
         {
+            entity.Property(item => item.SalesReturnRequestJson).HasColumnType("jsonb");
             entity.ToTable("merge_operations");
             entity.HasKey(item => item.Id);
             entity.Property(item => item.OperationType).HasMaxLength(64).IsRequired();

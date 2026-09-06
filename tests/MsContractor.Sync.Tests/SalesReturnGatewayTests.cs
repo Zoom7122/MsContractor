@@ -124,7 +124,7 @@ public sealed class SalesReturnGatewayTests
         // Deserialize to preserve the original DTO while adding a demand reference.
         var data = JsonSerializer.SerializeToNode(item.Data, SalesReturnPayloadBuilder.JsonOptions)!.AsObject();
         data["demand"] = SalesReturnRecreationTests.Reference("demand", demandId);
-        item = item with { Data = data.Deserialize<MsContractor.MoySkladEgressService.Contracts.SalesReturnCopyData>(SalesReturnPayloadBuilder.JsonOptions)! };
+        item = item with { Data = data.Deserialize<MsContractor.Contracts.Internal.SalesReturnCopyData>(SalesReturnPayloadBuilder.JsonOptions)! };
         var gateway = Gateway(message =>
         {
             Assert.Equal(HttpMethod.Get, message.Method);

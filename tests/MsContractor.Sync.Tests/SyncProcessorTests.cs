@@ -1,8 +1,11 @@
+using MsContractor.CatalogSyncService.Repositories;
+using MsContractor.CatalogSyncService.Clients;
+using MsContractor.CatalogSyncService.Models;
+using MsContractor.CatalogSyncService.Persistence;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
-using MsContractor.CatalogSyncService.Repo;
 using MsContractor.CatalogSyncService.Services;
 using MsContractor.Contracts.Sync;
 
@@ -516,7 +519,7 @@ public sealed class SyncProcessorTests
         IMoySkladEgressClient egress,
         TimeProvider? timeProvider = null) =>
         new(
-            dbContext,
+            new SyncRepository(dbContext),
             egress,
             new MoySkladCounterpartyParser(),
             new CounterpartyNormalizer(),

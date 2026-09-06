@@ -204,6 +204,8 @@ services:
       <<: *service-env
       MoySklad__JsonApiBaseUrl: https://api.moysklad.ru/api/remap/1.2
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:

@@ -1,3 +1,5 @@
+using MsContractor.Gateway.Bff.Models.Exceptions;
+using MsContractor.Gateway.Bff.Clients;
 using Microsoft.AspNetCore.Mvc;
 using MsContractor.Contracts.Sync;
 using MsContractor.Gateway.Bff.Services;

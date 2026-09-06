@@ -1,18 +1,17 @@
+using MsContractor.Gateway.Bff.Repositories;
+using MsContractor.Gateway.Bff.Models;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using StackExchange.Redis;
 
 namespace MsContractor.Gateway.Bff.Services;
-
-public sealed record GatewaySession(Guid AccountId, Guid EmployeeId);
 
 public interface IGatewaySessionReader
 {
     Task<GatewaySession?> ReadAsync(string? token, CancellationToken cancellationToken);
 }
 
-public sealed class GatewaySessionReader(IConnectionMultiplexer redis) : IGatewaySessionReader
+public sealed class GatewaySessionReader(IGatewaySessionRepository repository) : IGatewaySessionReader
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -24,13 +23,13 @@ public sealed class GatewaySessionReader(IConnectionMultiplexer redis) : IGatewa
 
         var hash = Convert.ToHexStringLower(
             SHA256.HashData(Encoding.UTF8.GetBytes(token)));
-        var value = await redis.GetDatabase().StringGetAsync($"vendor:session:{hash}");
-        if (value.IsNullOrEmpty)
+        var value = await repository.ReadAsync(hash, cancellationToken);
+        if (string.IsNullOrEmpty(value))
             return null;
 
         try
         {
-            var session = JsonSerializer.Deserialize<GatewaySession>(value.ToString(), JsonOptions);
+            var session = JsonSerializer.Deserialize<GatewaySession>(value, JsonOptions);
             return session is null || session.AccountId == Guid.Empty || session.EmployeeId == Guid.Empty
                 ? null
                 : session;

@@ -1,6 +1,7 @@
+using MsContractor.CatalogSyncService.Models;
+using MsContractor.CatalogSyncService.Persistence;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using MsContractor.CatalogSyncService.Repo;
 
 namespace MsContractor.Sync.Tests;
 

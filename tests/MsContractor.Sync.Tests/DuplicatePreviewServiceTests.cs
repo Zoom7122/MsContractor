@@ -1,6 +1,8 @@
+using MsContractor.DuplicatesMergeService.Repositories;
+using MsContractor.CatalogSyncService.Models;
+using MsContractor.CatalogSyncService.Persistence;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using MsContractor.CatalogSyncService.Repo;
 using MsContractor.Contracts.Duplicates;
 using MsContractor.DuplicatesMergeService.Services;
 
@@ -32,7 +34,7 @@ public sealed class DuplicatePreviewServiceTests
         db.Counterparties.AddRange(a, b, c, archived, foreign);
         await db.SaveChangesAsync();
 
-        var result = await new DuplicatePreviewService(db).FindAsync(
+        var result = await new DuplicatePreviewService(new CounterpartyRepository(db)).FindAsync(
             account, [DuplicateMatchField.Name, DuplicateMatchField.Email], CancellationToken.None);
 
         Assert.Equal(2, result.Count);
@@ -62,7 +64,7 @@ public sealed class DuplicatePreviewServiceTests
         db.Counterparties.AddRange(a, b);
         await db.SaveChangesAsync();
 
-        var result = await new DuplicatePreviewService(db).FindAsync(
+        var result = await new DuplicatePreviewService(new CounterpartyRepository(db)).FindAsync(
             account, [DuplicateMatchField.Name, DuplicateMatchField.Email, DuplicateMatchField.Phone], CancellationToken.None);
 
         var group = Assert.Single(result);
@@ -81,14 +83,24 @@ public sealed class DuplicatePreviewServiceTests
 
     private static Counterparty Counterparty(Guid accountId, string name, string normalizedName, string? normalizedEmail, string? normalizedPhone, DateTimeOffset createdAt) => new()
     {
-        Id = Guid.NewGuid(), AccountId = accountId, Name = name, NormalizedName = normalizedName,
-        NormalizedEmail = normalizedEmail, NormalizedPhone = normalizedPhone, RawJson = "{}",
-        CreatedAt = createdAt, UpdatedAt = createdAt
+        Id = Guid.NewGuid(),
+        AccountId = accountId,
+        Name = name,
+        NormalizedName = normalizedName,
+        NormalizedEmail = normalizedEmail,
+        NormalizedPhone = normalizedPhone,
+        RawJson = "{}",
+        CreatedAt = createdAt,
+        UpdatedAt = createdAt
     };
 
     private static SyncRun SyncRun(Guid accountId) => new()
     {
-        Id = Guid.NewGuid(), MessageId = Guid.NewGuid(), AccountId = accountId,
-        RequestedByUserId = Guid.NewGuid(), CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        Id = Guid.NewGuid(),
+        MessageId = Guid.NewGuid(),
+        AccountId = accountId,
+        RequestedByUserId = Guid.NewGuid(),
+        CreatedAt = DateTimeOffset.UtcNow,
+        UpdatedAt = DateTimeOffset.UtcNow
     };
 }

@@ -1,8 +1,9 @@
+using MsContractor.VendorService.Clients;
+using MsContractor.VendorService.Models.Exceptions;
 using System.Net;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using MsContractor.VendorService.Services;
-using MsContractor.VendorService.Services.Exceptions;
 
 namespace MsContractor.VendorService.Tests;
 

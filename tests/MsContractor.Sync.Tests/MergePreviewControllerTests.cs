@@ -1,3 +1,5 @@
+using MsContractor.Gateway.Bff.Models;
+using MsContractor.Gateway.Bff.Clients;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;

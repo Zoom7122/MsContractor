@@ -1,9 +1,9 @@
+using MsContractor.CatalogSyncService.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Microsoft.EntityFrameworkCore.Metadata;
-using MsContractor.CatalogSyncService.Repo;
 
 namespace MsContractor.Sync.Tests;
 
@@ -49,7 +49,7 @@ public sealed class MigrationSnapshotDiagnosticTests
             .Options;
         using var dbContext = new CatalogSyncDbContext(options);
         var snapshotType = typeof(CatalogSyncDbContext).Assembly.GetType(
-            "MsContractor.CatalogSyncService.Repo.Migrations.CatalogSyncDbContextModelSnapshot")!;
+            "MsContractor.CatalogSyncService.Persistence.Migrations.CatalogSyncDbContextModelSnapshot")!;
         var snapshot = (ModelSnapshot)Activator.CreateInstance(snapshotType, nonPublic: true)!;
         var differ = dbContext.GetService<IMigrationsModelDiffer>();
         var modelRuntimeInitializer = dbContext.GetService<IModelRuntimeInitializer>();
@@ -70,4 +70,25 @@ public sealed class MigrationSnapshotDiagnosticTests
             $"CreateIndex: {index.Schema}.{index.Table} ({string.Join(", ", index.Columns)}) unique={index.IsUnique}",
         _ => $"{operation.GetType().Name}: {operation}"
     };
+    [Fact]
+    public void MigrationIds_ArePreserved()
+    {
+        using var context = new CatalogSyncDbContext(new DbContextOptionsBuilder<CatalogSyncDbContext>()
+            .UseNpgsql("Host=localhost;Database=test;Username=postgres;Password=postgres").Options);
+        string[] expected =
+        [
+            "20260730145227_InitialCatalogSync",
+            "20260805000100_AddIncrementalCounterpartySync",
+            "20260805000200_LinkCounterpartiesToSyncRunsAndRemoveMoySkladId",
+            "20260807000100_AddMergeJobs",
+            "20260821000100_EnableTenantRowLevelSecurity",
+            "20260821000200_AddCounterpartyDocuments",
+            "20260901000100_AddCounterpartyDocumentCounterpartyForeignKey",
+            "20260902000100_AddCounterpartyDocumentAdditionalData",
+            "20260904000100_AddSalesReturnAdditionalData",
+            "20260904000200_RenameDocumentAdditionalTables"
+        ];
+        Assert.Equal(expected, context.GetService<IMigrationsAssembly>().Migrations.Keys);
+    }
+
 }

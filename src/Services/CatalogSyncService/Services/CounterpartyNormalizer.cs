@@ -1,6 +1,5 @@
 using System.Text.RegularExpressions;
 using MsContractor.CatalogSyncService.Models;
-using MsContractor.CatalogSyncService.Repo;
 
 namespace MsContractor.CatalogSyncService.Services;
 

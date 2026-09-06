@@ -1,3 +1,4 @@
+using MsContractor.VendorService.Models.Options;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;

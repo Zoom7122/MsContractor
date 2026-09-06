@@ -1,7 +1,7 @@
+using MsContractor.VendorService.Models;
+using MsContractor.VendorService.Models.Exceptions;
 using MsContractor.VendorService.Contracts;
-using MsContractor.VendorService.Repo;
 using MsContractor.VendorService.Services;
-using MsContractor.VendorService.Services.Exceptions;
 
 namespace MsContractor.VendorService.Tests;
 

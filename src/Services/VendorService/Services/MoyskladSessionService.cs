@@ -1,13 +1,12 @@
+using MsContractor.VendorService.Models;
+using MsContractor.VendorService.Clients;
+using MsContractor.VendorService.Models.Exceptions;
+using MsContractor.VendorService.Models.Options;
+using MsContractor.VendorService.Repositories;
 using Microsoft.Extensions.Options;
 using MsContractor.VendorService.Contracts;
-using MsContractor.VendorService.Repo;
-using MsContractor.VendorService.Services.Exceptions;
 
 namespace MsContractor.VendorService.Services;
-
-public sealed record CreatedMoyskladSession(
-    string Token,
-    MoyskladSessionResponse Response);
 
 public sealed class MoyskladSessionService(
     IMoyskladContextClient contextClient,

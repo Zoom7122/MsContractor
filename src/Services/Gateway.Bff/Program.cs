@@ -1,3 +1,5 @@
+using MsContractor.Gateway.Bff.Repositories;
+using MsContractor.Gateway.Bff.Clients;
 using MsContractor.BuildingBlocks.Health;
 using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
@@ -48,6 +50,8 @@ builder.Services.AddHttpClient<ICatalogSyncClient, CatalogSyncClient>(client =>
 builder.Services
     .AddReverseProxy()
     .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
+
+builder.Services.AddSingleton<IGatewaySessionRepository, GatewaySessionRepository>();
 
 var app = builder.Build();
 

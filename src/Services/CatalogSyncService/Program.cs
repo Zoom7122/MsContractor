@@ -1,9 +1,14 @@
+using MsContractor.CatalogSyncService.Repositories;
+using MsContractor.CatalogSyncService.Clients;
+using MsContractor.CatalogSyncService.Consumers;
+using MsContractor.CatalogSyncService.HealthChecks;
+using MsContractor.CatalogSyncService.Messaging;
+using MsContractor.CatalogSyncService.Persistence;
 using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
 using MsContractor.BuildingBlocks.Health;
 using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
-using MsContractor.CatalogSyncService.Repo;
 using MsContractor.CatalogSyncService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -44,6 +49,10 @@ builder.Services.AddHostedService<SyncRequestedConsumer>();
 builder.Services.AddHostedService<SyncOutboxPublisher>();
 builder.Services.AddHealthChecks()
     .AddCheck<CatalogReadinessHealthCheck>("catalog-dependencies", tags: ["ready"]);
+
+builder.Services.AddScoped<ISyncRequestService, SyncRequestService>();
+
+builder.Services.AddCatalogRepositories();
 
 var app = builder.Build();
 app.MapMsContractorOpenApi();

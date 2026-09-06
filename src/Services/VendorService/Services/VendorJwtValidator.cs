@@ -1,12 +1,12 @@
+using MsContractor.VendorService.Models;
+using MsContractor.VendorService.Models.Exceptions;
+using MsContractor.VendorService.Models.Options;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
-using MsContractor.VendorService.Services.Exceptions;
 
 namespace MsContractor.VendorService.Services;
-
-public sealed record VendorJwt(string Jti, DateTimeOffset ExpiresAt);
 
 public sealed class VendorJwtValidator(IOptions<VendorOptions> options, TimeProvider timeProvider)
 {

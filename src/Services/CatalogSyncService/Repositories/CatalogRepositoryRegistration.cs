@@ -1,0 +1,11 @@
+namespace MsContractor.CatalogSyncService.Repositories;
+
+public static class CatalogRepositoryRegistration
+{
+    public static IServiceCollection AddCatalogRepositories(this IServiceCollection services)
+    {
+        services.AddScoped<ISyncRepository, SyncRepository>();
+        services.AddScoped<ISyncOutboxRepository, SyncOutboxRepository>();
+        return services;
+    }
+}

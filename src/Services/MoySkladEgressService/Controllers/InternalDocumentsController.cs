@@ -1,3 +1,4 @@
+using MsContractor.MoySkladEgressService.Models.Exceptions;
 using Microsoft.AspNetCore.Mvc;
 using MsContractor.BuildingBlocks.Security;
 using MsContractor.Contracts.Internal;

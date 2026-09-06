@@ -1,6 +1,6 @@
+using MsContractor.DuplicatesMergeService.Models;
+using MsContractor.DuplicatesMergeService.Repositories;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
-using MsContractor.CatalogSyncService.Repo;
 using MsContractor.Contracts.Duplicates;
 
 namespace MsContractor.DuplicatesMergeService.Services;
@@ -13,20 +13,15 @@ public interface IDuplicatePreviewService
         CancellationToken cancellationToken);
 }
 
-public sealed class DuplicatePreviewService(CatalogSyncDbContext dbContext) : IDuplicatePreviewService
+public sealed class DuplicatePreviewService(ICounterpartyRepository repository) : IDuplicatePreviewService
 {
     public async Task<IReadOnlyList<DuplicateGroupDto>> FindAsync(
         Guid accountId,
         IReadOnlyCollection<DuplicateMatchField> fields,
         CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
 
-        var candidates = await dbContext.Counterparties
-            .AsNoTracking()
-            .Where(item => item.AccountId == accountId && !item.Archived)
-            .Select(item => new Candidate(item.Id, item.NormalizedName, item.NormalizedEmail, item.NormalizedPhone))
-            .ToListAsync(cancellationToken);
+        var candidates = await repository.GetCandidatesAsync(accountId, cancellationToken);
 
         var groups = new Dictionary<string, DuplicateGroupCandidate>();
         AddGroups(DuplicateMatchField.Name, fields.Contains(DuplicateMatchField.Name), candidates, item => item.NormalizedName, groups);
@@ -36,11 +31,7 @@ public sealed class DuplicatePreviewService(CatalogSyncDbContext dbContext) : ID
             return [];
 
         var ids = groups.Values.SelectMany(group => group.Ids).Distinct().ToArray();
-        var displayItems = await dbContext.Counterparties
-            .AsNoTracking()
-            .Where(item => item.AccountId == accountId && ids.Contains(item.Id))
-            .Select(item => new DisplayItem(item.Id, item.Name, item.Email, item.Phone, item.Description, item.RawJson, item.CreatedAt, item.UpdatedAt))
-            .ToListAsync(cancellationToken);
+        var displayItems = await repository.GetDisplayItemsAsync(accountId, ids, cancellationToken);
         var byId = displayItems.ToDictionary(item => item.Id, ToDto);
 
         return groups.Values
@@ -57,8 +48,8 @@ public sealed class DuplicatePreviewService(CatalogSyncDbContext dbContext) : ID
     private static void AddGroups(
         DuplicateMatchField field,
         bool enabled,
-        IEnumerable<Candidate> candidates,
-        Func<Candidate, string?> valueSelector,
+        IEnumerable<DuplicateCandidate> candidates,
+        Func<DuplicateCandidate, string?> valueSelector,
         IDictionary<string, DuplicateGroupCandidate> groups)
     {
         if (!enabled)
@@ -79,7 +70,7 @@ public sealed class DuplicatePreviewService(CatalogSyncDbContext dbContext) : ID
 
     private static string GroupKey(IEnumerable<Guid> ids) => string.Join(':', ids.Select(id => id.ToString("N")));
 
-    private static DuplicateCounterpartyDto ToDto(DisplayItem item) => new(
+    private static DuplicateCounterpartyDto ToDto(CounterpartyDisplayItem item) => new(
         item.Id, item.Name, item.Email, item.Phone, item.Description, ParseRawJson(item.RawJson), item.CreatedAt, item.UpdatedAt);
 
     private static JsonElement ParseRawJson(string rawJson)
@@ -96,7 +87,5 @@ public sealed class DuplicatePreviewService(CatalogSyncDbContext dbContext) : ID
         }
     }
 
-    private sealed record Candidate(Guid Id, string? NormalizedName, string? NormalizedEmail, string? NormalizedPhone);
     private sealed record DuplicateGroupCandidate(DuplicateMatchField Field, string MatchValue, Guid[] Ids);
-    private sealed record DisplayItem(Guid Id, string Name, string? Email, string? Phone, string? Description, string RawJson, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
 }

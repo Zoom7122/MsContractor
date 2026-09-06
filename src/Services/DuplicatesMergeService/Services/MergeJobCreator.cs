@@ -1,24 +1,11 @@
+using MsContractor.DuplicatesMergeService.Repositories;
+using MsContractor.DuplicatesMergeService.Models.Exceptions;
+using MsContractor.DuplicatesMergeService.Models;
+using MsContractor.CatalogSyncService.Models;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
-using MsContractor.CatalogSyncService.Repo;
 using MsContractor.Contracts.Merge;
 
 namespace MsContractor.DuplicatesMergeService.Services;
-
-public enum MergeRequestError
-{
-    Invalid,
-    NotFound,
-    MainArchived
-}
-
-public sealed class MergeRequestException(MergeRequestError error, string code, string safeMessage)
-    : Exception(safeMessage)
-{
-    public MergeRequestError Error { get; } = error;
-    public string Code { get; } = code;
-    public string SafeMessage { get; } = safeMessage;
-}
 
 public interface IMergeJobCreator
 {
@@ -31,11 +18,22 @@ public interface IMergeJobCreator
 }
 
 public sealed class MergeJobCreator(
-    CatalogSyncDbContext dbContext,
+    IMergeRepository repository,
+    ICounterpartyRepository counterpartyRepository,
     TimeProvider timeProvider) : IMergeJobCreator
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+/// <summary>
+/// Создание Создает задачу MERGE в бд чтобы worker потом ее взял
+/// </summary>
+/// <param name="accountId"></param>
+/// <param name="requestedByUserId"></param>
+/// <param name="correlationId"></param>
+/// <param name="request"></param>
+/// <param name="cancellationToken"></param>
+/// <returns></returns>
+/// <exception cref="MergeRequestException"></exception>
     public async Task<MergeJobAccepted> CreateAsync(
         Guid accountId,
         Guid requestedByUserId,
@@ -44,13 +42,8 @@ public sealed class MergeJobCreator(
         CancellationToken cancellationToken)
     {
         ValidateShape(request);
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
         var ids = request.DuplicateCounterpartyIds.Append(request.MainCounterpartyId).ToArray();
-        var counterparties = await dbContext.Counterparties
-            .AsNoTracking()
-            .Where(item => item.AccountId == accountId && ids.Contains(item.Id))
-            .Select(item => new { item.Id, item.Archived })
-            .ToListAsync(cancellationToken);
+        var counterparties = await counterpartyRepository.GetAvailabilityAsync(accountId, ids, cancellationToken);
         if (counterparties.Count != ids.Length)
         {
             throw new MergeRequestException(
@@ -108,9 +101,7 @@ public sealed class MergeJobCreator(
                 now));
         }
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        dbContext.MergeJobs.Add(job);
-        dbContext.OutboxMessages.Add(new SyncOutboxMessage
+        var outbox = new SyncOutboxMessage
         {
             Id = messageId,
             Topic = MergeTopics.Commands,
@@ -118,9 +109,8 @@ public sealed class MergeJobCreator(
             EventType = nameof(MergeRequested),
             Payload = JsonSerializer.Serialize(command, JsonOptions),
             CreatedAt = now
-        });
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        };
+        await repository.CreateAsync(accountId, job, outbox, cancellationToken);
         return new MergeJobAccepted(jobId, MergeJobStatuses.Pending);
     }
 
@@ -130,18 +120,18 @@ public sealed class MergeJobCreator(
         string type,
         Guid counterpartyId,
         DateTimeOffset now) => new()
-    {
-        Id = Guid.NewGuid(),
-        MergeJob = job,
-        MergeJobId = job.Id,
-        AccountId = job.AccountId,
-        Sequence = sequence,
-        OperationType = type,
-        CounterpartyId = counterpartyId,
-        Status = MergeOperationStatuses.Pending,
-        CreatedAt = now,
-        UpdatedAt = now
-    };
+        {
+            Id = Guid.NewGuid(),
+            MergeJob = job,
+            MergeJobId = job.Id,
+            AccountId = job.AccountId,
+            Sequence = sequence,
+            OperationType = type,
+            CounterpartyId = counterpartyId,
+            Status = MergeOperationStatuses.Pending,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
 
     private static void ValidateShape(CreateMergeJobRequest request)
     {

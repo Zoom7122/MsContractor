@@ -1,4 +1,5 @@
-using MsContractor.CatalogSyncService.Repo;
+using MsContractor.DuplicatesMergeService.Models.Exceptions;
+using MsContractor.CatalogSyncService.Models;
 using MsContractor.Contracts.Merge;
 
 namespace MsContractor.DuplicatesMergeService.Services;
@@ -32,10 +33,10 @@ public sealed partial class MergeProcessor
             EnsureResponse(operation.CounterpartyId, parsed, archivedRequired: false);
 
             var local = await FindLocalAsync(job.AccountId, operation.CounterpartyId, cancellationToken);
-            
+
             normalizer.Apply(local, parsed, timeProvider.GetUtcNow());
             Complete(operation);
-            await dbContext.SaveChangesAsync(cancellationToken);
+            await repository.SaveProgressAsync(job.AccountId, cancellationToken);
             return true;
         }
         catch (Exception exception) when (IsOperationFailure(exception))

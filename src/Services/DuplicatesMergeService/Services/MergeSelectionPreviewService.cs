@@ -1,24 +1,9 @@
-using Microsoft.EntityFrameworkCore;
-using MsContractor.CatalogSyncService.Repo;
+using MsContractor.DuplicatesMergeService.Repositories;
+using MsContractor.DuplicatesMergeService.Models.Exceptions;
+using MsContractor.DuplicatesMergeService.Models;
 using MsContractor.Contracts.Merge;
 
 namespace MsContractor.DuplicatesMergeService.Services;
-
-public enum MergeSelectionPreviewError
-{
-    Invalid,
-    NotFound
-}
-
-public sealed class MergeSelectionPreviewException(
-    MergeSelectionPreviewError error,
-    string code,
-    string safeMessage) : Exception(safeMessage)
-{
-    public MergeSelectionPreviewError Error { get; } = error;
-    public string Code { get; } = code;
-    public string SafeMessage { get; } = safeMessage;
-}
 
 public interface IMergeSelectionPreviewService
 {
@@ -28,7 +13,7 @@ public interface IMergeSelectionPreviewService
         CancellationToken cancellationToken);
 }
 
-public sealed class MergeSelectionPreviewService(CatalogSyncDbContext dbContext)
+public sealed class MergeSelectionPreviewService(ICounterpartyRepository repository)
     : IMergeSelectionPreviewService
 {
     public async Task<MergeSelectionPreviewResponse> GetAsync(
@@ -37,21 +22,9 @@ public sealed class MergeSelectionPreviewService(CatalogSyncDbContext dbContext)
         CancellationToken cancellationToken)
     {
         Validate(request);
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
 
         var ids = request.CounterpartyIds.ToArray();
-        var counterparties = await dbContext.Counterparties
-            .AsNoTracking()
-            .Where(item => item.AccountId == accountId && ids.Contains(item.Id))
-            .Select(item => new MergeSelectionCounterpartyDto(
-                item.Id,
-                item.Name,
-                item.Description,
-                item.Email,
-                item.Phone,
-                item.Archived,
-                item.UpdatedAt))
-            .ToListAsync(cancellationToken);
+        var counterparties = await repository.GetSelectionAsync(accountId, ids, cancellationToken);
 
         if (counterparties.Count != ids.Length)
         {
@@ -61,7 +34,8 @@ public sealed class MergeSelectionPreviewService(CatalogSyncDbContext dbContext)
                 "One or more counterparties were not found.");
         }
 
-        var byId = counterparties.ToDictionary(item => item.Id);
+        var byId = counterparties.ToDictionary(item => item.Id, item => new MergeSelectionCounterpartyDto(
+            item.Id, item.Name, item.Description, item.Email, item.Phone, item.Archived, item.UpdatedAt));
         return new MergeSelectionPreviewResponse(ids.Select(id => byId[id]).ToArray());
     }
 

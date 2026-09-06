@@ -1,10 +1,14 @@
+using MsContractor.VendorService.Clients;
+using MsContractor.VendorService.HealthChecks;
+using MsContractor.VendorService.Models.Options;
+using MsContractor.VendorService.Persistence;
+using MsContractor.VendorService.Repositories;
 using System.Net;
 using Microsoft.EntityFrameworkCore;
 using MsContractor.BuildingBlocks.Health;
 using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
 using MsContractor.VendorService.Middleware;
-using MsContractor.VendorService.Repo;
 using MsContractor.VendorService.Services;
 using StackExchange.Redis;
 
@@ -69,6 +73,9 @@ builder.Services.AddScoped<VendorInstallationService>();
 builder.Services.AddScoped<MoyskladSessionService>();
 builder.Services.AddHealthChecks()
     .AddCheck<VendorReadinessHealthCheck>("vendor-dependencies", tags: ["ready"]);
+
+builder.Services.AddSingleton<IVendorSessionRepository, VendorSessionRepository>();
+builder.Services.AddSingleton<IVendorJwtReplayRepository, VendorJwtReplayRepository>();
 
 var app = builder.Build();
 var startupLogger = app.Services.GetRequiredService<ILoggerFactory>()

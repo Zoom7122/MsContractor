@@ -1,8 +1,12 @@
+using MsContractor.DuplicatesMergeService.Repositories;
+using MsContractor.CatalogSyncService.Persistence;
+using MsContractor.DuplicatesMergeService.Clients;
+using MsContractor.DuplicatesMergeService.Consumers;
+using MsContractor.DuplicatesMergeService.Messaging;
 using MsContractor.BuildingBlocks.Health;
 using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
 using Microsoft.EntityFrameworkCore;
-using MsContractor.CatalogSyncService.Repo;
 using MsContractor.DuplicatesMergeService.Services;
 using Confluent.Kafka;
 using MsContractor.CatalogSyncService.Services;
@@ -54,6 +58,10 @@ builder.Services.AddHostedService<MergeOutboxPublisher>();
 builder.Services.AddHostedService<MergeRequestedConsumer>();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddMsContractorOpenApi();
+
+builder.Services.AddSingleton<IMergeDeadLetterPublisher, MergeDeadLetterPublisher>();
+
+builder.Services.AddMergeRepositories();
 
 var app = builder.Build();
 

@@ -1,7 +1,7 @@
+using MsContractor.CatalogSyncService.Clients;
 using System.Net;
 using System.Text;
 using Microsoft.Extensions.Configuration;
-using MsContractor.CatalogSyncService.Services;
 using MsContractor.Contracts.Internal;
 
 namespace MsContractor.Sync.Tests;

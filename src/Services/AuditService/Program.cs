@@ -1,4 +1,4 @@
-using MsContractor.AuditService;
+using MsContractor.AuditService.Services;
 using MsContractor.BuildingBlocks.Health;
 using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;

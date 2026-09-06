@@ -1,3 +1,9 @@
+using MsContractor.DuplicatesMergeService.Repositories;
+using MsContractor.DuplicatesMergeService.Models.Exceptions;
+using MsContractor.DuplicatesMergeService.Models;
+using MsContractor.CatalogSyncService.Models;
+using MsContractor.CatalogSyncService.Persistence;
+using MsContractor.DuplicatesMergeService.Clients;
 using System.Text.Json;
 using System.Net;
 using System.Net.Http.Json;
@@ -5,7 +11,6 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
-using MsContractor.CatalogSyncService.Repo;
 using MsContractor.CatalogSyncService.Services;
 using MsContractor.Contracts.Merge;
 using MsContractor.Contracts.Internal;
@@ -378,7 +383,7 @@ public sealed class MergeProcessorTests
         public Counterparty Main { get; private set; } = null!;
         public List<Counterparty> Duplicates { get; } = [];
         public MergeProcessor Processor => new(
-            Db, Egress, Documents, DocumentChanges, new MoySkladCounterpartyParser(), new CounterpartyNormalizer(),
+            new MergeRepository(Db), new CounterpartyRepository(Db), new DocumentSnapshotRepository(Db), Egress, Documents, DocumentChanges, new MoySkladCounterpartyParser(), new CounterpartyNormalizer(),
             TimeProvider.System,
             new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -420,7 +425,7 @@ public sealed class MergeProcessorTests
 
         public async Task<MergeRequested> CreateJobAsync()
         {
-            var creator = new MergeJobCreator(Db, TimeProvider.System);
+            var creator = new MergeJobCreator(new MergeRepository(Db), new CounterpartyRepository(Db), TimeProvider.System);
             await creator.CreateAsync(
                 AccountId,
                 Guid.NewGuid(),
@@ -541,17 +546,28 @@ public sealed class MergeProcessorTests
 
     private static SyncRun NewRun(Guid accountId) => new()
     {
-        Id = Guid.NewGuid(), MessageId = Guid.NewGuid(), AccountId = accountId,
-        RequestedByUserId = Guid.NewGuid(), RequestedMode = "full", ExecutionMode = "full",
-        Status = "completed", CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        Id = Guid.NewGuid(),
+        MessageId = Guid.NewGuid(),
+        AccountId = accountId,
+        RequestedByUserId = Guid.NewGuid(),
+        RequestedMode = "full",
+        ExecutionMode = "full",
+        Status = "completed",
+        CreatedAt = DateTimeOffset.UtcNow,
+        UpdatedAt = DateTimeOffset.UtcNow
     };
 
     private static Counterparty NewCounterparty(Guid accountId, SyncRun run, string name) => new()
     {
-        Id = Guid.NewGuid(), AccountId = accountId, Name = name,
-        NormalizedName = name.ToLowerInvariant(), RawJson = "{}",
-        LastSyncRun = run, LastSyncRunId = run.Id,
-        CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        Id = Guid.NewGuid(),
+        AccountId = accountId,
+        Name = name,
+        NormalizedName = name.ToLowerInvariant(),
+        RawJson = "{}",
+        LastSyncRun = run,
+        LastSyncRunId = run.Id,
+        CreatedAt = DateTimeOffset.UtcNow,
+        UpdatedAt = DateTimeOffset.UtcNow
     };
 }
 
@@ -581,7 +597,8 @@ public sealed class DocumentChangeEgressClientTests
                         mainId, 1, 1, 0, 0,
                         [new MoySkladDocumentChangeItem(document.DocumentType, document.DocumentId)], [], []))
                 };
-            })) { BaseAddress = new Uri("http://egress/") },
+            }))
+            { BaseAddress = new Uri("http://egress/") },
             new ConfigurationBuilder().AddInMemoryCollection(
                 new Dictionary<string, string?> { ["InternalApi:Key"] = "key" }).Build());
 

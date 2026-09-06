@@ -1,0 +1,11 @@
+namespace MsContractor.CatalogSyncService.Models;
+
+public sealed class CounterpartyDocument
+{
+    public Guid AccountId { get; set; }
+    public Guid CounterpartyId { get; set; }
+    public string DocumentType { get; set; } = null!;
+    public Guid DocumentId { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public Counterparty Counterparty { get; set; } = null!;
+}

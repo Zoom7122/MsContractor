@@ -1,7 +1,8 @@
+using MsContractor.VendorService.Models;
+using MsContractor.VendorService.Models.Exceptions;
 using Microsoft.AspNetCore.Mvc;
 using MsContractor.VendorService.Contracts;
 using MsContractor.VendorService.Services;
-using MsContractor.VendorService.Services.Exceptions;
 
 namespace MsContractor.VendorService.Controllers;
 

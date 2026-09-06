@@ -1,3 +1,7 @@
+using MsContractor.MoySkladEgressService.Models.Options;
+using MsContractor.MoySkladEgressService.Models;
+using MsContractor.MoySkladEgressService.Gateways;
+using MsContractor.MoySkladEgressService.Models.Exceptions;
 using MsContractor.Contracts.Internal;
 
 namespace MsContractor.MoySkladEgressService.Services;
@@ -52,6 +56,7 @@ public sealed class MoySkladDocumentDiscoveryService(
                     cancellationToken);
                 pagesCount++;
 
+                //Количество документов
                 expectedSize ??= page.Size;
                 ValidatePage(page, expectedSize.Value, offset);
 

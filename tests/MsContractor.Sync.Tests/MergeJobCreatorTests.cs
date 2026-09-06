@@ -1,7 +1,11 @@
+using MsContractor.DuplicatesMergeService.Repositories;
+using MsContractor.DuplicatesMergeService.Models.Exceptions;
+using MsContractor.DuplicatesMergeService.Models;
+using MsContractor.CatalogSyncService.Models;
+using MsContractor.CatalogSyncService.Persistence;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using MsContractor.CatalogSyncService.Repo;
 using MsContractor.Contracts.Merge;
 using MsContractor.DuplicatesMergeService.Services;
 
@@ -97,7 +101,7 @@ public sealed class MergeJobCreatorTests
         public Guid AccountId { get; } = Guid.NewGuid();
         public Counterparty Main { get; private set; } = null!;
         public Counterparty Duplicate { get; private set; } = null!;
-        public MergeJobCreator Creator => new(Db, TimeProvider.System);
+        public MergeJobCreator Creator => new(new MergeRepository(Db), new CounterpartyRepository(Db), TimeProvider.System);
 
         public static async Task<Fixture> CreateAsync()
         {
@@ -129,16 +133,27 @@ public sealed class MergeJobCreatorTests
 
     private static SyncRun NewRun(Guid accountId) => new()
     {
-        Id = Guid.NewGuid(), MessageId = Guid.NewGuid(), AccountId = accountId,
-        RequestedByUserId = Guid.NewGuid(), RequestedMode = "full", ExecutionMode = "full",
-        Status = "completed", CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        Id = Guid.NewGuid(),
+        MessageId = Guid.NewGuid(),
+        AccountId = accountId,
+        RequestedByUserId = Guid.NewGuid(),
+        RequestedMode = "full",
+        ExecutionMode = "full",
+        Status = "completed",
+        CreatedAt = DateTimeOffset.UtcNow,
+        UpdatedAt = DateTimeOffset.UtcNow
     };
 
     private static Counterparty NewCounterparty(Guid accountId, SyncRun run, string name) => new()
     {
-        Id = Guid.NewGuid(), AccountId = accountId, Name = name,
-        NormalizedName = name.ToLowerInvariant(), RawJson = "{}",
-        LastSyncRun = run, LastSyncRunId = run.Id,
-        CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        Id = Guid.NewGuid(),
+        AccountId = accountId,
+        Name = name,
+        NormalizedName = name.ToLowerInvariant(),
+        RawJson = "{}",
+        LastSyncRun = run,
+        LastSyncRunId = run.Id,
+        CreatedAt = DateTimeOffset.UtcNow,
+        UpdatedAt = DateTimeOffset.UtcNow
     };
 }

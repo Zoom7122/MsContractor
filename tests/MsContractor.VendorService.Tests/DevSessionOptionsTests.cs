@@ -1,4 +1,4 @@
-using MsContractor.VendorService.Services;
+using MsContractor.VendorService.Models.Options;
 
 namespace MsContractor.VendorService.Tests;
 

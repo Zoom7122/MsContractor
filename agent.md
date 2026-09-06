@@ -10,7 +10,7 @@ The solution contains seven services, two shared libraries, and two xUnit test p
 - `src/Shared/MsContractor.Contracts` for shared HTTP/Kafka DTOs and `MsContractor.BuildingBlocks` for cross-cutting infrastructure;
 - `tests/MsContractor.Sync.Tests` and `tests/MsContractor.VendorService.Tests`.
 
-Read the implementation, contracts, tests, configuration, and current diff before changing anything. The root `README.md` currently lists stale Make targets; the commands in this file are based on the actual `Makefile`.
+Read the implementation, contracts, tests, configuration, and current diff before changing anything. The root `README.md` describes the backend layers and development commands; verify commands against the actual `Makefile`.
 
 ## Architecture
 
@@ -27,7 +27,7 @@ Catalog Sync / Duplicates Merge <-> Kafka
 Catalog Sync / Duplicates Merge -> PostgreSQL catalog_sync schema
 Vendor -> PostgreSQL vendor schema + Redis sessions/replay protection
 Gateway -> Redis session reads
-Egress -> Redis dependency; current rate-limit hook is observation-only
+Egress -> PostgreSQL egress operation journal + Redis dependency; current rate-limit hook is observation-only
 ```
 
 Public requests enter through Gateway. Internal HTTP endpoints require `X-Internal-Api-Key` and explicit trusted context headers. Async state belongs in PostgreSQL; Kafka carries commands/events, not authoritative operation state.
@@ -46,6 +46,14 @@ Public requests enter through Gateway. Internal HTTP endpoints require `X-Intern
 | `frontend-Iframe` | Vue iframe UI; calls `/api/*` with session cookies through Gateway. |
 
 `DuplicatesMergeService` currently references `CatalogSyncService` and uses its `CatalogSyncDbContext`/`catalog_sync` schema. Treat this as an explicit current coupling, not permission for new services to read another service's private persistence.
+
+## Backend Layers
+
+Use only populated layers: `Controllers`, `Consumers`, `Services`, `Repositories`, `Persistence`, `Clients`, `Gateways`, `Messaging`, `Contracts`, `Models`, `Middleware`, `HealthChecks`. Namespaces follow directories. Options live in `Models/Options`; exceptions shared across layers live in `Models/Exceptions`. Interfaces stay next to their layer implementations.
+
+Business services, controllers, consumers and publishers must not use EF or DbContext directly. Repositories own materialized queries and atomic persistence methods; EF transactions do not escape them. Infrastructure health checks and startup may access dependencies directly. Redis I/O belongs in repositories, while session/JWT rules stay in services. Consumers own offsets and retries; publishers and DLQ publication belong in Messaging.
+
+Catalog and Merge repository registrations are scoped and use the same CatalogSyncDbContext within an operation. Merge still references CatalogSync for its persistence model. Preserve the full-sync cleanup boundary, incremental read/write transaction, job/operations/outbox atomicity and intermediate merge save points. The incremental repository accepts the service's apply-row function to keep business rules outside persistence without moving reads out of the transaction.
 
 ## Critical Architecture Rules
 
@@ -90,9 +98,10 @@ Consumers use `EnableAutoCommit=false`. Design for duplicate delivery: check inb
 
 ## PostgreSQL Rules
 
+- `EgressDbContext` owns schema `egress`: `salesreturn_operations`, `salesreturn_claims`. Salesreturn recreation persists intent before remote writes and uses a stable syncId on creation retries. Its recovery worker uses scoped repositories.
 - `VendorDbContext` owns schema `vendor`: `installations`, `outbox_messages`.
 - `CatalogSyncDbContext` owns schema `catalog_sync`: `sync_runs`, `sync_watermarks`, `inbox_messages`, `counterparties`, `outbox_messages`, `merge_jobs`, `merge_operations`.
-- Vendor, Catalog Sync, and Duplicates Merge call `Database.MigrateAsync()` at startup. Migration files live under each owning DbContext's `Repo/Migrations` directory. No repository-local `dotnet-ef` tool or documented migration-generation command exists; do not invent one. Verify/install an agreed matching EF tool before generating, and target the owning project/context explicitly.
+- Egress, Vendor, Catalog Sync, and Duplicates Merge call `Database.MigrateAsync()` at startup. Migration files live under each owning DbContext's `Persistence/Migrations` directory. No repository-local `dotnet-ef` tool or documented migration-generation command exists; do not invent one. Verify/install an agreed matching EF tool before generating, and target the owning project/context explicitly.
 - Include `account_id` in tenant rows, filters, indexes, alternate/unique keys, and relationships as required. Review query plans/indexes for new access paths.
 - Use transactions when job/operation/outbox/inbox state must change atomically. Never edit migration history or another service's schema by hand.
 - Do not introduce cross-service database reads without an explicit architectural decision. The existing Merge-to-Catalog context reference is a known exception, not a pattern to expand.
@@ -202,7 +211,7 @@ After the dev stack is running:
 make health
 ```
 
-The script checks Gateway and published services on `.env.dev` ports, Vendor inside its container, PostgreSQL, Redis, Kafka, and Dozzle. Vendor readiness checks PostgreSQL+Redis; Catalog checks PostgreSQL+Kafka; Egress checks Redis. Other services currently expose only the shared self check, so their readiness does not prove undeclared dependencies.
+The script checks Gateway and published services on `.env.dev` ports, Vendor inside its container, PostgreSQL, Redis, Kafka, and Dozzle. Vendor readiness checks PostgreSQL+Redis; Catalog checks PostgreSQL+Kafka; Egress checks PostgreSQL (including pending migrations) + Redis. Other services currently expose only the shared self check, so their readiness does not prove undeclared dependencies.
 
 ## Docker
 

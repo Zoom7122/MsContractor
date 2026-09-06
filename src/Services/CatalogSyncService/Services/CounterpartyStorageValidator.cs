@@ -1,4 +1,4 @@
-using MsContractor.CatalogSyncService.Repo;
+using MsContractor.CatalogSyncService.Models;
 
 namespace MsContractor.CatalogSyncService.Services;
 

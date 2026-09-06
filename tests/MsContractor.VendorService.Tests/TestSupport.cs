@@ -1,7 +1,10 @@
+using MsContractor.VendorService.Clients;
+using MsContractor.VendorService.Models;
+using MsContractor.VendorService.Models.Options;
+using MsContractor.VendorService.Repositories;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
-using MsContractor.VendorService.Repo;
 using MsContractor.VendorService.Services;
 
 namespace MsContractor.VendorService.Tests;

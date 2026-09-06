@@ -1,9 +1,9 @@
+using MsContractor.VendorService.Models;
+using MsContractor.VendorService.Models.Options;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Options;
 
 namespace MsContractor.VendorService.Services;
-
-public sealed record ProtectedAccessToken(byte[] Ciphertext, byte[] Nonce, byte[] Tag, int KeyVersion);
 
 public sealed class AccessTokenProtector
 {

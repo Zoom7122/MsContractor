@@ -1,4 +1,4 @@
-using Confluent.Kafka;
+using MsContractor.CatalogSyncService.Models.Exceptions;
 using Microsoft.AspNetCore.Mvc;
 using MsContractor.BuildingBlocks.Security;
 using MsContractor.Contracts.Sync;
@@ -9,9 +9,8 @@ namespace MsContractor.CatalogSyncService.Controllers;
 [ApiController]
 [Route("internal/sync")]
 public sealed class InternalSyncController(
-    ISyncKafkaPublisher publisher,
-    IConfiguration configuration,
-    TimeProvider timeProvider) : ControllerBase
+    ISyncRequestService service,
+    IConfiguration configuration) : ControllerBase
 {
     [HttpPost]
     [ProducesResponseType<SyncAccepted>(StatusCodes.Status202Accepted)]
@@ -31,17 +30,9 @@ public sealed class InternalSyncController(
 
         try
         {
-            var command = new SyncRequested(
-                Guid.NewGuid(),
-                Guid.NewGuid(),
-                request.AccountId,
-                request.RequestedByUserId,
-                timeProvider.GetUtcNow(),
-                request.Mode);
-            await publisher.PublishAsync(command, cancellationToken);
-            return Accepted(new SyncAccepted(command.SyncRunId, "queued"));
+            return Accepted(await service.StartAsync(request, cancellationToken));
         }
-        catch (ProduceException<string, string>)
+        catch (SyncQueueUnavailableException)
         {
             return StatusCode(
                 StatusCodes.Status503ServiceUnavailable,

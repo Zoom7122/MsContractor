@@ -1,7 +1,8 @@
+using MsContractor.CatalogSyncService.Repositories;
+using MsContractor.CatalogSyncService.Models.Exceptions;
+using MsContractor.CatalogSyncService.Clients;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using MsContractor.CatalogSyncService.Models;
-using MsContractor.CatalogSyncService.Repo;
 using MsContractor.Contracts.Sync;
 
 namespace MsContractor.CatalogSyncService.Services;
@@ -11,10 +12,8 @@ public interface ISyncProcessor
     Task ProcessAsync(SyncRequested command, CancellationToken cancellationToken);
 }
 
-public sealed class CounterpartySnapshotChangedException(string message) : Exception(message);
-
 public sealed class SyncProcessor(
-    CatalogSyncDbContext dbContext,
+    ISyncRepository repository,
     IMoySkladEgressClient egressClient,
     IMoySkladCounterpartyParser parser,
     ICounterpartyNormalizer normalizer,
@@ -31,12 +30,8 @@ public sealed class SyncProcessor(
         CancellationToken cancellationToken)
     {
         Validate(command);
-        await dbContext.SetTenantAsync(command.AccountId, cancellationToken);
 
-        if (await dbContext.InboxMessages.AnyAsync(
-                item => item.MessageId == command.MessageId &&
-                        item.ConsumerName == ConsumerName,
-                cancellationToken))
+        if (await repository.HasProcessedAsync(command.AccountId, command.MessageId, ConsumerName, cancellationToken))
         {
             logger.LogInformation(
                 "Sync message already processed: message_id={MessageId}, account_id={AccountId}, sync_run_id={SyncRunId}",
@@ -81,14 +76,7 @@ public sealed class SyncProcessor(
         // A full synchronization starts from an empty account-scoped catalog.
         // Remove dependent document snapshots first, otherwise their FK blocks
         // deletion of the counterparties they reference.
-        await using var cleanupTransaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        var deletedDocumentsCount = await dbContext.CounterpartyDocuments
-            .Where(item => item.AccountId == command.AccountId)
-            .ExecuteDeleteAsync(cancellationToken);
-        var deletedCount = await dbContext.Counterparties
-            .Where(item => item.AccountId == command.AccountId)
-            .ExecuteDeleteAsync(cancellationToken);
-        await cleanupTransaction.CommitAsync(cancellationToken);
+        var (deletedDocumentsCount, deletedCount) = await repository.ClearSnapshotAsync(command.AccountId, cancellationToken);
         logger.LogInformation(
             "Existing full-sync snapshot cleared before loading MoySklad: deleted_document_count={DeletedDocumentsCount}, deleted_counterparty_count={DeletedCount}",
             deletedDocumentsCount,
@@ -104,10 +92,8 @@ public sealed class SyncProcessor(
             .Where(IsValidForStorage)
             .ToArray();
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        dbContext.Counterparties.AddRange(counterparties);
-        await CompleteAsync(command, run, snapshot.TotalCount, counterparties.Length, now, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        var completion = PrepareCompletion(command, run, snapshot.TotalCount, counterparties.Length, now);
+        await repository.CompleteFullAsync(command.AccountId, counterparties, completion, cancellationToken);
 
         logger.LogInformation(
             "Full counterparty sync completed: deleted_count={DeletedCount}, processed_count={ProcessedCount}, total_count={TotalCount}, active_count={ActiveCount}, archived_count={ArchivedCount}, window_to={WindowTo}",
@@ -146,36 +132,9 @@ public sealed class SyncProcessor(
             .Where(IsValidForStorage)
             .ToArray();
 
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        var counterpartyIds = incoming.Select(item => item.Id).ToArray();
-        var existing = await dbContext.Counterparties
-            .Where(item => item.AccountId == command.AccountId && counterpartyIds.Contains(item.Id))
-            .ToDictionaryAsync(item => item.Id, cancellationToken);
-
-        var insertedCount = 0;
-        var updatedCount = 0;
-        foreach (var item in incoming)
-        {
-            if (!existing.TryGetValue(item.Id, out var current))
-            {
-                dbContext.Counterparties.Add(item);
-                insertedCount++;
-                continue;
-            }
-
-            if (current.MoySkladUpdatedAt is not null &&
-                item.MoySkladUpdatedAt is not null &&
-                item.MoySkladUpdatedAt < current.MoySkladUpdatedAt)
-            {
-                continue;
-            }
-
-            ApplyIncoming(current, item);
-            updatedCount++;
-        }
-
-        await CompleteAsync(command, run, snapshot.TotalCount, incoming.Length, now, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        var completion = PrepareCompletion(command, run, snapshot.TotalCount, incoming.Length, now);
+        var (insertedCount, updatedCount) = await repository.CompleteIncrementalAsync(
+            command.AccountId, incoming, completion, ApplyIncomingIfCurrent, cancellationToken);
 
         logger.LogInformation(
             "Incremental counterparty sync completed: processed_count={ProcessedCount}, total_count={TotalCount}, inserted_count={InsertedCount}, updated_count={UpdatedCount}, active_count={ActiveCount}, archived_count={ArchivedCount}, window_from={WindowFrom}, window_to={WindowTo}",
@@ -282,17 +241,13 @@ public sealed class SyncProcessor(
         SyncRequested command,
         CancellationToken cancellationToken)
     {
-        var run = await dbContext.SyncRuns.SingleOrDefaultAsync(
-            item => item.MessageId == command.MessageId,
-            cancellationToken);
+        var run = await repository.FindRunAsync(command.AccountId, command.MessageId, cancellationToken);
         var now = timeProvider.GetUtcNow();
         if (run is null)
         {
             var requestedMode = ModeName(command.Mode);
             var watermark = command.Mode == SyncMode.Incremental
-                ? await dbContext.SyncWatermarks.AsNoTracking().SingleOrDefaultAsync(
-                    item => item.AccountId == command.AccountId,
-                    cancellationToken)
+                ? await repository.FindWatermarkAsync(command.AccountId, cancellationToken)
                 : null;
             var executionMode = command.Mode == SyncMode.Incremental && watermark is not null
                 ? ModeName(SyncMode.Incremental)
@@ -315,7 +270,6 @@ public sealed class SyncProcessor(
                 CreatedAt = now,
                 UpdatedAt = now
             };
-            dbContext.SyncRuns.Add(run);
         }
         else
         {
@@ -336,17 +290,12 @@ public sealed class SyncProcessor(
             run.ErrorMessage = null;
         }
 
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await repository.SaveRunAsync(command.AccountId, run, cancellationToken);
         return run;
     }
 
-    private async Task CompleteAsync(
-        SyncRequested command,
-        SyncRun run,
-        int totalCount,
-        int processedCount,
-        DateTimeOffset now,
-        CancellationToken cancellationToken)
+    private static SyncCompletion PrepareCompletion(
+        SyncRequested command, SyncRun run, int totalCount, int processedCount, DateTimeOffset now)
     {
         if (run.WindowTo is null)
             throw new InvalidOperationException("Sync windowTo is missing.");
@@ -358,43 +307,10 @@ public sealed class SyncProcessor(
         run.UpdatedAt = now;
         run.ErrorCode = null;
         run.ErrorMessage = null;
-        dbContext.InboxMessages.Add(new InboxMessage
-        {
-            MessageId = command.MessageId,
-            ConsumerName = ConsumerName,
-            ProcessedAt = now
-        });
-        AddOutbox(
-            new SyncCompleted(
-                Guid.NewGuid(),
-                command.SyncRunId,
-                command.AccountId,
-                processedCount,
-                now),
-            command.AccountId,
-            now);
-
-        var watermark = await dbContext.SyncWatermarks.SingleOrDefaultAsync(
-            item => item.AccountId == command.AccountId,
-            cancellationToken);
-        if (watermark is null)
-        {
-            dbContext.SyncWatermarks.Add(new SyncWatermark
-            {
-                AccountId = command.AccountId,
-                Watermark = run.WindowTo.Value,
-                LastSyncRunId = command.SyncRunId,
-                UpdatedAt = now
-            });
-        }
-        else
-        {
-            watermark.Watermark = run.WindowTo.Value;
-            watermark.LastSyncRunId = command.SyncRunId;
-            watermark.UpdatedAt = now;
-        }
-
-        await dbContext.SaveChangesAsync(cancellationToken);
+        return new SyncCompletion(run,
+            new InboxMessage { MessageId = command.MessageId, ConsumerName = ConsumerName, ProcessedAt = now },
+            CreateOutbox(new SyncCompleted(Guid.NewGuid(), command.SyncRunId, command.AccountId, processedCount, now), command.AccountId, now),
+            new SyncWatermark { AccountId = command.AccountId, Watermark = run.WindowTo.Value, LastSyncRunId = command.SyncRunId, UpdatedAt = now });
     }
 
     private async Task MarkFailedAsync(
@@ -412,42 +328,26 @@ public sealed class SyncProcessor(
             command.RequestedByUserId,
             code);
 
-        dbContext.ChangeTracker.Clear();
-        var run = await dbContext.SyncRuns.SingleAsync(
-            item => item.MessageId == command.MessageId,
-            cancellationToken);
+        var run = await repository.ReloadRunAsync(command.AccountId, command.MessageId, cancellationToken);
         var now = timeProvider.GetUtcNow();
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
         run.Status = "failed";
         run.ErrorCode = code;
         run.ErrorMessage = safeMessage;
         run.CompletedAt = now;
         run.UpdatedAt = now;
-        if (!await dbContext.InboxMessages.AnyAsync(
-                item => item.MessageId == command.MessageId &&
-                        item.ConsumerName == ConsumerName,
-                cancellationToken))
-        {
-            dbContext.InboxMessages.Add(new InboxMessage
-            {
-                MessageId = command.MessageId,
-                ConsumerName = ConsumerName,
-                ProcessedAt = now
-            });
-        }
+        await repository.FailAsync(command.AccountId, run,
+            new InboxMessage { MessageId = command.MessageId, ConsumerName = ConsumerName, ProcessedAt = now },
+            CreateOutbox(new SyncFailed(Guid.NewGuid(), command.SyncRunId, command.AccountId, code, safeMessage, now), command.AccountId, now),
+            cancellationToken);
+    }
 
-        AddOutbox(
-            new SyncFailed(
-                Guid.NewGuid(),
-                command.SyncRunId,
-                command.AccountId,
-                code,
-                safeMessage,
-                now),
-            command.AccountId,
-            now);
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+    private static bool ApplyIncomingIfCurrent(Counterparty target, Counterparty source)
+    {
+        if (target.MoySkladUpdatedAt is not null && source.MoySkladUpdatedAt is not null &&
+            source.MoySkladUpdatedAt < target.MoySkladUpdatedAt)
+            return false;
+        ApplyIncoming(target, source);
+        return true;
     }
 
     private static void ApplyIncoming(Counterparty target, Counterparty source)
@@ -485,18 +385,15 @@ public sealed class SyncProcessor(
         return false;
     }
 
-    private void AddOutbox<T>(T @event, Guid accountId, DateTimeOffset now)
+    private static SyncOutboxMessage CreateOutbox<T>(T @event, Guid accountId, DateTimeOffset now) => new()
     {
-        dbContext.OutboxMessages.Add(new SyncOutboxMessage
-        {
-            Id = Guid.NewGuid(),
-            Topic = SyncTopics.Events,
-            MessageKey = accountId.ToString("D"),
-            EventType = typeof(T).Name,
-            Payload = JsonSerializer.Serialize(@event, JsonOptions),
-            CreatedAt = now
-        });
-    }
+        Id = Guid.NewGuid(),
+        Topic = SyncTopics.Events,
+        MessageKey = accountId.ToString("D"),
+        EventType = typeof(T).Name,
+        Payload = JsonSerializer.Serialize(@event, JsonOptions),
+        CreatedAt = now
+    };
 
     private static (string Code, string Message) MapError(Exception exception) =>
         exception switch
@@ -506,7 +403,7 @@ public sealed class SyncProcessor(
                 "COUNTERPARTY_SNAPSHOT_CHANGED",
                 "MoySklad counterparty collection changed during synchronization."),
             JsonException => ("JSON_DESERIALIZATION_FAILED", "MoySklad returned invalid counterparty data."),
-            DbUpdateException => ("COUNTERPARTY_SAVE_FAILED", "Could not save counterparties."),
+            CatalogPersistenceException => ("COUNTERPARTY_SAVE_FAILED", "Could not save counterparties."),
             _ => ("SYNC_FAILED", "Synchronization failed.")
         };
 

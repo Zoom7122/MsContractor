@@ -1,9 +1,15 @@
+using MsContractor.MoySkladEgressService.Clients;
+using MsContractor.MoySkladEgressService.Gateways;
+using MsContractor.MoySkladEgressService.HealthChecks;
+using MsContractor.MoySkladEgressService.Models.Options;
 using System.Net;
 using MsContractor.BuildingBlocks.Health;
 using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
 using MsContractor.MoySkladEgressService.Services;
-using Npgsql;
+using Microsoft.EntityFrameworkCore;
+using MsContractor.MoySkladEgressService.Persistence;
+using MsContractor.MoySkladEgressService.Repositories;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -61,6 +67,20 @@ builder.Services.AddHttpClient<IMoySkladDocumentGateway, MoySkladDocumentGateway
 {
     AutomaticDecompression = DecompressionMethods.GZip
 });
+builder.Services.AddHttpClient<IMoySkladSalesReturnGateway, MoySkladSalesReturnGateway>(client =>
+{
+    client.BaseAddress = egressOptions.JsonApiBaseUrl;
+    client.Timeout = TimeSpan.FromSeconds(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AutomaticDecompression = DecompressionMethods.GZip });
+var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres")
+    ?? throw new InvalidOperationException("ConnectionStrings:Postgres is required for the Egress operation journal.");
+builder.Services.AddDbContext<EgressDbContext>(options => options.UseNpgsql(postgresConnectionString,
+    postgres => postgres.MigrationsHistoryTable("__EFMigrationsHistory", "egress")));
+builder.Services.AddScoped<ISalesReturnOperationRepository, SalesReturnOperationRepository>();
+builder.Services.AddScoped<SalesReturnPayloadBuilder>();
+builder.Services.AddScoped<SalesReturnRecreationService>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddHostedService<SalesReturnRecoveryWorker>();
 builder.Services.AddSingleton<IMoySkladResponseHandler, MoySkladResponseHandler>();
 builder.Services.AddSingleton<IMoySkladSingleDocumentResponseValidator, MoySkladSingleDocumentResponseValidator>();
 builder.Services.AddSingleton<IMoySkladBulkDocumentResponseValidator, MoySkladBulkDocumentResponseValidator>();
@@ -75,21 +95,9 @@ var app = builder.Build();
 
 var startupLogger = app.Services.GetRequiredService<ILoggerFactory>()
     .CreateLogger("MsContractor.MoySkladEgressService.Startup");
-var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres");
-if (!string.IsNullOrWhiteSpace(postgresConnectionString))
+await using (var scope = app.Services.CreateAsyncScope())
 {
-    try
-    {
-        await using var connection = new NpgsqlConnection(postgresConnectionString);
-        await connection.OpenAsync();
-        startupLogger.LogInformation("PostgreSQL connection check succeeded.");
-    }
-    catch (Exception exception)
-    {
-        // PostgreSQL is not a runtime dependency of Egress; keep startup resilient,
-        // but make an unavailable configured database visible to operators.
-        startupLogger.LogWarning(exception, "PostgreSQL connection check failed.");
-    }
+    await scope.ServiceProvider.GetRequiredService<EgressDbContext>().Database.MigrateAsync();
 }
 
 try

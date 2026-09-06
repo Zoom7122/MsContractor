@@ -1,9 +1,15 @@
+using MsContractor.DuplicatesMergeService.Repositories;
+using MsContractor.Gateway.Bff.Models;
+using MsContractor.DuplicatesMergeService.Models.Exceptions;
+using MsContractor.DuplicatesMergeService.Models;
+using MsContractor.CatalogSyncService.Models;
+using MsContractor.CatalogSyncService.Persistence;
+using MsContractor.Gateway.Bff.Clients;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using MsContractor.CatalogSyncService.Repo;
 using MsContractor.Contracts.Merge;
 using MsContractor.DuplicatesMergeService.Services;
 using MsContractor.Gateway.Bff.Controllers;
@@ -102,9 +108,9 @@ public sealed class MergeSelectionPreviewTests
         client,
         new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["Session:CookieName"] = "mscontractor.session" }).Build())
-    {
-        ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
-    };
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
 
     private sealed class FakeSessionReader(GatewaySession? session) : IGatewaySessionReader
     {
@@ -134,7 +140,7 @@ public sealed class MergeSelectionPreviewTests
         public Counterparty First { get; private set; } = null!;
         public Counterparty Second { get; private set; } = null!;
         public Counterparty Foreign { get; private set; } = null!;
-        public MergeSelectionPreviewService Service => new(db);
+        public MergeSelectionPreviewService Service => new(new CounterpartyRepository(db));
 
         public static async Task<Fixture> CreateAsync()
         {

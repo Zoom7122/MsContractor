@@ -1,8 +1,8 @@
+using MsContractor.VendorService.Repositories;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Mvc;
 using MsContractor.BuildingBlocks.Security;
 using MsContractor.Contracts.Internal;
-using MsContractor.VendorService.Repo;
 using MsContractor.VendorService.Services;
 
 namespace MsContractor.VendorService.Controllers;

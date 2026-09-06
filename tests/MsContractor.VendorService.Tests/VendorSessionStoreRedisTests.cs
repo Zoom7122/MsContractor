@@ -1,3 +1,4 @@
+using MsContractor.VendorService.Repositories;
 using System.Security.Cryptography;
 using System.Text;
 using MsContractor.VendorService.Services;
@@ -20,7 +21,7 @@ public sealed class VendorSessionStoreRedisTests
         var secondEmployee = Guid.NewGuid();
         var timeProvider = new MutableTimeProvider(DateTimeOffset.Parse("2026-07-27T12:00:00Z"));
         var store = new VendorSessionStore(
-            redis,
+            new VendorSessionRepository(redis),
             TestSupport.Options(TimeSpan.FromMinutes(2)),
             timeProvider);
 
@@ -44,4 +45,26 @@ public sealed class VendorSessionStoreRedisTests
         Assert.Null(await store.GetAndRefreshAsync(firstToken, CancellationToken.None));
         Assert.Null(await store.GetAndRefreshAsync(secondToken, CancellationToken.None));
     }
+    [Fact]
+    public async Task ReplayRepository_RejectsDuplicateJwtAndExpiredJwt()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("TEST_REDIS_CONNECTION");
+        if (string.IsNullOrWhiteSpace(connectionString)) return;
+        await using var redis = await ConnectionMultiplexer.ConnectAsync(connectionString);
+        var now = DateTimeOffset.UtcNow;
+        var jti = Guid.NewGuid().ToString("N");
+        var store = new VendorJwtReplayStore(new VendorJwtReplayRepository(redis), new MutableTimeProvider(now));
+        var jwt = new MsContractor.VendorService.Models.VendorJwt(jti, now.AddMinutes(1));
+        try
+        {
+            await store.EnsureUnusedAsync(jwt, CancellationToken.None);
+            await Assert.ThrowsAsync<MsContractor.VendorService.Models.Exceptions.VendorAuthenticationException>(() => store.EnsureUnusedAsync(jwt, CancellationToken.None));
+            await Assert.ThrowsAsync<MsContractor.VendorService.Models.Exceptions.VendorAuthenticationException>(() => store.EnsureUnusedAsync(jwt with { ExpiresAt = now.AddMinutes(-1) }, CancellationToken.None));
+        }
+        finally
+        {
+            await redis.GetDatabase().KeyDeleteAsync($"vendor:jwt:jti:{jti}");
+        }
+    }
+
 }

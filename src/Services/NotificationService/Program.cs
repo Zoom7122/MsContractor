@@ -1,4 +1,4 @@
-using MsContractor.NotificationService;
+using MsContractor.NotificationService.Services;
 using MsContractor.BuildingBlocks.Health;
 using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;

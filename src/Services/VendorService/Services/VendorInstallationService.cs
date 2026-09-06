@@ -1,32 +1,11 @@
+using MsContractor.VendorService.Models;
+using MsContractor.VendorService.Models.Exceptions;
+using MsContractor.VendorService.Models.Options;
+using MsContractor.VendorService.Repositories;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
-using MsContractor.VendorService.Contracts;
-using MsContractor.VendorService.Repo;
-using MsContractor.VendorService.Services.Exceptions;
 
 namespace MsContractor.VendorService.Services;
-
-public sealed record VendorActivationCommand(
-    Guid AppId,
-    Guid AccountId,
-    string Authorization,
-    string RequestId,
-    VendorActivationRequest Request);
-
-public sealed record VendorActivationResult(string Status, Guid AccountId, bool IdempotentReplay);
-
-public sealed record VendorDeactivationCommand(
-    Guid AppId,
-    Guid AccountId,
-    string Authorization,
-    string RequestId,
-    VendorDeactivationRequest Request);
-
-public sealed record VendorDeactivationResult(
-    string Status,
-    Guid AccountId,
-    bool InstallationFound,
-    bool IdempotentReplay);
 
 public sealed class VendorInstallationService(
     VendorJwtValidator jwtValidator,
@@ -103,12 +82,21 @@ public sealed class VendorInstallationService(
         };
         var outbox = new OutboxMessage
         {
-            Id = Guid.NewGuid(), RequestId = command.RequestId, AccountId = command.AccountId,
-            EventType = eventType, CreatedAt = now, PublishedAt = null, PublishAttempts = 0,
+            Id = Guid.NewGuid(),
+            RequestId = command.RequestId,
+            AccountId = command.AccountId,
+            EventType = eventType,
+            CreatedAt = now,
+            PublishedAt = null,
+            PublishAttempts = 0,
             Payload = JsonDocument.Parse(JsonSerializer.Serialize(new
             {
-                eventId = Guid.NewGuid(), requestId = command.RequestId, accountId = command.AccountId,
-                appId = command.AppId, cause, occurredAt = now
+                eventId = Guid.NewGuid(),
+                requestId = command.RequestId,
+                accountId = command.AccountId,
+                appId = command.AppId,
+                cause,
+                occurredAt = now
             }))
         };
         var saved = await repository.SaveAsync(
@@ -199,6 +187,11 @@ public sealed class VendorInstallationService(
         DateTimeOffset occurredAt) =>
         JsonDocument.Parse(JsonSerializer.Serialize(new
         {
-            eventId = Guid.NewGuid(), requestId, accountId, appId, cause, occurredAt
+            eventId = Guid.NewGuid(),
+            requestId,
+            accountId,
+            appId,
+            cause,
+            occurredAt
         }));
 }

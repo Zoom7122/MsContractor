@@ -1,8 +1,10 @@
+using MsContractor.MoySkladEgressService.Clients;
+using MsContractor.MoySkladEgressService.Gateways;
+using MsContractor.MoySkladEgressService.Models.Exceptions;
 using System.Net;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using MsContractor.MoySkladEgressService.Services;
 using MsContractor.Contracts.Internal;
 
 namespace MsContractor.Sync.Tests;

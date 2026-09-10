@@ -12,6 +12,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using MsContractor.Contracts.Internal;
 using MsContractor.MoySkladEgressService.Clients;
+using MsContractor.MoySkladEgressService.RateLimiting;
+using MsContractor.MoySkladEgressService.RateLimiting.Models;
 using MsContractor.MoySkladEgressService.Controllers;
 using MsContractor.MoySkladEgressService.Gateways;
 using MsContractor.MoySkladEgressService.Models;
@@ -205,9 +207,9 @@ public sealed class SalesReturnGatewayTests
     {
         public List<Guid> WaitAccounts { get; } = [];
         public int Observations { get; private set; }
-        public Task WaitAsync(Guid accountId, Guid? userId, CancellationToken cancellationToken)
+        public Task WaitAsync(Guid accountId, CancellationToken cancellationToken)
         { cancellationToken.ThrowIfCancellationRequested(); WaitAccounts.Add(accountId); return Task.CompletedTask; }
-        public Task ObserveAsync(Guid accountId, HttpResponseMessage response, CancellationToken cancellationToken)
+        public Task ObserveAsync(Guid accountId, MoySkladRateLimitObservation observation, CancellationToken cancellationToken)
         { Observations++; return Task.CompletedTask; }
     }
 }

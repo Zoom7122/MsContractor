@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http.Headers;
 using MsContractor.Contracts.Internal;
+using MsContractor.MoySkladEgressService.RateLimiting;
 
 namespace MsContractor.MoySkladEgressService.Gateways;
 
@@ -83,7 +84,7 @@ public sealed class MoySkladCounterpartyGateway : IMoySkladCounterpartyGateway
         CancellationToken cancellationToken)
     {
         var accessToken = await _tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
-        await _rateLimiter.WaitAsync(accountId, userId, cancellationToken);
+        await _rateLimiter.WaitAsync(accountId, cancellationToken);
 
         var filter = $"archived={archived.ToString().ToLowerInvariant()}";
         if (windowFrom is not null && windowTo is not null)
@@ -143,7 +144,8 @@ public sealed class MoySkladCounterpartyGateway : IMoySkladCounterpartyGateway
 
         using (response)
         {
-            await _rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+            var observation = MoySkladRateLimitObservationParser.Parse(response);
+            await _rateLimiter.ObserveAsync(accountId, observation, cancellationToken);
             var responseBody = await _responseHandler.ReadAsync(
                 response,
                 context,
@@ -231,7 +233,7 @@ public sealed class MoySkladCounterpartyGateway : IMoySkladCounterpartyGateway
         CancellationToken cancellationToken)
     {
         var accessToken = await _tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
-        await _rateLimiter.WaitAsync(accountId, userId, cancellationToken);
+        await _rateLimiter.WaitAsync(accountId, cancellationToken);
         using var request = new HttpRequestMessage(HttpMethod.Put, $"entity/counterparty/{counterpartyId:D}")
         {
             Content = JsonContent.Create(payload)
@@ -264,7 +266,8 @@ public sealed class MoySkladCounterpartyGateway : IMoySkladCounterpartyGateway
 
         using (response)
         {
-            await _rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+            var observation = MoySkladRateLimitObservationParser.Parse(response);
+            await _rateLimiter.ObserveAsync(accountId, observation, cancellationToken);
             var responseBody = await _responseHandler.ReadAsync(
                 response, context, stopwatch.Elapsed, cancellationToken);
             var json = responseBody.Body;
@@ -291,7 +294,7 @@ public sealed class MoySkladCounterpartyGateway : IMoySkladCounterpartyGateway
     {
         var accessToken = await _tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
         //Заглушка сделать лимитер
-        await _rateLimiter.WaitAsync(accountId, userId, cancellationToken);
+        await _rateLimiter.WaitAsync(accountId, cancellationToken);
         using var request = new HttpRequestMessage(HttpMethod.Post, "entity/counterparty")
         {
             Content = JsonContent.Create(payload)
@@ -327,7 +330,8 @@ public sealed class MoySkladCounterpartyGateway : IMoySkladCounterpartyGateway
 
         using (response)
         {
-            await _rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+            var observation = MoySkladRateLimitObservationParser.Parse(response);
+            await _rateLimiter.ObserveAsync(accountId, observation, cancellationToken);
             var responseBody = await _responseHandler.ReadAsync(
                 response, context, stopwatch.Elapsed, cancellationToken);
             _logger.LogInformation(

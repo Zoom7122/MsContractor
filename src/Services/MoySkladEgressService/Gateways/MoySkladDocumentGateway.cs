@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using MsContractor.Contracts.Internal;
+using MsContractor.MoySkladEgressService.RateLimiting;
 
 namespace MsContractor.MoySkladEgressService.Gateways;
 
@@ -127,7 +128,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
             throw new ArgumentOutOfRangeException(nameof(documentType));
 
         var accessToken = await _tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
-        await _rateLimiter.WaitAsync(accountId, requestedByUserId, cancellationToken);
+        await _rateLimiter.WaitAsync(accountId, cancellationToken);
 
         var filter = string.Join(
             ';',
@@ -174,7 +175,8 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
 
         using (response)
         {
-            await _rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+            var observation = MoySkladRateLimitObservationParser.Parse(response);
+            await _rateLimiter.ObserveAsync(accountId, observation, cancellationToken);
             var responseBody = await _responseHandler.ReadAsync(
                 response, context, stopwatch.Elapsed, cancellationToken);
             _logger.LogInformation(
@@ -301,7 +303,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
         }
 
         var accessToken = await _tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
-        await _rateLimiter.WaitAsync(accountId, requestedByUserId, cancellationToken);
+        await _rateLimiter.WaitAsync(accountId, cancellationToken);
 
         var agent = new
         {
@@ -373,7 +375,8 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
 
         using (response)
         {
-            await _rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+            var observation = MoySkladRateLimitObservationParser.Parse(response);
+            await _rateLimiter.ObserveAsync(accountId, observation, cancellationToken);
             var responseBody = await _responseHandler.ReadAsync(
                 response, context, stopwatch.Elapsed, cancellationToken);
             var json = responseBody.Body;
@@ -475,7 +478,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
         }
 
         var accessToken = await _tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
-        await _rateLimiter.WaitAsync(accountId, requestedByUserId, cancellationToken);
+        await _rateLimiter.WaitAsync(accountId, cancellationToken);
         var agent = EntityReference("counterparty", mainCounterpartyId);
         var isSingle = documents.Count == 1;
         object payload = isSingle
@@ -512,7 +515,8 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
 
         using (response)
         {
-            await _rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+            var observation = MoySkladRateLimitObservationParser.Parse(response);
+            await _rateLimiter.ObserveAsync(accountId, observation, cancellationToken);
             var responseBody = await _responseHandler.ReadAsync(response, context, stopwatch.Elapsed, cancellationToken);
             var json = responseBody.Body;
             if (string.IsNullOrWhiteSpace(json))
@@ -595,7 +599,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
         CancellationToken cancellationToken)
     {
         var accessToken = await _tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
-        await _rateLimiter.WaitAsync(accountId, requestedByUserId, cancellationToken);
+        await _rateLimiter.WaitAsync(accountId, cancellationToken);
         var agent = EntityReference("counterparty", mainCounterpartyId);
         var isSingle = entities.Count == 1;
         object payload = isSingle ? new { agent } : entities.Select(item => new
@@ -622,7 +626,8 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
         { throw _responseHandler.TransportFailure(context, "MoySklad is unavailable.", stopwatch.Elapsed, exception); }
         using (response)
         {
-            await _rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+            var observation = MoySkladRateLimitObservationParser.Parse(response);
+            await _rateLimiter.ObserveAsync(accountId, observation, cancellationToken);
             var responseBody = await _responseHandler.ReadAsync(response, context, stopwatch.Elapsed, cancellationToken);
             var json = responseBody.Body;
             if (string.IsNullOrWhiteSpace(json))

@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
+using MsContractor.MoySkladEgressService.RateLimiting;
 
 namespace MsContractor.MoySkladEgressService.Gateways;
 
@@ -22,14 +23,15 @@ public sealed partial class MoySkladDocumentGateway
             var path = $"entity/salesreturn/{documentId:D}/positions?limit=1000&offset={offset}";
             var context = new MoySkladRequestContext(accountId, correlationId, null, null, "GET", path, "salesreturn", documentId);
             var watch = Stopwatch.StartNew();
-            await _rateLimiter.WaitAsync(accountId, userId, cancellationToken);
+            await _rateLimiter.WaitAsync(accountId, cancellationToken);
             using var request = new HttpRequestMessage(HttpMethod.Get, path);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             request.Headers.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
             try
             {
                 using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                await _rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+                var observation = MoySkladRateLimitObservationParser.Parse(response);
+                await _rateLimiter.ObserveAsync(accountId, observation, cancellationToken);
                 var body = await _responseHandler.ReadAsync(response, context, watch.Elapsed, cancellationToken);
                 var page = JsonNode.Parse(body.Body)?.AsObject() ?? throw new JsonException();
                 var size = page["meta"]?["size"]?.GetValue<int>() ?? throw new JsonException();

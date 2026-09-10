@@ -8,6 +8,7 @@ using MsContractor.MoySkladEgressService.Clients;
 using MsContractor.Contracts.Internal;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
+using MsContractor.MoySkladEgressService.RateLimiting;
 
 namespace MsContractor.MoySkladEgressService.Gateways;
 
@@ -137,14 +138,15 @@ public sealed class MoySkladSalesReturnGateway : IMoySkladSalesReturnGateway
         try
         {
             var token = await _tokens.GetAccessTokenAsync(context.AccountId, cancellationToken);
-            await _limiter.WaitAsync(context.AccountId, context.UserId, cancellationToken);
+            await _limiter.WaitAsync(context.AccountId, cancellationToken);
             using var request = new HttpRequestMessage(method, path);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             request.Headers.TryAddWithoutValidation("X-Correlation-Id", context.CorrelationId);
             request.Headers.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
             if (body is not null) request.Content = new StringContent(body, Encoding.UTF8, "application/json");
             using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            await _limiter.ObserveAsync(context.AccountId, response, cancellationToken);
+            var observation = MoySkladRateLimitObservationParser.Parse(response);
+            await _limiter.ObserveAsync(context.AccountId, observation, cancellationToken);
             // No business payloads are sent to the diagnostic body logger for this operation.
             if (!response.IsSuccessStatusCode)
             {

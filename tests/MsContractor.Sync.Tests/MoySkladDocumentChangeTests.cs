@@ -2,6 +2,8 @@ using MsContractor.MoySkladEgressService.Models.Options;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Clients;
 using MsContractor.MoySkladEgressService.Gateways;
+using MsContractor.MoySkladEgressService.RateLimiting;
+using MsContractor.MoySkladEgressService.RateLimiting.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
 using System.Net;
 using System.Text;
@@ -372,8 +374,8 @@ public sealed class MoySkladDocumentChangeGatewayTests
 
     private sealed class RateLimiter : IMoySkladRateLimiter
     {
-        public Task WaitAsync(Guid accountId, Guid? userId, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task ObserveAsync(Guid accountId, HttpResponseMessage response, CancellationToken cancellationToken) =>
+        public Task WaitAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task ObserveAsync(Guid accountId, MoySkladRateLimitObservation observation, CancellationToken cancellationToken) =>
             Task.CompletedTask;
     }
 }

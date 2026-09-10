@@ -11,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using MsContractor.MoySkladEgressService.Persistence;
 using MsContractor.MoySkladEgressService.Repositories;
 using StackExchange.Redis;
+using MsContractor.MoySkladEgressService.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.AddMsContractorLogging();
@@ -87,7 +88,7 @@ builder.Services.AddSingleton<IMoySkladBulkDocumentResponseValidator, MoySkladBu
 builder.Services.AddScoped<IMoySkladDocumentDiscoveryService, MoySkladDocumentDiscoveryService>();
 builder.Services.AddScoped<IMoySkladDocumentChangeService, MoySkladDocumentChangeService>();
 builder.Services.AddScoped<IMoySkladDocumentAgentAndContractService, MoySkladDocumentAgentAndContractService>();
-builder.Services.AddSingleton<IMoySkladRateLimiter, ObservingMoySkladRateLimiter>();
+builder.Services.AddSingleton<IMoySkladRateLimiter, MoySkladRateLimiter>();
 builder.Services.AddHealthChecks()
     .AddCheck<EgressReadinessHealthCheck>("egress-dependencies", tags: ["ready"]);
 

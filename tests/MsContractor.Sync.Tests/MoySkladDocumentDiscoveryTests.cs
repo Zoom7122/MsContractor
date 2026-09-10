@@ -2,6 +2,8 @@ using MsContractor.MoySkladEgressService.Models.Options;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Clients;
 using MsContractor.MoySkladEgressService.Gateways;
+using MsContractor.MoySkladEgressService.RateLimiting;
+using MsContractor.MoySkladEgressService.RateLimiting.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
 using System.Net;
 using System.Text;
@@ -476,7 +478,7 @@ public sealed class MoySkladDocumentGatewayTests
         public int WaitCalls { get; private set; }
         public int ObserveCalls { get; private set; }
 
-        public Task WaitAsync(Guid accountId, Guid? userId, CancellationToken cancellationToken)
+        public Task WaitAsync(Guid accountId, CancellationToken cancellationToken)
         {
             WaitCalls++;
             return Task.CompletedTask;
@@ -484,7 +486,7 @@ public sealed class MoySkladDocumentGatewayTests
 
         public Task ObserveAsync(
             Guid accountId,
-            HttpResponseMessage response,
+            MoySkladRateLimitObservation observation,
             CancellationToken cancellationToken)
         {
             ObserveCalls++;

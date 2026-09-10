@@ -9,12 +9,25 @@ namespace MsContractor.VendorService.Controllers;
 
 [ApiController]
 [Route("internal/vendor/installations")]
-public sealed class InternalInstallationController(
-    IVendorInstallationRepository repository,
-    AccessTokenProtector tokenProtector,
-    IConfiguration configuration,
-    ILogger<InternalInstallationController> logger) : ControllerBase
+public sealed class InternalInstallationController : ControllerBase
 {
+    private readonly IVendorInstallationRepository _repository;
+    private readonly AccessTokenProtector _tokenProtector;
+    private readonly IConfiguration _configuration;
+    private readonly ILogger<InternalInstallationController> _logger;
+
+    public InternalInstallationController(
+        IVendorInstallationRepository repository,
+        AccessTokenProtector tokenProtector,
+        IConfiguration configuration,
+        ILogger<InternalInstallationController> logger)
+    {
+        _repository = repository;
+        _tokenProtector = tokenProtector;
+        _configuration = configuration;
+        _logger = logger;
+    }
+
     [HttpGet("{accountId:guid}/token")]
     [ProducesResponseType<InternalAccessTokenResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<InternalErrorResponse>(StatusCodes.Status401Unauthorized)]
@@ -25,10 +38,10 @@ public sealed class InternalInstallationController(
         Guid accountId,
         CancellationToken cancellationToken)
     {
-        if (!InternalApiKeyAuthentication.IsAuthorized(Request, configuration))
+        if (!InternalApiKeyAuthentication.IsAuthorized(Request, _configuration))
             return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
 
-        var installation = await repository.GetByAccountIdAsync(accountId, cancellationToken);
+        var installation = await _repository.GetByAccountIdAsync(accountId, cancellationToken);
         if (installation is null)
             return NotFound(new InternalErrorResponse("INSTALLATION_NOT_FOUND", "Installation was not found."));
         if (!string.Equals(installation.Status, "Active", StringComparison.Ordinal))
@@ -47,7 +60,7 @@ public sealed class InternalInstallationController(
 
         try
         {
-            var accessToken = tokenProtector.Unprotect(
+            var accessToken = _tokenProtector.Unprotect(
                 installation.AccessTokenCiphertext,
                 installation.AccessTokenNonce,
                 installation.AccessTokenTag,
@@ -56,7 +69,7 @@ public sealed class InternalInstallationController(
         }
         catch (CryptographicException exception)
         {
-            logger.LogError(
+            _logger.LogError(
                 exception,
                 "Could not decrypt access token for account {AccountId}.",
                 accountId);

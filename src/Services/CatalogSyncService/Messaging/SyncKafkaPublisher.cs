@@ -10,9 +10,16 @@ public interface ISyncKafkaPublisher
     Task PublishAsync(SyncRequested command, CancellationToken cancellationToken);
 }
 
-public sealed class SyncKafkaPublisher(IProducer<string, string> producer)
-    : ISyncKafkaPublisher
+public sealed class SyncKafkaPublisher : ISyncKafkaPublisher
 {
+    private readonly IProducer<string, string> _producer;
+
+    public SyncKafkaPublisher(
+        IProducer<string, string> producer)
+    {
+        _producer = producer;
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task PublishAsync(
@@ -21,7 +28,7 @@ public sealed class SyncKafkaPublisher(IProducer<string, string> producer)
     {
         try
         {
-            await producer.ProduceAsync(
+            await _producer.ProduceAsync(
             SyncTopics.Commands,
             new Message<string, string>
             {

@@ -8,11 +8,22 @@ namespace MsContractor.Gateway.Bff.Controllers;
 
 [ApiController]
 [Route("api/sync")]
-public sealed class SyncController(
-    IGatewaySessionReader sessionReader,
-    ICatalogSyncClient catalogSyncClient,
-    IConfiguration configuration) : ControllerBase
+public sealed class SyncController : ControllerBase
 {
+    private readonly IGatewaySessionReader _sessionReader;
+    private readonly ICatalogSyncClient _catalogSyncClient;
+    private readonly IConfiguration _configuration;
+
+    public SyncController(
+        IGatewaySessionReader sessionReader,
+        ICatalogSyncClient catalogSyncClient,
+        IConfiguration configuration)
+    {
+        _sessionReader = sessionReader;
+        _catalogSyncClient = catalogSyncClient;
+        _configuration = configuration;
+    }
+
     [HttpPost]
     [ProducesResponseType<SyncAccepted>(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -31,9 +42,9 @@ public sealed class SyncController(
         SyncMode mode,
         CancellationToken cancellationToken)
     {
-        var cookieName = configuration["Session:CookieName"] ?? "mscontractor.session";
+        var cookieName = _configuration["Session:CookieName"] ?? "mscontractor.session";
         Request.Cookies.TryGetValue(cookieName, out var token);
-        var session = await sessionReader.ReadAsync(token, cancellationToken);
+        var session = await _sessionReader.ReadAsync(token, cancellationToken);
         if (session is null)
             return Unauthorized(new { code = "SESSION_UNAUTHORIZED", message = "Session is missing or expired." });
 
@@ -44,7 +55,7 @@ public sealed class SyncController(
 
         try
         {
-            var accepted = await catalogSyncClient.StartAsync(request, cancellationToken);
+            var accepted = await _catalogSyncClient.StartAsync(request, cancellationToken);
             return Accepted(accepted);
         }
         catch (CatalogSyncUnavailableException)

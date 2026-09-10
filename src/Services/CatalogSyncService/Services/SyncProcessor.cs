@@ -12,14 +12,31 @@ public interface ISyncProcessor
     Task ProcessAsync(SyncRequested command, CancellationToken cancellationToken);
 }
 
-public sealed class SyncProcessor(
-    ISyncRepository repository,
-    IMoySkladEgressClient egressClient,
-    IMoySkladCounterpartyParser parser,
-    ICounterpartyNormalizer normalizer,
-    TimeProvider timeProvider,
-    ILogger<SyncProcessor> logger) : ISyncProcessor
+public sealed class SyncProcessor : ISyncProcessor
 {
+    private readonly ISyncRepository _repository;
+    private readonly IMoySkladEgressClient _egressClient;
+    private readonly IMoySkladCounterpartyParser _parser;
+    private readonly ICounterpartyNormalizer _normalizer;
+    private readonly TimeProvider _timeProvider;
+    private readonly ILogger<SyncProcessor> _logger;
+
+    public SyncProcessor(
+        ISyncRepository repository,
+        IMoySkladEgressClient egressClient,
+        IMoySkladCounterpartyParser parser,
+        ICounterpartyNormalizer normalizer,
+        TimeProvider timeProvider,
+        ILogger<SyncProcessor> logger)
+    {
+        _repository = repository;
+        _egressClient = egressClient;
+        _parser = parser;
+        _normalizer = normalizer;
+        _timeProvider = timeProvider;
+        _logger = logger;
+    }
+
     public const string ConsumerName = "catalog-sync-counterparties-v1";
     private const int PageSize = 1000;
     private static readonly TimeSpan SafetyOverlap = TimeSpan.FromMinutes(5);
@@ -31,9 +48,9 @@ public sealed class SyncProcessor(
     {
         Validate(command);
 
-        if (await repository.HasProcessedAsync(command.AccountId, command.MessageId, ConsumerName, cancellationToken))
+        if (await _repository.HasProcessedAsync(command.AccountId, command.MessageId, ConsumerName, cancellationToken))
         {
-            logger.LogInformation(
+            _logger.LogInformation(
                 "Sync message already processed: message_id={MessageId}, account_id={AccountId}, sync_run_id={SyncRunId}",
                 command.MessageId,
                 command.AccountId,
@@ -42,7 +59,7 @@ public sealed class SyncProcessor(
         }
 
         var run = await EnsureRunningAsync(command, cancellationToken);
-        using var scope = logger.BeginScope(new Dictionary<string, object?>
+        using var scope = _logger.BeginScope(new Dictionary<string, object?>
         {
             ["account_id"] = command.AccountId,
             ["sync_run_id"] = command.SyncRunId,
@@ -76,8 +93,8 @@ public sealed class SyncProcessor(
         // A full synchronization starts from an empty account-scoped catalog.
         // Remove dependent document snapshots first, otherwise their FK blocks
         // deletion of the counterparties they reference.
-        var (deletedDocumentsCount, deletedCount) = await repository.ClearSnapshotAsync(command.AccountId, cancellationToken);
-        logger.LogInformation(
+        var (deletedDocumentsCount, deletedCount) = await _repository.ClearSnapshotAsync(command.AccountId, cancellationToken);
+        _logger.LogInformation(
             "Existing full-sync snapshot cleared before loading MoySklad: deleted_document_count={DeletedDocumentsCount}, deleted_counterparty_count={DeletedCount}",
             deletedDocumentsCount,
             deletedCount);
@@ -86,16 +103,16 @@ public sealed class SyncProcessor(
         if (snapshot.Rows.Select(item => item.Value.Id).Distinct().Count() != snapshot.TotalCount)
             throw SnapshotChanged();
 
-        var now = timeProvider.GetUtcNow();
+        var now = _timeProvider.GetUtcNow();
         var counterparties = snapshot.Rows
-            .Select(item => normalizer.Create(command.AccountId, command.SyncRunId, item, now))
+            .Select(item => _normalizer.Create(command.AccountId, command.SyncRunId, item, now))
             .Where(IsValidForStorage)
             .ToArray();
 
         var completion = PrepareCompletion(command, run, snapshot.TotalCount, counterparties.Length, now);
-        await repository.CompleteFullAsync(command.AccountId, counterparties, completion, cancellationToken);
+        await _repository.CompleteFullAsync(command.AccountId, counterparties, completion, cancellationToken);
 
-        logger.LogInformation(
+        _logger.LogInformation(
             "Full counterparty sync completed: deleted_count={DeletedCount}, processed_count={ProcessedCount}, total_count={TotalCount}, active_count={ActiveCount}, archived_count={ArchivedCount}, window_to={WindowTo}",
             deletedCount,
             counterparties.Length,
@@ -126,17 +143,17 @@ public sealed class SyncProcessor(
                 .ThenBy(item => item.Index)
                 .Last().Row)
             .ToArray();
-        var now = timeProvider.GetUtcNow();
+        var now = _timeProvider.GetUtcNow();
         var incoming = uniqueRows
-            .Select(item => normalizer.Create(command.AccountId, command.SyncRunId, item, now))
+            .Select(item => _normalizer.Create(command.AccountId, command.SyncRunId, item, now))
             .Where(IsValidForStorage)
             .ToArray();
 
         var completion = PrepareCompletion(command, run, snapshot.TotalCount, incoming.Length, now);
-        var (insertedCount, updatedCount) = await repository.CompleteIncrementalAsync(
+        var (insertedCount, updatedCount) = await _repository.CompleteIncrementalAsync(
             command.AccountId, incoming, completion, ApplyIncomingIfCurrent, cancellationToken);
 
-        logger.LogInformation(
+        _logger.LogInformation(
             "Incremental counterparty sync completed: processed_count={ProcessedCount}, total_count={TotalCount}, inserted_count={InsertedCount}, updated_count={UpdatedCount}, active_count={ActiveCount}, archived_count={ArchivedCount}, window_from={WindowFrom}, window_to={WindowTo}",
             incoming.Length,
             snapshot.TotalCount,
@@ -223,7 +240,7 @@ public sealed class SyncProcessor(
         DateTimeOffset? windowTo,
         CancellationToken cancellationToken)
     {
-        var rawResponse = await egressClient.GetCounterpartiesAsync(
+        var rawResponse = await _egressClient.GetCounterpartiesAsync(
             command.AccountId,
             archived,
             limit,
@@ -234,20 +251,20 @@ public sealed class SyncProcessor(
             command.RequestedByUserId,
             command.MessageId.ToString("D"),
             cancellationToken);
-        return parser.Parse(rawResponse.Json);
+        return _parser.Parse(rawResponse.Json);
     }
 
     private async Task<SyncRun> EnsureRunningAsync(
         SyncRequested command,
         CancellationToken cancellationToken)
     {
-        var run = await repository.FindRunAsync(command.AccountId, command.MessageId, cancellationToken);
-        var now = timeProvider.GetUtcNow();
+        var run = await _repository.FindRunAsync(command.AccountId, command.MessageId, cancellationToken);
+        var now = _timeProvider.GetUtcNow();
         if (run is null)
         {
             var requestedMode = ModeName(command.Mode);
             var watermark = command.Mode == SyncMode.Incremental
-                ? await repository.FindWatermarkAsync(command.AccountId, cancellationToken)
+                ? await _repository.FindWatermarkAsync(command.AccountId, cancellationToken)
                 : null;
             var executionMode = command.Mode == SyncMode.Incremental && watermark is not null
                 ? ModeName(SyncMode.Incremental)
@@ -290,7 +307,7 @@ public sealed class SyncProcessor(
             run.ErrorMessage = null;
         }
 
-        await repository.SaveRunAsync(command.AccountId, run, cancellationToken);
+        await _repository.SaveRunAsync(command.AccountId, run, cancellationToken);
         return run;
     }
 
@@ -319,7 +336,7 @@ public sealed class SyncProcessor(
         CancellationToken cancellationToken)
     {
         var (code, safeMessage) = MapError(exception);
-        logger.LogError(
+        _logger.LogError(
             exception,
             "Counterparty sync failed: account_id={AccountId}, sync_run_id={SyncRunId}, message_id={MessageId}, requested_by_user_id={UserId}, error_code={ErrorCode}",
             command.AccountId,
@@ -328,14 +345,14 @@ public sealed class SyncProcessor(
             command.RequestedByUserId,
             code);
 
-        var run = await repository.ReloadRunAsync(command.AccountId, command.MessageId, cancellationToken);
-        var now = timeProvider.GetUtcNow();
+        var run = await _repository.ReloadRunAsync(command.AccountId, command.MessageId, cancellationToken);
+        var now = _timeProvider.GetUtcNow();
         run.Status = "failed";
         run.ErrorCode = code;
         run.ErrorMessage = safeMessage;
         run.CompletedAt = now;
         run.UpdatedAt = now;
-        await repository.FailAsync(command.AccountId, run,
+        await _repository.FailAsync(command.AccountId, run,
             new InboxMessage { MessageId = command.MessageId, ConsumerName = ConsumerName, ProcessedAt = now },
             CreateOutbox(new SyncFailed(Guid.NewGuid(), command.SyncRunId, command.AccountId, code, safeMessage, now), command.AccountId, now),
             cancellationToken);
@@ -375,7 +392,7 @@ public sealed class SyncProcessor(
         if (CounterpartyStorageValidator.TryValidate(counterparty, out var field, out var length, out var maxLength))
             return true;
 
-        logger.LogWarning(
+        _logger.LogWarning(
             "Counterparty skipped because a field exceeds its database limit: counterparty_id={CounterpartyId}, account_id={AccountId}, field={Field}, length={Length}, max_length={MaxLength}",
             counterparty.Id,
             counterparty.AccountId,

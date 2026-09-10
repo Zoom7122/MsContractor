@@ -8,12 +8,25 @@ namespace MsContractor.MoySkladEgressService.Controllers;
 
 [ApiController]
 [Route("internal/accounts/{accountId:guid}/documents")]
-public sealed class InternalDocumentsController(
-    IMoySkladDocumentDiscoveryService discoveryService,
-    IMoySkladDocumentChangeService changeService,
-    IMoySkladDocumentAgentAndContractService agentAndContractService,
-    IConfiguration configuration) : ControllerBase
+public sealed class InternalDocumentsController : ControllerBase
 {
+    private readonly IMoySkladDocumentDiscoveryService _discoveryService;
+    private readonly IMoySkladDocumentChangeService _changeService;
+    private readonly IMoySkladDocumentAgentAndContractService _agentAndContractService;
+    private readonly IConfiguration _configuration;
+
+    public InternalDocumentsController(
+        IMoySkladDocumentDiscoveryService discoveryService,
+        IMoySkladDocumentChangeService changeService,
+        IMoySkladDocumentAgentAndContractService agentAndContractService,
+        IConfiguration configuration)
+    {
+        _discoveryService = discoveryService;
+        _changeService = changeService;
+        _agentAndContractService = agentAndContractService;
+        _configuration = configuration;
+    }
+
     [HttpPost("discover")]
     [ProducesResponseType<MoySkladDocumentDiscoveryResponse>(StatusCodes.Status200OK)]
     public async Task<IActionResult> DiscoverAsync(
@@ -21,7 +34,7 @@ public sealed class InternalDocumentsController(
         [FromBody] MoySkladDocumentDiscoveryRequest request,
         CancellationToken cancellationToken)
     {
-        if (!InternalApiKeyAuthentication.IsAuthorized(Request, configuration))
+        if (!InternalApiKeyAuthentication.IsAuthorized(Request, _configuration))
             return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
         if (accountId == Guid.Empty)
             return BadRequest(new InternalErrorResponse("INVALID_ACCOUNT_ID", "accountId must be a non-empty guid."));
@@ -48,7 +61,7 @@ public sealed class InternalDocumentsController(
 
         try
         {
-            var result = await discoveryService.DiscoverAsync(
+            var result = await _discoveryService.DiscoverAsync(
                 accountId,
                 userId,
                 correlationId,
@@ -72,7 +85,7 @@ public sealed class InternalDocumentsController(
         [FromBody] MoySkladDocumentChangeCounterpartyRequest request,
         CancellationToken cancellationToken)
     {
-        if (!InternalApiKeyAuthentication.IsAuthorized(Request, configuration))
+        if (!InternalApiKeyAuthentication.IsAuthorized(Request, _configuration))
             return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
         if (accountId == Guid.Empty)
             return BadRequest(new InternalErrorResponse("INVALID_ACCOUNT_ID", "accountId must be a non-empty guid."));
@@ -98,7 +111,7 @@ public sealed class InternalDocumentsController(
             correlationId = Guid.NewGuid().ToString("D");
         Response.Headers[InternalApiHeaders.CorrelationId] = correlationId;
 
-        var result = await changeService.ChangeCounterpartyAsync(
+        var result = await _changeService.ChangeCounterpartyAsync(
             accountId,
             userId,
             mergeJobId,
@@ -119,7 +132,7 @@ public sealed class InternalDocumentsController(
         [FromBody] MoySkladDocumentChangeAgentAndContractRequest request,
         CancellationToken cancellationToken)
     {
-        if (!InternalApiKeyAuthentication.IsAuthorized(Request, configuration))
+        if (!InternalApiKeyAuthentication.IsAuthorized(Request, _configuration))
             return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
         if (accountId == Guid.Empty)
             return BadRequest(new InternalErrorResponse("INVALID_ACCOUNT_ID", "accountId must be a non-empty guid."));
@@ -146,7 +159,7 @@ public sealed class InternalDocumentsController(
             correlationId = Guid.NewGuid().ToString("D");
         Response.Headers[InternalApiHeaders.CorrelationId] = correlationId;
 
-        var result = await agentAndContractService.ChangeAgentAndContractAsync(
+        var result = await _agentAndContractService.ChangeAgentAndContractAsync(
             accountId, userId, mergeJobId, operationId, correlationId, request, cancellationToken);
         return result.FailedCount == 0
             ? Ok(result)

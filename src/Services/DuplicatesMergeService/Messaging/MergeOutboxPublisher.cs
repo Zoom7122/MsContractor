@@ -3,16 +3,27 @@ using Confluent.Kafka;
 
 namespace MsContractor.DuplicatesMergeService.Messaging;
 
-public sealed class MergeOutboxPublisher(
-    IServiceScopeFactory scopeFactory,
-    IProducer<string, string> producer,
-    ILogger<MergeOutboxPublisher> logger) : BackgroundService
+public sealed class MergeOutboxPublisher : BackgroundService
 {
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IProducer<string, string> _producer;
+    private readonly ILogger<MergeOutboxPublisher> _logger;
+
+    public MergeOutboxPublisher(
+        IServiceScopeFactory scopeFactory,
+        IProducer<string, string> producer,
+        ILogger<MergeOutboxPublisher> logger)
+    {
+        _scopeFactory = scopeFactory;
+        _producer = producer;
+        _logger = logger;
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            await using var scope = scopeFactory.CreateAsyncScope();
+            await using var scope = _scopeFactory.CreateAsyncScope();
             var repository = scope.ServiceProvider.GetRequiredService<IMergeOutboxRepository>();
             var messages = await repository.GetPendingAsync(stoppingToken);
             if (messages.Count == 0)
@@ -26,7 +37,7 @@ public sealed class MergeOutboxPublisher(
             {
                 try
                 {
-                    await producer.ProduceAsync(
+                    await _producer.ProduceAsync(
                         message.Topic,
                         new Message<string, string>
                         {
@@ -43,7 +54,7 @@ public sealed class MergeOutboxPublisher(
                     failed = true;
                     message.PublishAttempts++;
                     message.LastError = exception.Error.Code.ToString();
-                    logger.LogWarning(
+                    _logger.LogWarning(
                         "Could not publish merge outbox message {MessageId}; attempt {Attempt}.",
                         message.Id, message.PublishAttempts);
                 }

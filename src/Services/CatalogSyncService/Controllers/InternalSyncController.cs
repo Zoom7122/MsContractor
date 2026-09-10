@@ -8,17 +8,26 @@ namespace MsContractor.CatalogSyncService.Controllers;
 
 [ApiController]
 [Route("internal/sync")]
-public sealed class InternalSyncController(
-    ISyncRequestService service,
-    IConfiguration configuration) : ControllerBase
+public sealed class InternalSyncController : ControllerBase
 {
+    private readonly ISyncRequestService _service;
+    private readonly IConfiguration _configuration;
+
+    public InternalSyncController(
+        ISyncRequestService service,
+        IConfiguration configuration)
+    {
+        _service = service;
+        _configuration = configuration;
+    }
+
     [HttpPost]
     [ProducesResponseType<SyncAccepted>(StatusCodes.Status202Accepted)]
     public async Task<IActionResult> CreateAsync(
         [FromBody] SyncStartRequest request,
         CancellationToken cancellationToken)
     {
-        if (!InternalApiKeyAuthentication.IsAuthorized(Request, configuration))
+        if (!InternalApiKeyAuthentication.IsAuthorized(Request, _configuration))
             return Unauthorized(new { code = "INTERNAL_UNAUTHORIZED", message = "Internal authentication failed." });
 
         if (request.AccountId == Guid.Empty ||
@@ -30,7 +39,7 @@ public sealed class InternalSyncController(
 
         try
         {
-            return Accepted(await service.StartAsync(request, cancellationToken));
+            return Accepted(await _service.StartAsync(request, cancellationToken));
         }
         catch (SyncQueueUnavailableException)
         {

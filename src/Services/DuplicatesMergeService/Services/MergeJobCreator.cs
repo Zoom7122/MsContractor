@@ -17,11 +17,22 @@ public interface IMergeJobCreator
         CancellationToken cancellationToken);
 }
 
-public sealed class MergeJobCreator(
-    IMergeRepository repository,
-    ICounterpartyRepository counterpartyRepository,
-    TimeProvider timeProvider) : IMergeJobCreator
+public sealed class MergeJobCreator : IMergeJobCreator
 {
+    private readonly IMergeRepository _repository;
+    private readonly ICounterpartyRepository _counterpartyRepository;
+    private readonly TimeProvider _timeProvider;
+
+    public MergeJobCreator(
+        IMergeRepository repository,
+        ICounterpartyRepository counterpartyRepository,
+        TimeProvider timeProvider)
+    {
+        _repository = repository;
+        _counterpartyRepository = counterpartyRepository;
+        _timeProvider = timeProvider;
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
 /// <summary>
@@ -43,7 +54,7 @@ public sealed class MergeJobCreator(
     {
         ValidateShape(request);
         var ids = request.DuplicateCounterpartyIds.Append(request.MainCounterpartyId).ToArray();
-        var counterparties = await counterpartyRepository.GetAvailabilityAsync(accountId, ids, cancellationToken);
+        var counterparties = await _counterpartyRepository.GetAvailabilityAsync(accountId, ids, cancellationToken);
         if (counterparties.Count != ids.Length)
         {
             throw new MergeRequestException(
@@ -60,7 +71,7 @@ public sealed class MergeJobCreator(
                 "The main counterparty is archived.");
         }
 
-        var now = timeProvider.GetUtcNow();
+        var now = _timeProvider.GetUtcNow();
         var jobId = Guid.NewGuid();
         var messageId = Guid.NewGuid();
         var command = new MergeRequested(
@@ -110,7 +121,7 @@ public sealed class MergeJobCreator(
             Payload = JsonSerializer.Serialize(command, JsonOptions),
             CreatedAt = now
         };
-        await repository.CreateAsync(accountId, job, outbox, cancellationToken);
+        await _repository.CreateAsync(accountId, job, outbox, cancellationToken);
         return new MergeJobAccepted(jobId, MergeJobStatuses.Pending);
     }
 

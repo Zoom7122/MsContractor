@@ -20,9 +20,25 @@ public interface IMoySkladSalesReturnGateway
         IReadOnlyList<SalesReturnOperationItem> items, CancellationToken cancellationToken);
 }
 
-public sealed class MoySkladSalesReturnGateway(HttpClient httpClient, IVendorTokenClient tokens,
-    IMoySkladRateLimiter limiter, IMoySkladResponseHandler responses) : IMoySkladSalesReturnGateway
+public sealed class MoySkladSalesReturnGateway : IMoySkladSalesReturnGateway
 {
+    private readonly HttpClient _httpClient;
+    private readonly IVendorTokenClient _tokens;
+    private readonly IMoySkladRateLimiter _limiter;
+    private readonly IMoySkladResponseHandler _responses;
+
+    public MoySkladSalesReturnGateway(
+        HttpClient httpClient,
+        IVendorTokenClient tokens,
+        IMoySkladRateLimiter limiter,
+        IMoySkladResponseHandler responses)
+    {
+        _httpClient = httpClient;
+        _tokens = tokens;
+        _limiter = limiter;
+        _responses = responses;
+    }
+
     public async Task ValidateAsync(SalesReturnCallContext context, Guid mainId, RecreateSalesReturnItem item, CancellationToken cancellationToken)
     {
         var original = await GetAsync(context, $"entity/salesreturn/{item.OldDocumentId:D}", cancellationToken);
@@ -120,28 +136,28 @@ public sealed class MoySkladSalesReturnGateway(HttpClient httpClient, IVendorTok
         var watch = Stopwatch.StartNew();
         try
         {
-            var token = await tokens.GetAccessTokenAsync(context.AccountId, cancellationToken);
-            await limiter.WaitAsync(context.AccountId, context.UserId, cancellationToken);
+            var token = await _tokens.GetAccessTokenAsync(context.AccountId, cancellationToken);
+            await _limiter.WaitAsync(context.AccountId, context.UserId, cancellationToken);
             using var request = new HttpRequestMessage(method, path);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             request.Headers.TryAddWithoutValidation("X-Correlation-Id", context.CorrelationId);
             request.Headers.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
             if (body is not null) request.Content = new StringContent(body, Encoding.UTF8, "application/json");
-            using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            await limiter.ObserveAsync(context.AccountId, response, cancellationToken);
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            await _limiter.ObserveAsync(context.AccountId, response, cancellationToken);
             // No business payloads are sent to the diagnostic body logger for this operation.
             if (!response.IsSuccessStatusCode)
             {
                 using var safeResponse = new HttpResponseMessage(response.StatusCode)
                     { Content = new StringContent("{\"errors\":[{\"error\":\"MoySklad rejected the salesreturn request.\"}]}") };
-                await responses.ReadAsync(safeResponse, requestContext, watch.Elapsed, cancellationToken);
+                await _responses.ReadAsync(safeResponse, requestContext, watch.Elapsed, cancellationToken);
             }
             return await response.Content.ReadAsStringAsync(cancellationToken);
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
-        { throw responses.TransportFailure(requestContext, "MoySklad request timed out.", watch.Elapsed, exception); }
+        { throw _responses.TransportFailure(requestContext, "MoySklad request timed out.", watch.Elapsed, exception); }
         catch (Exception exception) when (exception is HttpRequestException or IOException)
-        { throw responses.TransportFailure(requestContext, "MoySklad is unavailable.", watch.Elapsed, exception); }
+        { throw _responses.TransportFailure(requestContext, "MoySklad is unavailable.", watch.Elapsed, exception); }
     }
 
     private static Guid? ReadGuid(JsonNode? node) => node is JsonValue value && value.TryGetValue<string>(out var text) && Guid.TryParse(text, out var id) ? id : null;
@@ -152,7 +168,7 @@ public sealed class MoySkladSalesReturnGateway(HttpClient httpClient, IVendorTok
         if (document["agent"] is not JsonObject agent || agent["meta"] is not JsonObject meta ||
             meta["type"]?.ToString() != "counterparty" ||
             !Uri.TryCreate(meta["href"]?.ToString(), UriKind.Absolute, out var actual) ||
-            actual.GetLeftPart(UriPartial.Path) != new Uri(httpClient.BaseAddress!, $"entity/counterparty/{expected:D}").AbsoluteUri)
+            actual.GetLeftPart(UriPartial.Path) != new Uri(_httpClient.BaseAddress!, $"entity/counterparty/{expected:D}").AbsoluteUri)
             throw Invalid("The entity does not belong to the expected counterparty.");
     }
     private static EgressException Invalid(string message) => new(422, "SALESRETURN_PRECONDITION_FAILED", message, retryable: false);

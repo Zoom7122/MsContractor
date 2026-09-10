@@ -14,56 +14,64 @@ public interface IMergeRepository
     Task SaveInboxAsync(Guid accountId, InboxMessage inbox, CancellationToken cancellationToken);
 }
 
-public sealed class MergeRepository(CatalogSyncDbContext dbContext) : IMergeRepository
+public sealed class MergeRepository : IMergeRepository
 {
+    private readonly CatalogSyncDbContext _dbContext;
+
+    public MergeRepository(
+        CatalogSyncDbContext dbContext)
+    {
+        _dbContext = dbContext;
+    }
+
     public async Task<bool> HasProcessedAsync(Guid accountId, Guid messageId, string consumerName, CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
-        return await dbContext.InboxMessages.AnyAsync(x => x.MessageId == messageId && x.ConsumerName == consumerName, cancellationToken);
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
+        return await _dbContext.InboxMessages.AnyAsync(x => x.MessageId == messageId && x.ConsumerName == consumerName, cancellationToken);
     }
     public async Task<MergeJob?> FindJobAsync(Guid accountId, Guid jobId, CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
-        return await dbContext.MergeJobs.Include(x => x.Operations).SingleOrDefaultAsync(x => x.AccountId == accountId && x.Id == jobId, cancellationToken);
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
+        return await _dbContext.MergeJobs.Include(x => x.Operations).SingleOrDefaultAsync(x => x.AccountId == accountId && x.Id == jobId, cancellationToken);
     }
     public async Task CreateAsync(Guid accountId, MergeJob job, SyncOutboxMessage outbox, CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
         if (job.AccountId != accountId || job.Operations.Any(x => x.AccountId != accountId))
             throw new InvalidOperationException("Merge job belongs to another account.");
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        dbContext.MergeJobs.Add(job);
-        dbContext.OutboxMessages.Add(outbox);
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        _dbContext.MergeJobs.Add(job);
+        _dbContext.OutboxMessages.Add(outbox);
+        await _dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
     public async Task InsertOperationAsync(Guid accountId, MergeJob job, MergeOperation operation, CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
         if (job.AccountId != accountId || operation.AccountId != accountId || operation.MergeJobId != job.Id)
             throw new InvalidOperationException("Merge operation belongs to another job or account.");
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
         // Shift from the end, saving each step to preserve the unique sequence index.
         foreach (var existing in job.Operations.Where(x => x.Sequence >= operation.Sequence).OrderByDescending(x => x.Sequence))
         {
             existing.Sequence++;
-            await dbContext.SaveChangesAsync(cancellationToken);
+            await _dbContext.SaveChangesAsync(cancellationToken);
         }
         job.Operations.Add(operation);
-        dbContext.MergeOperations.Add(operation);
-        await dbContext.SaveChangesAsync(cancellationToken);
+        _dbContext.MergeOperations.Add(operation);
+        await _dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
     public async Task SaveProgressAsync(Guid accountId, CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
     }
     public async Task SaveInboxAsync(Guid accountId, InboxMessage inbox, CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
-        if (!dbContext.InboxMessages.Local.Any(x => x.MessageId == inbox.MessageId && x.ConsumerName == inbox.ConsumerName))
-            dbContext.InboxMessages.Add(inbox);
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
+        if (!_dbContext.InboxMessages.Local.Any(x => x.MessageId == inbox.MessageId && x.ConsumerName == inbox.ConsumerName))
+            _dbContext.InboxMessages.Add(inbox);
+        await _dbContext.SaveChangesAsync(cancellationToken);
     }
 }

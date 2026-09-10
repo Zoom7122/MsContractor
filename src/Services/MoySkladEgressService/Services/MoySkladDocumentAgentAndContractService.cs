@@ -12,17 +12,28 @@ public interface IMoySkladDocumentAgentAndContractService
         MoySkladDocumentChangeAgentAndContractRequest request, CancellationToken cancellationToken);
 }
 
-public sealed class MoySkladDocumentAgentAndContractService(
-    IMoySkladDocumentGateway gateway,
-    MoySkladDocumentAgentAndContractOptions options,
-    ILogger<MoySkladDocumentAgentAndContractService> logger) : IMoySkladDocumentAgentAndContractService
+public sealed class MoySkladDocumentAgentAndContractService : IMoySkladDocumentAgentAndContractService
 {
+    private readonly IMoySkladDocumentGateway _gateway;
+    private readonly MoySkladDocumentAgentAndContractOptions _options;
+    private readonly ILogger<MoySkladDocumentAgentAndContractService> _logger;
+
+    public MoySkladDocumentAgentAndContractService(
+        IMoySkladDocumentGateway gateway,
+        MoySkladDocumentAgentAndContractOptions options,
+        ILogger<MoySkladDocumentAgentAndContractService> logger)
+    {
+        _gateway = gateway;
+        _options = options;
+        _logger = logger;
+    }
+
     public async Task<MoySkladDocumentChangeCounterpartyResponse> ChangeAgentAndContractAsync(
         Guid accountId, Guid requestedByUserId, Guid mergeJobId, Guid operationId, string correlationId,
         MoySkladDocumentChangeAgentAndContractRequest request, CancellationToken cancellationToken)
     {
         var documents = request.Documents!;
-        var configuredTypes = options.DocumentTypes.ToHashSet(StringComparer.Ordinal);
+        var configuredTypes = _options.DocumentTypes.ToHashSet(StringComparer.Ordinal);
         var skipped = documents.Where(item => !configuredTypes.Contains(item.DocumentType))
             .Select(item => new MoySkladDocumentChangeSkippedItem(item.DocumentType, item.DocumentId,
                 "DOCUMENT_TYPE_NOT_CONFIGURED")).ToList();
@@ -37,7 +48,7 @@ public sealed class MoySkladDocumentAgentAndContractService(
         {
             try
             {
-                var result = await gateway.ChangeContractAgentsAsync(
+                var result = await _gateway.ChangeContractAgentsAsync(
                     accountId, requestedByUserId, mergeJobId, operationId, correlationId,
                     request.MainCounterpartyId, chunk, cancellationToken);
                 foreach (var failure in result.Failures)
@@ -65,7 +76,7 @@ public sealed class MoySkladDocumentAgentAndContractService(
         }
 
         var blockedDocuments = failures.Select(item => item.DocumentId).ToHashSet();
-        foreach (var documentType in options.DocumentTypes)
+        foreach (var documentType in _options.DocumentTypes)
         {
             var typedDocuments = processable.Where(item =>
                 string.Equals(item.DocumentType, documentType, StringComparison.Ordinal) &&
@@ -75,7 +86,7 @@ public sealed class MoySkladDocumentAgentAndContractService(
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    var result = await gateway.ChangeAgentAndContractAsync(
+                    var result = await _gateway.ChangeAgentAndContractAsync(
                         accountId, requestedByUserId, mergeJobId, operationId, correlationId,
                         request.MainCounterpartyId, documentType, chunk, cancellationToken);
                     changed.AddRange(result.ChangedDocuments);
@@ -88,7 +99,7 @@ public sealed class MoySkladDocumentAgentAndContractService(
                         exception.HttpStatus ?? exception.StatusCode, exception.Retryable,
                         chunk.Length == 1 ? $"entity/{documentType}/{item.DocumentId:D}" : $"entity/{documentType}/batch",
                         exception.MoySkladErrorCode, exception.MoySkladErrorMessage, exception.ValidationError)));
-                    logger.Log(exception.Retryable ? LogLevel.Warning : LogLevel.Error,
+                    _logger.Log(exception.Retryable ? LogLevel.Warning : LogLevel.Error,
                         "MoySklad document agent and contract chunk failed: account_id={AccountId}, merge_job_id={MergeJobId}, merge_operation_id={OperationId}, correlation_id={CorrelationId}, entity_type={DocumentType}, chunk_size={ChunkSize}, error_code={ErrorCode}",
                         accountId, mergeJobId, operationId, correlationId, documentType, chunk.Length, exception.Code);
                 }

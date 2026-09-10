@@ -10,10 +10,19 @@ namespace MsContractor.MoySkladEgressService.Controllers;
 
 [ApiController]
 [Route("internal/accounts/{accountId:guid}/counterparties")]
-public sealed class InternalCounterpartiesController(
-    IMoySkladCounterpartyGateway gateway,
-    IConfiguration configuration) : ControllerBase
+public sealed class InternalCounterpartiesController : ControllerBase
 {
+    private readonly IMoySkladCounterpartyGateway _gateway;
+    private readonly IConfiguration _configuration;
+
+    public InternalCounterpartiesController(
+        IMoySkladCounterpartyGateway gateway,
+        IConfiguration configuration)
+    {
+        _gateway = gateway;
+        _configuration = configuration;
+    }
+
     [HttpGet]
     public async Task<IActionResult> GetAsync(
         Guid accountId,
@@ -24,7 +33,7 @@ public sealed class InternalCounterpartiesController(
         [FromQuery] DateTimeOffset? windowTo = null,
         CancellationToken cancellationToken = default)
     {
-        if (!InternalApiKeyAuthentication.IsAuthorized(Request, configuration))
+        if (!InternalApiKeyAuthentication.IsAuthorized(Request, _configuration))
             return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
         if (limit is < 1 or > 1000)
             return BadRequest(new InternalErrorResponse("INVALID_LIMIT", "limit must be between 1 and 1000."));
@@ -50,7 +59,7 @@ public sealed class InternalCounterpartiesController(
 
         try
         {
-            var result = await gateway.GetAsync(
+            var result = await _gateway.GetAsync(
                 accountId,
                 archived,
                 limit,
@@ -81,7 +90,7 @@ public sealed class InternalCounterpartiesController(
         [FromBody] InternalCounterpartyUpdateRequest request,
         CancellationToken cancellationToken)
     {
-        if (!InternalApiKeyAuthentication.IsAuthorized(Request, configuration))
+        if (!InternalApiKeyAuthentication.IsAuthorized(Request, _configuration))
             return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
         if (counterpartyId == Guid.Empty || string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(new InternalErrorResponse("INVALID_COUNTERPARTY_UPDATE", "Counterparty update is invalid."));
@@ -89,7 +98,7 @@ public sealed class InternalCounterpartiesController(
             return BadRequest(new InternalErrorResponse("INVALID_INTERNAL_CONTEXT", "Merge job, operation, and user headers are required."));
 
         return await ExecutePutAsync(
-            () => gateway.UpdateAsync(
+            () => _gateway.UpdateAsync(
                 accountId, counterpartyId, request, mergeJobId, operationId, userId,
                 CorrelationId(), cancellationToken),
             cancellationToken);
@@ -101,7 +110,7 @@ public sealed class InternalCounterpartiesController(
         [FromBody] InternalCounterpartyBatchArchiveRequest request,
         CancellationToken cancellationToken)
     {
-        if (!InternalApiKeyAuthentication.IsAuthorized(Request, configuration))
+        if (!InternalApiKeyAuthentication.IsAuthorized(Request, _configuration))
             return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
         if (request.CounterpartyIds is null || request.CounterpartyIds.Count == 0 ||
             request.CounterpartyIds.Any(id => id == Guid.Empty) ||
@@ -116,7 +125,7 @@ public sealed class InternalCounterpartiesController(
         }
 
         return await ExecutePutAsync(
-            () => gateway.ArchiveAsync(
+            () => _gateway.ArchiveAsync(
                 accountId, request.CounterpartyIds, mergeJobId, userId,
                 CorrelationId(), cancellationToken),
             cancellationToken);

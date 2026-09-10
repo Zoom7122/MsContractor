@@ -4,10 +4,19 @@ using Microsoft.Extensions.Logging;
 
 namespace MsContractor.VendorService.Middleware;
 
-public sealed class VendorRequestLoggingMiddleware(
-    RequestDelegate next,
-    ILogger<VendorRequestLoggingMiddleware> logger)
+public sealed class VendorRequestLoggingMiddleware
 {
+    private readonly RequestDelegate _next;
+    private readonly ILogger<VendorRequestLoggingMiddleware> _logger;
+
+    public VendorRequestLoggingMiddleware(
+        RequestDelegate next,
+        ILogger<VendorRequestLoggingMiddleware> logger)
+    {
+        _next = next;
+        _logger = logger;
+    }
+
     private const string CorrelationIdHeaderName = "X-Correlation-Id";
 
     public async Task InvokeAsync(HttpContext context)
@@ -21,18 +30,18 @@ public sealed class VendorRequestLoggingMiddleware(
 
         if (context.Request.Path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase))
         {
-            await next(context);
+            await _next(context);
             return;
         }
 
-        using (logger.BeginScope(new Dictionary<string, object?>
+        using (_logger.BeginScope(new Dictionary<string, object?>
         {
             ["correlation_id"] = correlationId
         }))
         {
             var startedAtUtc = DateTimeOffset.UtcNow;
             var stopwatch = Stopwatch.StartNew();
-            logger.LogInformation(
+            _logger.LogInformation(
                 "VendorService request started at {StartedAtUtc}: {Method} {Path} with correlation {CorrelationId}",
                 startedAtUtc,
                 context.Request.Method,
@@ -41,7 +50,7 @@ public sealed class VendorRequestLoggingMiddleware(
 
             try
             {
-                await next(context);
+                await _next(context);
             }
             finally
             {
@@ -51,7 +60,7 @@ public sealed class VendorRequestLoggingMiddleware(
                     >= StatusCodes.Status400BadRequest => LogLevel.Warning,
                     _ => LogLevel.Information
                 };
-                logger.Log(
+                _logger.Log(
                     completionLogLevel,
                     "VendorService request completed at {CompletedAtUtc}: {Method} {Path} returned {StatusCode} in {DurationMs} ms with correlation {CorrelationId}",
                     DateTimeOffset.UtcNow,

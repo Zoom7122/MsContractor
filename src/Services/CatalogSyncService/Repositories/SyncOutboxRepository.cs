@@ -12,12 +12,20 @@ public interface ISyncOutboxRepository
 }
 
 // Infrastructure dispatch deliberately reads pending messages for every account.
-public sealed class SyncOutboxRepository(CatalogSyncDbContext dbContext) : ISyncOutboxRepository
+public sealed class SyncOutboxRepository : ISyncOutboxRepository
 {
+    private readonly CatalogSyncDbContext _dbContext;
+
+    public SyncOutboxRepository(
+        CatalogSyncDbContext dbContext)
+    {
+        _dbContext = dbContext;
+    }
+
     public async Task<IReadOnlyList<SyncOutboxMessage>> GetPendingAsync(CancellationToken cancellationToken) =>
-        await dbContext.OutboxMessages.Where(x => x.PublishedAt == null && (x.EventType == nameof(SyncCompleted) || x.EventType == nameof(SyncFailed)))
+        await _dbContext.OutboxMessages.Where(x => x.PublishedAt == null && (x.EventType == nameof(SyncCompleted) || x.EventType == nameof(SyncFailed)))
             .OrderBy(x => x.CreatedAt).Take(50).ToListAsync(cancellationToken);
 
     public async Task SavePublicationResultsAsync(CancellationToken cancellationToken) =>
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
 }

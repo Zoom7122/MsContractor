@@ -13,15 +13,23 @@ public interface IDuplicatePreviewService
         CancellationToken cancellationToken);
 }
 
-public sealed class DuplicatePreviewService(ICounterpartyRepository repository) : IDuplicatePreviewService
+public sealed class DuplicatePreviewService : IDuplicatePreviewService
 {
+    private readonly ICounterpartyRepository _repository;
+
+    public DuplicatePreviewService(
+        ICounterpartyRepository repository)
+    {
+        _repository = repository;
+    }
+
     public async Task<IReadOnlyList<DuplicateGroupDto>> FindAsync(
         Guid accountId,
         IReadOnlyCollection<DuplicateMatchField> fields,
         CancellationToken cancellationToken)
     {
 
-        var candidates = await repository.GetCandidatesAsync(accountId, cancellationToken);
+        var candidates = await _repository.GetCandidatesAsync(accountId, cancellationToken);
 
         var groups = new Dictionary<string, DuplicateGroupCandidate>();
         AddGroups(DuplicateMatchField.Name, fields.Contains(DuplicateMatchField.Name), candidates, item => item.NormalizedName, groups);
@@ -31,7 +39,7 @@ public sealed class DuplicatePreviewService(ICounterpartyRepository repository) 
             return [];
 
         var ids = groups.Values.SelectMany(group => group.Ids).Distinct().ToArray();
-        var displayItems = await repository.GetDisplayItemsAsync(accountId, ids, cancellationToken);
+        var displayItems = await _repository.GetDisplayItemsAsync(accountId, ids, cancellationToken);
         var byId = displayItems.ToDictionary(item => item.Id, ToDto);
 
         return groups.Values

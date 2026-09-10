@@ -10,9 +10,16 @@ public interface IMoySkladRateLimiter
         CancellationToken cancellationToken);
 }
 
-public sealed class ObservingMoySkladRateLimiter(
-    ILogger<ObservingMoySkladRateLimiter> logger) : IMoySkladRateLimiter
+public sealed class ObservingMoySkladRateLimiter : IMoySkladRateLimiter
 {
+    private readonly ILogger<ObservingMoySkladRateLimiter> _logger;
+
+    public ObservingMoySkladRateLimiter(
+        ILogger<ObservingMoySkladRateLimiter> logger)
+    {
+        _logger = logger;
+    }
+
     public Task WaitAsync(Guid accountId, Guid? userId, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -25,7 +32,7 @@ public sealed class ObservingMoySkladRateLimiter(
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        logger.LogInformation(
+        _logger.LogInformation(
             "MoySklad rate limit observed for account {AccountId}: status={StatusCode}, limit={Limit}, remaining={Remaining}, retryAfterMs={RetryAfterMs}, resetMs={ResetMs}",
             accountId,
             (int)response.StatusCode,

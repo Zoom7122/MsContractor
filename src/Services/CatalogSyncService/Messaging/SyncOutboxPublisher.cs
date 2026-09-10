@@ -3,17 +3,28 @@ using Confluent.Kafka;
 
 namespace MsContractor.CatalogSyncService.Messaging;
 
-public sealed class SyncOutboxPublisher(
-    IServiceScopeFactory scopeFactory,
-    IProducer<string, string> producer,
-    ILogger<SyncOutboxPublisher> logger) : BackgroundService
+public sealed class SyncOutboxPublisher : BackgroundService
 {
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IProducer<string, string> _producer;
+    private readonly ILogger<SyncOutboxPublisher> _logger;
+
+    public SyncOutboxPublisher(
+        IServiceScopeFactory scopeFactory,
+        IProducer<string, string> producer,
+        ILogger<SyncOutboxPublisher> logger)
+    {
+        _scopeFactory = scopeFactory;
+        _producer = producer;
+        _logger = logger;
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
             var publishFailed = false;
-            await using var scope = scopeFactory.CreateAsyncScope();
+            await using var scope = _scopeFactory.CreateAsyncScope();
             var repository = scope.ServiceProvider.GetRequiredService<ISyncOutboxRepository>();
             var messages = await repository.GetPendingAsync(stoppingToken);
             if (messages.Count == 0)
@@ -26,7 +37,7 @@ public sealed class SyncOutboxPublisher(
             {
                 try
                 {
-                    await producer.ProduceAsync(
+                    await _producer.ProduceAsync(
                         message.Topic,
                         new Message<string, string>
                         {
@@ -48,7 +59,7 @@ public sealed class SyncOutboxPublisher(
                     publishFailed = true;
                     message.PublishAttempts++;
                     message.LastError = exception.Error.Code.ToString();
-                    logger.LogWarning(
+                    _logger.LogWarning(
                         "Could not publish sync outbox event {EventId}; attempt {Attempt}.",
                         message.Id,
                         message.PublishAttempts);

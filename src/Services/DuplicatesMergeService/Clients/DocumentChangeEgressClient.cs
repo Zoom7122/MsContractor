@@ -29,10 +29,19 @@ public interface IDocumentChangeEgressClient
         CancellationToken cancellationToken);
 }
 
-public sealed class DocumentChangeEgressClient(
-    HttpClient httpClient,
-    IConfiguration configuration) : IDocumentChangeEgressClient
+public sealed class DocumentChangeEgressClient : IDocumentChangeEgressClient
 {
+    private readonly HttpClient _httpClient;
+    private readonly IConfiguration _configuration;
+
+    public DocumentChangeEgressClient(
+        HttpClient httpClient,
+        IConfiguration configuration)
+    {
+        _httpClient = httpClient;
+        _configuration = configuration;
+    }
+
     public Task<RecreateSalesReturnsResponse> RecreateSalesReturnsAsync(Guid accountId, RecreateSalesReturnsRequest request,
         Guid mergeJobId, Guid operationId, Guid userId, Guid correlationId, CancellationToken cancellationToken) =>
         SendAsync<RecreateSalesReturnsRequest, RecreateSalesReturnsResponse>(accountId, "salesreturn/recreate", request,
@@ -94,7 +103,7 @@ public sealed class DocumentChangeEgressClient(
         {
             Content = JsonContent.Create(payload)
         };
-        request.Headers.TryAddWithoutValidation(InternalApiHeaders.ApiKey, configuration["InternalApi:Key"]);
+        request.Headers.TryAddWithoutValidation(InternalApiHeaders.ApiKey, _configuration["InternalApi:Key"]);
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.MergeJobId, mergeJobId.ToString("D"));
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.OperationId, operationId.ToString("D"));
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.UserId, userId.ToString("D"));
@@ -103,7 +112,7 @@ public sealed class DocumentChangeEgressClient(
         HttpResponseMessage response;
         try
         {
-            response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

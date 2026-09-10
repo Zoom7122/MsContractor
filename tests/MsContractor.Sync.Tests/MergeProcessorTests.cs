@@ -15,11 +15,45 @@ using MsContractor.CatalogSyncService.Services;
 using MsContractor.Contracts.Merge;
 using MsContractor.Contracts.Internal;
 using MsContractor.DuplicatesMergeService.Services;
+using MsContractor.DuplicatesMergeService.Services.Merge;
+using MsContractor.DuplicatesMergeService.Services.Merge.Counterparties;
+using MsContractor.DuplicatesMergeService.Services.Merge.Documents;
 
 namespace MsContractor.Sync.Tests;
 
 public sealed class MergeProcessorTests
 {
+    [Fact]
+    public async Task ProcessAsync_RejectsCommandThatDoesNotMatchDurableJob()
+    {
+        await using var fixture = await Fixture.CreateAsync(1);
+        var command = await fixture.CreateJobAsync();
+
+        await Assert.ThrowsAsync<MergeCommandRejectedException>(() =>
+            fixture.Processor.ProcessAsync(command with { CorrelationId = Guid.NewGuid() }, CancellationToken.None));
+
+        Assert.Empty(fixture.Egress.UpdateCalls);
+        Assert.Empty(fixture.Egress.ArchiveCalls);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_TerminalJobOnlyRecordsInboxMessage()
+    {
+        await using var fixture = await Fixture.CreateAsync(1);
+        var command = await fixture.CreateJobAsync();
+        var job = await fixture.Db.MergeJobs.SingleAsync();
+        job.Status = MergeJobStatuses.Completed;
+        await fixture.Db.SaveChangesAsync();
+        fixture.Db.ChangeTracker.Clear();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        Assert.Single(await fixture.Db.InboxMessages.ToListAsync());
+        Assert.Empty(fixture.Documents.Calls);
+        Assert.Empty(fixture.Egress.UpdateCalls);
+        Assert.Empty(fixture.Egress.ArchiveCalls);
+    }
+
     [Fact]
     public async Task SalesReturnsRunAfterOrdinaryDocumentsAndReplaceLocalIdsAndData()
     {
@@ -489,14 +523,33 @@ public sealed class MergeProcessorTests
         public Guid AccountId { get; } = Guid.NewGuid();
         public Counterparty Main { get; private set; } = null!;
         public List<Counterparty> Duplicates { get; } = [];
-        public MergeProcessor Processor => new(
-            new MergeRepository(Db), new CounterpartyRepository(Db), new DocumentSnapshotRepository(Db), Egress, Documents, DocumentChanges, new MoySkladCounterpartyParser(), new CounterpartyNormalizer(),
-            TimeProvider.System,
-            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        public MergeProcessor Processor
+        {
+            get
             {
-                ["Merge:MaxOperationAttempts"] = maxAttempts.ToString()
-            }).Build(),
-            NullLogger<MergeProcessor>.Instance);
+                var repository = new MergeRepository(Db);
+                var snapshots = new DocumentSnapshotRepository(Db);
+                var counterparties = new CounterpartyRepository(Db);
+                var parser = new MoySkladCounterpartyParser();
+                var normalizer = new CounterpartyNormalizer();
+                var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Merge:MaxOperationAttempts"] = maxAttempts.ToString()
+                }).Build();
+                var state = new MergeOperationStateService(repository, TimeProvider.System, configuration,
+                    NullLogger<MergeOperationStateService>.Instance);
+                return new MergeProcessor(
+                    new MergeCommandValidator(repository, TimeProvider.System),
+                    state,
+                    new MergeDocumentDiscoveryService(Documents, snapshots, TimeProvider.System,
+                        NullLogger<MergeDocumentDiscoveryService>.Instance),
+                    new MergeMainCounterpartyUpdateService(Egress, counterparties, parser, normalizer, TimeProvider.System),
+                    new MergeDocumentChangeService(snapshots, DocumentChanges,
+                        new SalesReturnRecreationService(snapshots, DocumentChanges, TimeProvider.System), TimeProvider.System),
+                    new MergeCounterpartyArchiveService(Egress, counterparties, parser, normalizer, TimeProvider.System),
+                    NullLogger<MergeProcessor>.Instance);
+            }
+        }
 
         public static async Task<Fixture> CreateAsync(int duplicateCount, int maxAttempts = 5)
         {

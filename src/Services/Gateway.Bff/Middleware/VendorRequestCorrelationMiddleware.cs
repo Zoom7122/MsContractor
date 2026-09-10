@@ -4,10 +4,19 @@ using Microsoft.Extensions.Logging;
 
 namespace MsContractor.Gateway.Bff.Middleware;
 
-public sealed class VendorRequestCorrelationMiddleware(
-    RequestDelegate next,
-    ILogger<VendorRequestCorrelationMiddleware> logger)
+public sealed class VendorRequestCorrelationMiddleware
 {
+    private readonly RequestDelegate _next;
+    private readonly ILogger<VendorRequestCorrelationMiddleware> _logger;
+
+    public VendorRequestCorrelationMiddleware(
+        RequestDelegate next,
+        ILogger<VendorRequestCorrelationMiddleware> logger)
+    {
+        _next = next;
+        _logger = logger;
+    }
+
     public const string CorrelationIdHeaderName = "X-Correlation-Id";
     public const string CorrelationIdItemName = "CorrelationId";
     private const string MoyskladPathPrefix = "/api/moysklad/";
@@ -27,11 +36,11 @@ public sealed class VendorRequestCorrelationMiddleware(
 
         if (context.Request.Path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase))
         {
-            await next(context);
+            await _next(context);
             return;
         }
 
-        using (logger.BeginScope(new Dictionary<string, object?>
+        using (_logger.BeginScope(new Dictionary<string, object?>
         {
             ["correlation_id"] = correlationId
         }))
@@ -41,7 +50,7 @@ public sealed class VendorRequestCorrelationMiddleware(
             var isMoyskladRequest = context.Request.Path.StartsWithSegments(
                 MoyskladPathPrefix,
                 StringComparison.OrdinalIgnoreCase);
-            logger.LogInformation(
+            _logger.LogInformation(
                 "Gateway request started at {StartedAtUtc}: {Method} {Path} with correlation {CorrelationId}",
                 startedAtUtc,
                 context.Request.Method,
@@ -49,7 +58,7 @@ public sealed class VendorRequestCorrelationMiddleware(
                 correlationId);
             try
             {
-                await next(context);
+                await _next(context);
             }
             finally
             {
@@ -59,7 +68,7 @@ public sealed class VendorRequestCorrelationMiddleware(
                 {
                     var setCookieHeaders = context.Response.Headers.SetCookie;
                     var setCookiePresent = setCookieHeaders.Count > 0;
-                    logger.LogInformation(
+                    _logger.LogInformation(
                         "Gateway session response cookie forwarding: method={Method}, status_code={StatusCode}, set_cookie_present={SetCookiePresent}, set_cookie_count={SetCookieCount}, secure={Secure}, http_only={HttpOnly}, same_site_none={SameSiteNone}",
                         context.Request.Method,
                         context.Response.StatusCode,
@@ -79,7 +88,7 @@ public sealed class VendorRequestCorrelationMiddleware(
                     >= StatusCodes.Status400BadRequest => LogLevel.Warning,
                     _ => LogLevel.Information
                 };
-                logger.Log(
+                _logger.Log(
                     completionLogLevel,
                     "Gateway request completed at {CompletedAtUtc}: {Method} {Path} returned {StatusCode} in {DurationMs} ms; proxiedToVendorService={ProxiedToVendorService}; correlation {CorrelationId}",
                     DateTimeOffset.UtcNow,

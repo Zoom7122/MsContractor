@@ -9,11 +9,20 @@ using MsContractor.MoySkladEgressService.Models.Options;
 
 namespace MsContractor.MoySkladEgressService.Services;
 
-public sealed class SalesReturnPayloadBuilder(IOptions<EgressOptions> options)
+public sealed class SalesReturnPayloadBuilder
 {
+    private readonly IOptions<EgressOptions> _options;
+    private readonly Uri _baseUri;
+
+    public SalesReturnPayloadBuilder(
+        IOptions<EgressOptions> options)
+    {
+        _options = options;
+        _baseUri = _options.Value.JsonApiBaseUrl;
+    }
+
     public static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
         { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
-    private readonly Uri baseUri = options.Value.JsonApiBaseUrl;
     private static readonly string[] PositionFields =
         ["assortment", "quantity", "price", "discount", "vat", "vatEnabled", "pack", "things", "trackingCodes", "cost", "country", "gtd", "overhead", "slot"];
 
@@ -50,7 +59,7 @@ public sealed class SalesReturnPayloadBuilder(IOptions<EgressOptions> options)
             {
                 ValidateReference(data.State, "state");
                 var statePath = new Uri(data.State["meta"]!["href"]!.GetValue<string>()).AbsolutePath;
-                if (!statePath.StartsWith(baseUri.AbsolutePath.TrimEnd('/') + "/entity/salesreturn/metadata/states/", StringComparison.Ordinal))
+                if (!statePath.StartsWith(_baseUri.AbsolutePath.TrimEnd('/') + "/entity/salesreturn/metadata/states/", StringComparison.Ordinal))
                     throw Invalid("state must be a salesreturn state.");
             }
             if (data.Rate is not null)
@@ -102,21 +111,21 @@ public sealed class SalesReturnPayloadBuilder(IOptions<EgressOptions> options)
     {
         if (reference["meta"] is not JsonObject meta || meta["href"] is not JsonValue hrefValue ||
             !hrefValue.TryGetValue<string>(out var href) || !Uri.TryCreate(href, UriKind.Absolute, out var uri) ||
-            uri.Scheme != baseUri.Scheme || uri.Authority != baseUri.Authority ||
-            !uri.AbsolutePath.StartsWith(baseUri.AbsolutePath.TrimEnd('/') + "/entity/", StringComparison.Ordinal) ||
+            uri.Scheme != _baseUri.Scheme || uri.Authority != _baseUri.Authority ||
+            !uri.AbsolutePath.StartsWith(_baseUri.AbsolutePath.TrimEnd('/') + "/entity/", StringComparison.Ordinal) ||
             meta["type"] is not JsonValue typeValue || !typeValue.TryGetValue<string>(out var type) || !types.Contains(type) ||
             !Guid.TryParse(uri.AbsolutePath.TrimEnd('/').Split('/').Last(), out var id) || id == Guid.Empty)
             throw Invalid("A document reference has an invalid MoySklad URL, type or id.");
-        if (type == "attributemetadata" && uri.AbsolutePath != baseUri.AbsolutePath.TrimEnd('/') + $"/entity/salesreturn/metadata/attributes/{id:D}")
+        if (type == "attributemetadata" && uri.AbsolutePath != _baseUri.AbsolutePath.TrimEnd('/') + $"/entity/salesreturn/metadata/attributes/{id:D}")
             throw Invalid("Attribute must belong to salesreturn metadata.");
         if (type == "slot")
         {
-            var relative = uri.AbsolutePath[baseUri.AbsolutePath.TrimEnd('/').Length..].Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var relative = uri.AbsolutePath[_baseUri.AbsolutePath.TrimEnd('/').Length..].Split('/', StringSplitOptions.RemoveEmptyEntries);
             if (relative.Length != 5 || relative[1] != "store" || !Guid.TryParse(relative[2], out _) || relative[3] != "slots")
                 throw Invalid("slot must reference a store slot.");
         }
         if (type is not "account" and not "state" and not "attributemetadata" and not "slot" &&
-            uri.AbsolutePath != baseUri.AbsolutePath.TrimEnd('/') + $"/entity/{type}/{id:D}")
+            uri.AbsolutePath != _baseUri.AbsolutePath.TrimEnd('/') + $"/entity/{type}/{id:D}")
             throw Invalid("Reference URL does not match its entity type.");
     }
 
@@ -156,7 +165,7 @@ public sealed class SalesReturnPayloadBuilder(IOptions<EgressOptions> options)
 
     private JsonObject Reference(string path, string type) => new()
     {
-        ["meta"] = new JsonObject { ["href"] = new Uri(baseUri, path).AbsoluteUri, ["type"] = type, ["mediaType"] = "application/json" }
+        ["meta"] = new JsonObject { ["href"] = new Uri(_baseUri, path).AbsoluteUri, ["type"] = type, ["mediaType"] = "application/json" }
     };
     private static JsonObject CleanReference(JsonObject reference)
     {

@@ -11,10 +11,19 @@ public interface IVendorTokenClient
     Task<string> GetAccessTokenAsync(Guid accountId, CancellationToken cancellationToken);
 }
 
-public sealed class VendorTokenClient(
-    HttpClient httpClient,
-    IOptions<EgressOptions> options) : IVendorTokenClient
+public sealed class VendorTokenClient : IVendorTokenClient
 {
+    private readonly HttpClient _httpClient;
+    private readonly IOptions<EgressOptions> _options;
+
+    public VendorTokenClient(
+        HttpClient httpClient,
+        IOptions<EgressOptions> options)
+    {
+        _httpClient = httpClient;
+        _options = options;
+    }
+
     public async Task<string> GetAccessTokenAsync(
         Guid accountId,
         CancellationToken cancellationToken)
@@ -24,12 +33,12 @@ public sealed class VendorTokenClient(
             $"internal/vendor/installations/{accountId:D}/token");
         request.Headers.TryAddWithoutValidation(
             InternalApiHeaders.ApiKey,
-            options.Value.InternalApiKey);
+            _options.Value.InternalApiKey);
 
         HttpResponseMessage response;
         try
         {
-            response = await httpClient.SendAsync(
+            response = await _httpClient.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);

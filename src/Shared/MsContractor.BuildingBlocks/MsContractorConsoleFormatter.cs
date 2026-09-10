@@ -27,10 +27,19 @@ public sealed class MsContractorConsoleFormatterOptions : ConsoleFormatterOption
     }
 }
 
-public sealed class MsContractorConsoleFormatter(
-    IOptions<MsContractorConsoleFormatterOptions> options)
-    : ConsoleFormatter(FormatterName)
+public sealed class MsContractorConsoleFormatter : ConsoleFormatter
 {
+    private readonly IOptions<MsContractorConsoleFormatterOptions> _options;
+    private readonly MsContractorConsoleFormatterOptions _formatterOptions;
+
+    public MsContractorConsoleFormatter(
+        IOptions<MsContractorConsoleFormatterOptions> options)
+        : base(FormatterName)
+    {
+        _options = options;
+        _formatterOptions = _options.Value;
+    }
+
     public const string FormatterName = "mscontractor-json";
 
     private static readonly JavaScriptEncoder UnicodeEncoder = JavaScriptEncoder.Create(UnicodeRanges.All);
@@ -44,15 +53,13 @@ public sealed class MsContractorConsoleFormatter(
         "traceId", "spanId", "eventId"
     };
 
-    private readonly MsContractorConsoleFormatterOptions formatterOptions = options.Value;
-
     public override void Write<TState>(
         in LogEntry<TState> logEntry,
         IExternalScopeProvider? scopeProvider,
         TextWriter textWriter)
     {
         var properties = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-        if (formatterOptions.IncludeScopes && scopeProvider is not null)
+        if (_formatterOptions.IncludeScopes && scopeProvider is not null)
         {
             scopeProvider.ForEachScope(
                 static (scope, target) => AddProperties(scope, target),
@@ -76,10 +83,10 @@ public sealed class MsContractorConsoleFormatter(
             writer.WriteString(
                 "timestamp",
                 DateTimeOffset.UtcNow.ToString(
-                    formatterOptions.TimestampFormat ?? "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+                    _formatterOptions.TimestampFormat ?? "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
                     CultureInfo.InvariantCulture));
             writer.WriteString("level", logEntry.LogLevel.ToString().ToLowerInvariant());
-            writer.WriteString("service", formatterOptions.ServiceName);
+            writer.WriteString("service", _formatterOptions.ServiceName);
             writer.WriteString("category", logEntry.Category);
             writer.WriteString("message", logEntry.Formatter(logEntry.State, logEntry.Exception));
 

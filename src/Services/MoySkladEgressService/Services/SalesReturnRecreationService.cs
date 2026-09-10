@@ -10,18 +10,34 @@ using MsContractor.MoySkladEgressService.Repositories;
 
 namespace MsContractor.MoySkladEgressService.Services;
 
-public sealed class SalesReturnRecreationService(ISalesReturnOperationRepository repository,
-    IMoySkladSalesReturnGateway gateway, SalesReturnPayloadBuilder payloads, TimeProvider timeProvider)
+public sealed class SalesReturnRecreationService
 {
+    private readonly ISalesReturnOperationRepository _repository;
+    private readonly IMoySkladSalesReturnGateway _gateway;
+    private readonly SalesReturnPayloadBuilder _payloads;
+    private readonly TimeProvider _timeProvider;
+
+    public SalesReturnRecreationService(
+        ISalesReturnOperationRepository repository,
+        IMoySkladSalesReturnGateway gateway,
+        SalesReturnPayloadBuilder payloads,
+        TimeProvider timeProvider)
+    {
+        _repository = repository;
+        _gateway = gateway;
+        _payloads = payloads;
+        _timeProvider = timeProvider;
+    }
+
     public async Task<RecreateSalesReturnsResponse> ExecuteAsync(SalesReturnCallContext context,
         RecreateSalesReturnsRequest request, CancellationToken cancellationToken)
     {
-        payloads.Validate(request);
-        await using var lease = await repository.TryLockAccountAsync(context.AccountId, cancellationToken)
+        _payloads.Validate(request);
+        await using var lease = await _repository.TryLockAccountAsync(context.AccountId, cancellationToken)
             ?? throw new EgressException(409, "SALESRETURN_OPERATION_BUSY", "A recreation operation is already running for this account.", retryable: true);
         var requestJson = JsonSerializer.Serialize(request, SalesReturnPayloadBuilder.JsonOptions);
         var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Canonical(JsonNode.Parse(requestJson)).ToJsonString())));
-        var operation = await repository.GetAsync(context.AccountId, context.OperationId, cancellationToken);
+        var operation = await _repository.GetAsync(context.AccountId, context.OperationId, cancellationToken);
         if (operation is not null && (operation.Fingerprint != fingerprint || operation.JobId != context.JobId || operation.UserId != context.UserId))
             throw new EgressException(409, "SALESRETURN_OPERATION_CONFLICT", "Operation id was already used with different content or context.");
         if (operation is null)
@@ -30,16 +46,16 @@ public sealed class SalesReturnRecreationService(ISalesReturnOperationRepository
             {
                 AccountId = context.AccountId, OperationId = context.OperationId, JobId = context.JobId,
                 UserId = context.UserId, CorrelationId = context.CorrelationId, MainCounterpartyId = request.MainCounterpartyId,
-                Fingerprint = fingerprint, RequestJson = requestJson, NextAttemptAt = timeProvider.GetUtcNow(),
-                UpdatedAt = timeProvider.GetUtcNow(),
+                Fingerprint = fingerprint, RequestJson = requestJson, NextAttemptAt = _timeProvider.GetUtcNow(),
+                UpdatedAt = _timeProvider.GetUtcNow(),
                 Items = request.Documents.Select(item =>
                 {
                     var syncId = Guid.NewGuid();
                     return new SalesReturnOperationItem { OldDocumentId = item.OldDocumentId, SyncId = syncId,
-                        Payload = payloads.Build(item, request.MainCounterpartyId, syncId) };
+                        Payload = _payloads.Build(item, request.MainCounterpartyId, syncId) };
                 }).ToList()
             };
-            await repository.CreateAsync(operation, cancellationToken);
+            await _repository.CreateAsync(operation, cancellationToken);
         }
         await ProcessAsync(operation, cancellationToken);
         return Result(operation);
@@ -47,10 +63,10 @@ public sealed class SalesReturnRecreationService(ISalesReturnOperationRepository
 
     public async Task ResumeAsync(SalesReturnOperationKey key, CancellationToken cancellationToken)
     {
-        await using var lease = await repository.TryLockAccountAsync(key.AccountId, cancellationToken);
+        await using var lease = await _repository.TryLockAccountAsync(key.AccountId, cancellationToken);
         if (lease is null) return;
-        var operation = await repository.GetAsync(key.AccountId, key.OperationId, cancellationToken);
-        if (operation?.NextAttemptAt is { } due && due <= timeProvider.GetUtcNow())
+        var operation = await _repository.GetAsync(key.AccountId, key.OperationId, cancellationToken);
+        if (operation?.NextAttemptAt is { } due && due <= _timeProvider.GetUtcNow())
             await ProcessAsync(operation, cancellationToken);
     }
 
@@ -66,7 +82,7 @@ public sealed class SalesReturnRecreationService(ISalesReturnOperationRepository
         {
             try
             {
-                await gateway.ValidateAsync(context, operation.MainCounterpartyId, originals[item.OldDocumentId], cancellationToken);
+                await _gateway.ValidateAsync(context, operation.MainCounterpartyId, originals[item.OldDocumentId], cancellationToken);
                 Advance(item, "Delete");
             }
             catch (EgressException exception) { Fail(item, exception); }
@@ -77,18 +93,18 @@ public sealed class SalesReturnRecreationService(ISalesReturnOperationRepository
         {
             try
             {
-                if (item.Stage == "Deleting" && !await gateway.ExistsAsync(context, item.OldDocumentId, cancellationToken))
+                if (item.Stage == "Deleting" && !await _gateway.ExistsAsync(context, item.OldDocumentId, cancellationToken))
                     Advance(item, "Create");
                 else
                 {
                     // Recheck ownership and demand immediately before a deletion, including resumed attempts.
-                    await gateway.ValidateAsync(context, operation.MainCounterpartyId, originals[item.OldDocumentId], cancellationToken);
+                    await _gateway.ValidateAsync(context, operation.MainCounterpartyId, originals[item.OldDocumentId], cancellationToken);
                     Advance(item, "Deleting");
                     await SaveAsync(operation, cancellationToken);
-                    try { await gateway.DeleteAsync(context, item.OldDocumentId, cancellationToken); }
+                    try { await _gateway.DeleteAsync(context, item.OldDocumentId, cancellationToken); }
                     catch (EgressException exception) when (exception.Retryable || exception.StatusCode == 404)
                     {
-                        if (await gateway.ExistsAsync(context, item.OldDocumentId, cancellationToken)) throw;
+                        if (await _gateway.ExistsAsync(context, item.OldDocumentId, cancellationToken)) throw;
                     }
                     Advance(item, "Create");
                 }
@@ -103,7 +119,7 @@ public sealed class SalesReturnRecreationService(ISalesReturnOperationRepository
             await SaveAsync(operation, cancellationToken);
             try
             {
-                var results = await gateway.CreateAsync(context, operation.MainCounterpartyId, chunk, cancellationToken);
+                var results = await _gateway.CreateAsync(context, operation.MainCounterpartyId, chunk, cancellationToken);
                 foreach (var item in chunk)
                 {
                     var matches = results.Where(x => x.SyncId == item.SyncId).ToArray();
@@ -129,11 +145,11 @@ public sealed class SalesReturnRecreationService(ISalesReturnOperationRepository
 
     private async Task SaveAsync(SalesReturnOperation operation, CancellationToken cancellationToken)
     {
-        operation.UpdatedAt = timeProvider.GetUtcNow();
+        operation.UpdatedAt = _timeProvider.GetUtcNow();
         // Bounded automatic retries; the same authenticated request can explicitly resume later.
         operation.NextAttemptAt = operation.Items.Any(x => x.Pending) && operation.Attempts < 8
             ? operation.UpdatedAt.AddSeconds(Math.Min(300, 5 * Math.Pow(2, operation.Attempts))) : null;
-        await repository.SaveAsync(operation, cancellationToken);
+        await _repository.SaveAsync(operation, cancellationToken);
     }
     private static void Advance(SalesReturnOperationItem item, string stage)
     { item.Stage = stage; item.ErrorCode = null; item.Error = null; item.Retryable = stage != "Completed"; }

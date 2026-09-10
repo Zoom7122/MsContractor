@@ -96,6 +96,9 @@
 }
 
 .duplicates-group {
+  flex: 0 0 auto;
+  height: auto;
+  min-height: 0;
   cursor: pointer;
   transition: border-color 120ms ease, background 120ms ease;
 }
@@ -114,17 +117,17 @@
 }
 
 .duplicates-group__title {
+  overflow-wrap: anywhere;
   font-size: 12px;
   font-weight: 650;
 }
 
 .duplicates-group__meta,
 .duplicates-group__value {
-  overflow: hidden;
   color: var(--app-color-text-secondary);
   font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .duplicates-group__footer {
@@ -217,6 +220,8 @@
     display: grid;
     max-height: 220px;
     grid-template-columns: repeat(2, minmax(190px, 1fr));
+    align-items: start;
+    grid-auto-rows: min-content;
   }
 }
 

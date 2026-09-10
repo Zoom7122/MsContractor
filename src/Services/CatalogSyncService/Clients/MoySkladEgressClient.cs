@@ -20,10 +20,19 @@ public interface IMoySkladEgressClient
         CancellationToken cancellationToken);
 }
 
-public sealed class MoySkladEgressClient(
-    HttpClient httpClient,
-    IConfiguration configuration) : IMoySkladEgressClient
+public sealed class MoySkladEgressClient : IMoySkladEgressClient
 {
+    private readonly HttpClient _httpClient;
+    private readonly IConfiguration _configuration;
+
+    public MoySkladEgressClient(
+        HttpClient httpClient,
+        IConfiguration configuration)
+    {
+        _httpClient = httpClient;
+        _configuration = configuration;
+    }
+
     public async Task<MoySkladRawResponse> GetCounterpartiesAsync(
         Guid accountId,
         bool archived,
@@ -47,7 +56,7 @@ public sealed class MoySkladEgressClient(
         using var request = new HttpRequestMessage(HttpMethod.Get, query);
         request.Headers.TryAddWithoutValidation(
             InternalApiHeaders.ApiKey,
-            configuration["InternalApi:Key"]);
+            _configuration["InternalApi:Key"]);
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.CorrelationId, correlationId);
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.SyncRunId, syncRunId.ToString("D"));
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.UserId, userId.ToString("D"));
@@ -55,7 +64,7 @@ public sealed class MoySkladEgressClient(
         HttpResponseMessage response;
         try
         {
-            response = await httpClient.SendAsync(
+            response = await _httpClient.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);

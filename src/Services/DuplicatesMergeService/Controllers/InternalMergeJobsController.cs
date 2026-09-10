@@ -10,17 +10,26 @@ namespace MsContractor.DuplicatesMergeService.Controllers;
 
 [ApiController]
 [Route("internal/merge-jobs")]
-public sealed class InternalMergeJobsController(
-    IMergeJobCreator creator,
-    IConfiguration configuration) : ControllerBase
+public sealed class InternalMergeJobsController : ControllerBase
 {
+    private readonly IMergeJobCreator _creator;
+    private readonly IConfiguration _configuration;
+
+    public InternalMergeJobsController(
+        IMergeJobCreator creator,
+        IConfiguration configuration)
+    {
+        _creator = creator;
+        _configuration = configuration;
+    }
+
     [HttpPost]
     [ProducesResponseType<MergeJobAccepted>(StatusCodes.Status202Accepted)]
     public async Task<IActionResult> CreateAsync(
         [FromBody] CreateMergeJobRequest request,
         CancellationToken cancellationToken)
     {
-        if (!InternalApiKeyAuthentication.IsAuthorized(Request, configuration))
+        if (!InternalApiKeyAuthentication.IsAuthorized(Request, _configuration))
             return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
         if (!TryGuidHeader(InternalApiHeaders.AccountId, out var accountId) ||
             !TryGuidHeader(InternalApiHeaders.UserId, out var userId) ||
@@ -31,7 +40,7 @@ public sealed class InternalMergeJobsController(
 
         try
         {
-            return Accepted(await creator.CreateAsync(
+            return Accepted(await _creator.CreateAsync(
                 accountId, userId, correlationId, request, cancellationToken));
         }
         catch (MergeRequestException exception)

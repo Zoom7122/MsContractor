@@ -5,19 +5,30 @@ using MsContractor.Contracts.Sync;
 
 namespace MsContractor.CatalogSyncService.Consumers;
 
-public sealed class SyncRequestedConsumer(
-    IServiceScopeFactory scopeFactory,
-    IConfiguration configuration,
-    ILogger<SyncRequestedConsumer> logger) : BackgroundService
+public sealed class SyncRequestedConsumer : BackgroundService
 {
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IConfiguration _configuration;
+    private readonly ILogger<SyncRequestedConsumer> _logger;
+
+    public SyncRequestedConsumer(
+        IServiceScopeFactory scopeFactory,
+        IConfiguration configuration,
+        ILogger<SyncRequestedConsumer> logger)
+    {
+        _scopeFactory = scopeFactory;
+        _configuration = configuration;
+        _logger = logger;
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var config = new ConsumerConfig
         {
-            BootstrapServers = configuration["Kafka:BootstrapServers"] ?? "localhost:9092",
-            GroupId = configuration["Kafka:SyncConsumerGroup"] ?? "catalog-sync-service",
+            BootstrapServers = _configuration["Kafka:BootstrapServers"] ?? "localhost:9092",
+            GroupId = _configuration["Kafka:SyncConsumerGroup"] ?? "catalog-sync-service",
             EnableAutoCommit = false,
             AutoOffsetReset = AutoOffsetReset.Earliest
         };
@@ -41,7 +52,7 @@ public sealed class SyncRequestedConsumer(
             {
                 // The broker may still be creating the topic on a fresh deployment.
                 // Do not let this transient state stop the whole CatalogSync host.
-                logger.LogWarning(
+                _logger.LogWarning(
                     "Kafka topic {Topic} is not available yet; retrying in 2 seconds.",
                     SyncTopics.Commands);
                 await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
@@ -49,7 +60,7 @@ public sealed class SyncRequestedConsumer(
             }
             catch (ConsumeException exception) when (!stoppingToken.IsCancellationRequested)
             {
-                logger.LogWarning(
+                _logger.LogWarning(
                     exception,
                     "Kafka consume failed for topic {Topic}; retrying in 2 seconds.",
                     SyncTopics.Commands);
@@ -64,7 +75,7 @@ public sealed class SyncRequestedConsumer(
             }
             catch (JsonException exception)
             {
-                logger.LogError(exception, "Invalid SyncRequested JSON at {TopicPartitionOffset}.", result.TopicPartitionOffset);
+                _logger.LogError(exception, "Invalid SyncRequested JSON at {TopicPartitionOffset}.", result.TopicPartitionOffset);
                 consumer.Commit(result);
                 continue;
             }
@@ -77,7 +88,7 @@ public sealed class SyncRequestedConsumer(
                 command.RequestedAt == default ||
                 !Enum.IsDefined(command.Mode))
             {
-                logger.LogError(
+                _logger.LogError(
                     "Invalid SyncRequested at {TopicPartitionOffset}: required identifiers are missing.",
                     result.TopicPartitionOffset);
                 consumer.Commit(result);
@@ -86,14 +97,14 @@ public sealed class SyncRequestedConsumer(
 
             try
             {
-                await using var scope = scopeFactory.CreateAsyncScope();
+                await using var scope = _scopeFactory.CreateAsyncScope();
                 var processor = scope.ServiceProvider.GetRequiredService<ISyncProcessor>();
                 await processor.ProcessAsync(command, stoppingToken);
                 consumer.Commit(result);
             }
             catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
             {
-                logger.LogWarning(
+                _logger.LogWarning(
                     exception,
                     "Sync command processing did not reach a durable terminal state; offset will not be committed for {TopicPartitionOffset}.",
                     result.TopicPartitionOffset);

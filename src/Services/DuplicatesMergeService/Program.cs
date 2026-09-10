@@ -8,6 +8,9 @@ using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
 using Microsoft.EntityFrameworkCore;
 using MsContractor.DuplicatesMergeService.Services;
+using MsContractor.DuplicatesMergeService.Services.Merge;
+using MsContractor.DuplicatesMergeService.Services.Merge.Counterparties;
+using MsContractor.DuplicatesMergeService.Services.Merge.Documents;
 using Confluent.Kafka;
 using MsContractor.CatalogSyncService.Services;
 
@@ -29,6 +32,13 @@ builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddSingleton<IMoySkladCounterpartyParser, MoySkladCounterpartyParser>();
 builder.Services.AddSingleton<ICounterpartyNormalizer, CounterpartyNormalizer>();
 builder.Services.AddScoped<IMergeProcessor, MergeProcessor>();
+builder.Services.AddScoped<IMergeCommandValidator, MergeCommandValidator>();
+builder.Services.AddScoped<IMergeOperationStateService, MergeOperationStateService>();
+builder.Services.AddScoped<IMergeDocumentDiscoveryService, MergeDocumentDiscoveryService>();
+builder.Services.AddScoped<IMergeDocumentChangeService, MergeDocumentChangeService>();
+builder.Services.AddScoped<ISalesReturnRecreationService, SalesReturnRecreationService>();
+builder.Services.AddScoped<IMergeMainCounterpartyUpdateService, MergeMainCounterpartyUpdateService>();
+builder.Services.AddScoped<IMergeCounterpartyArchiveService, MergeCounterpartyArchiveService>();
 var egressBaseUrl = builder.Configuration["Services:MoySkladEgressService:BaseUrl"] ?? "http://localhost:5012/";
 builder.Services.AddHttpClient<IMergeEgressClient, MergeEgressClient>(client =>
 {

@@ -7,25 +7,36 @@ namespace MsContractor.Gateway.Bff.Controllers;
 
 [ApiController]
 [Route("api/merge-preview")]
-public sealed class MergePreviewController(
-    IGatewaySessionReader sessionReader,
-    IDuplicatePreviewClient previewClient,
-    IConfiguration configuration) : ControllerBase
+public sealed class MergePreviewController : ControllerBase
 {
+    private readonly IGatewaySessionReader _sessionReader;
+    private readonly IDuplicatePreviewClient _previewClient;
+    private readonly IConfiguration _configuration;
+
+    public MergePreviewController(
+        IGatewaySessionReader sessionReader,
+        IDuplicatePreviewClient previewClient,
+        IConfiguration configuration)
+    {
+        _sessionReader = sessionReader;
+        _previewClient = previewClient;
+        _configuration = configuration;
+    }
+
     [HttpPost]
     public async Task<IActionResult> CreateAsync(
         [FromQuery(Name = "fields")] string[]? fields,
         CancellationToken cancellationToken)
     {
-        var cookieName = configuration["Session:CookieName"] ?? "mscontractor.session";
+        var cookieName = _configuration["Session:CookieName"] ?? "mscontractor.session";
         Request.Cookies.TryGetValue(cookieName, out var token);
-        var session = await sessionReader.ReadAsync(token, cancellationToken);
+        var session = await _sessionReader.ReadAsync(token, cancellationToken);
         if (session is null)
             return Unauthorized(new { code = "SESSION_UNAUTHORIZED", message = "Session is missing or expired." });
 
         try
         {
-            return Ok(await previewClient.FindAsync(session.AccountId, fields ?? [], cancellationToken));
+            return Ok(await _previewClient.FindAsync(session.AccountId, fields ?? [], cancellationToken));
         }
         catch (DuplicatePreviewValidationException)
         {

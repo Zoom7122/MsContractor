@@ -6,26 +6,26 @@ namespace MsContractor.VendorService.Persistence;
 public sealed class VendorDbContext(DbContextOptions<VendorDbContext> options)
     : DbContext(options)
 {
-    private Guid? tenantAccountId;
+    private Guid? _tenantAccountId;
 
     public DbSet<Installation> Installations =>
         Set<Installation>();
 
     public DbSet<OutboxMessage> OutboxMessages =>
         Set<OutboxMessage>();
-    internal Guid? TenantAccountId => tenantAccountId;
+    internal Guid? TenantAccountId => _tenantAccountId;
 
     public Task SetTenantAsync(Guid accountId, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (accountId == Guid.Empty)
             throw new ArgumentException("Tenant account ID must be a non-empty UUID.", nameof(accountId));
-        if (tenantAccountId is not null && tenantAccountId != accountId)
+        if (_tenantAccountId is not null && _tenantAccountId != accountId)
             throw new InvalidOperationException("A DbContext cannot be reused across tenant accounts.");
-        if (tenantAccountId == accountId)
+        if (_tenantAccountId == accountId)
             return Task.CompletedTask;
 
-        tenantAccountId = accountId;
+        _tenantAccountId = accountId;
         return Task.CompletedTask;
     }
 

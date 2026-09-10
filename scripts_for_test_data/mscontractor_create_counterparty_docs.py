@@ -950,9 +950,11 @@ def entity_info(entity: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     }
 
 
-def write_ms_error_log(run_id: str, failed_documents: list[Dict[str, Any]]) -> Optional[Path]:
-    """Write MySklad responses for failed document creation requests."""
-    if not failed_documents:
+def write_ms_error_log(run_id: str, report: Dict[str, Any]) -> Optional[Path]:
+    """Write MySklad responses for failed creation requests."""
+    failed_documents = report["failedDocuments"]
+    failed_counterparties = report["failedCounterparties"]
+    if not failed_documents and not failed_counterparties:
         return None
 
     try:
@@ -963,6 +965,7 @@ def write_ms_error_log(run_id: str, failed_documents: list[Dict[str, Any]]) -> O
             "createdAt": datetime.now().isoformat(timespec="seconds"),
             "baseUrl": BASE_URL,
             "failedDocuments": failed_documents,
+            "failedCounterparties": failed_counterparties,
         }
         with log_file.open("w", encoding="utf-8") as file:
             json.dump(log, file, ensure_ascii=False, indent=2)
@@ -1099,6 +1102,51 @@ def add_failed_document(
     })
 
 
+def add_failed_counterparty(
+    report: Dict[str, Any], counterparty_index: int, error: Dict[str, Any]
+) -> None:
+    report["failedCounterparties"].append({
+        "index": counterparty_index,
+        "error": error,
+    })
+
+
+def finish_run(report: Dict[str, Any], should_write_report: bool) -> int:
+    """Persist diagnostics and print a summary for both successful and failed runs."""
+    ms_error_log_file = write_ms_error_log(report["runId"], report)
+
+    report_file: Optional[str] = None
+    if should_write_report:
+        MS_ERROR_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        report_path = MS_ERROR_LOG_DIR / f"mscontractor_docs_report_{report['runId']}.json"
+        report_file = str(report_path)
+        with report_path.open("w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+
+    print("\nГотово.")
+    print(f"Создано КА: {len(report['counterparties'])}")
+    print(f"Создано документов: {len(report['createdDocuments'])}")
+    print(f"Ошибок создания КА: {len(report['failedCounterparties'])}")
+    print(f"Ошибок создания документов: {len(report['failedDocuments'])}")
+    print(f"Пропущено: {len(report['skippedDocuments'])}")
+    if report_file:
+        print(f"Отчёт: {report_file}")
+    if ms_error_log_file:
+        print(f"Лог ответов МС при ошибках: {ms_error_log_file}")
+
+    if report["failedCounterparties"]:
+        print("\nНе удалось создать КА. Проверь права пользователя МойСклад на создание контрагентов.")
+    elif report["failedDocuments"]:
+        print("\nЧасть документов не создалась.")
+        if report_file:
+            print("Подробности есть в report JSON.")
+        if ms_error_log_file:
+            print("Ответы МС также сохранены в отдельном JSON-логе.")
+        print("Проверь поле error у неуспешного документа.")
+
+    return 1 if report["failedCounterparties"] else 0
+
+
 def add_skipped_document(
     report: Dict[str, Any], document_type: str, reason: str, cp: Optional[Dict[str, Any]] = None
 ) -> None:
@@ -1108,12 +1156,12 @@ def add_skipped_document(
     report["skippedDocuments"].append(skipped)
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
 
     if args.list_documents:
         print_document_types()
-        return
+        return 0
 
     try:
         counterparties_to_create = counterparty_count()
@@ -1144,6 +1192,7 @@ def main() -> None:
         "supportEntities": {},
         "createdDocuments": [],
         "failedDocuments": [],
+        "failedCounterparties": [],
         "skippedDocuments": [],
     }
 
@@ -1219,7 +1268,15 @@ def main() -> None:
     for counterparty_index in range(1, counterparties_to_create + 1):
         # Добавляем индекс, чтобы имена, email и externalCode были уникальными.
         cp_run_id = f"{run_id}-{counterparty_index:03d}"
-        cp = create_counterparty(cp_run_id)
+        try:
+            cp = create_counterparty(cp_run_id)
+        except Exception as exc:
+            error = error_data("POST", "/entity/counterparty", exc)
+            print(f"КА [{counterparty_index}/{counterparties_to_create}] FAILED: status={error.get('status')}")
+            print_error_details(error)
+            add_failed_counterparty(report, counterparty_index, error)
+            return finish_run(report, should_write_report)
+
         cp_info = entity_info(cp)
         report["counterparties"].append(cp_info)
         if report["counterparty"] is None:
@@ -1344,34 +1401,8 @@ def main() -> None:
                 print_error_details(error)
                 add_failed_document(report, cp, doc_type, payload, error)
 
-    ms_error_log_file = write_ms_error_log(run_id, report["failedDocuments"])
-
-    report_file: Optional[str] = None
-    if should_write_report:
-        MS_ERROR_LOG_DIR.mkdir(parents=True, exist_ok=True)
-        report_path = MS_ERROR_LOG_DIR / f"mscontractor_docs_report_{run_id}.json"
-        report_file = str(report_path)
-        with report_path.open("w", encoding="utf-8") as f:
-            json.dump(report, f, ensure_ascii=False, indent=2)
-
-    print("\nГотово.")
-    print(f"Создано КА: {len(report['counterparties'])}")
-    print(f"Создано документов: {len(report['createdDocuments'])}")
-    print(f"Ошибок: {len(report['failedDocuments'])}")
-    print(f"Пропущено: {len(report['skippedDocuments'])}")
-    if report_file:
-        print(f"Отчёт: {report_file}")
-    if ms_error_log_file:
-        print(f"Лог ответов МС при ошибках: {ms_error_log_file}")
-
-    if report["failedDocuments"]:
-        print("\nЧасть документов не создалась.")
-        if report_file:
-            print("Подробности есть в report JSON.")
-        if ms_error_log_file:
-            print("Ответы МС также сохранены в отдельном JSON-логе.")
-        print("Проверь поле error у неуспешного документа.")
+    return finish_run(report, should_write_report)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

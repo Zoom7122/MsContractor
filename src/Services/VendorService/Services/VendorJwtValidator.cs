@@ -8,8 +8,19 @@ using Microsoft.Extensions.Options;
 
 namespace MsContractor.VendorService.Services;
 
-public sealed class VendorJwtValidator(IOptions<VendorOptions> options, TimeProvider timeProvider)
+public sealed class VendorJwtValidator
 {
+    private readonly IOptions<VendorOptions> _options;
+    private readonly TimeProvider _timeProvider;
+
+    public VendorJwtValidator(
+        IOptions<VendorOptions> options,
+        TimeProvider timeProvider)
+    {
+        _options = options;
+        _timeProvider = timeProvider;
+    }
+
     public VendorJwt Validate(string authorization)
     {
         if (!authorization.StartsWith("Bearer ", StringComparison.Ordinal) || authorization.Length <= 7)
@@ -26,7 +37,7 @@ public sealed class VendorJwtValidator(IOptions<VendorOptions> options, TimeProv
                 throw new VendorAuthenticationException();
 
             var signed = Encoding.ASCII.GetBytes($"{parts[0]}.{parts[1]}");
-            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(options.Value.SecretKey));
+            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_options.Value.SecretKey));
             var actual = Base64UrlDecode(parts[2]);
             if (!CryptographicOperations.FixedTimeEquals(hmac.ComputeHash(signed), actual))
                 throw new VendorAuthenticationException();
@@ -38,7 +49,7 @@ public sealed class VendorJwtValidator(IOptions<VendorOptions> options, TimeProv
                 throw new VendorAuthenticationException();
 
             var expiresAt = DateTimeOffset.FromUnixTimeSeconds(expSeconds);
-            if (expiresAt < timeProvider.GetUtcNow().AddSeconds(-30))
+            if (expiresAt < _timeProvider.GetUtcNow().AddSeconds(-30))
                 throw new VendorAuthenticationException();
             return new VendorJwt(jti.GetString()!, expiresAt);
         }

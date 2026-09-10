@@ -17,8 +17,19 @@ public interface IMergeEgressClient
         Guid userId, Guid correlationId, CancellationToken cancellationToken);
 }
 
-public sealed class MergeEgressClient(HttpClient httpClient, IConfiguration configuration) : IMergeEgressClient
+public sealed class MergeEgressClient : IMergeEgressClient
 {
+    private readonly HttpClient _httpClient;
+    private readonly IConfiguration _configuration;
+
+    public MergeEgressClient(
+        HttpClient httpClient,
+        IConfiguration configuration)
+    {
+        _httpClient = httpClient;
+        _configuration = configuration;
+    }
+
 
     /// <summary>
     /// Обновление основного КА зарос в engress
@@ -72,7 +83,7 @@ public sealed class MergeEgressClient(HttpClient httpClient, IConfiguration conf
         using var request = new HttpRequestMessage(method, uri);
         if (body is not null)
             request.Content = JsonContent.Create(body);
-        request.Headers.TryAddWithoutValidation(InternalApiHeaders.ApiKey, configuration["InternalApi:Key"]);
+        request.Headers.TryAddWithoutValidation(InternalApiHeaders.ApiKey, _configuration["InternalApi:Key"]);
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.MergeJobId, mergeJobId.ToString("D"));
         if (operationId is not null)
             request.Headers.TryAddWithoutValidation(InternalApiHeaders.OperationId, operationId.Value.ToString("D"));
@@ -82,7 +93,7 @@ public sealed class MergeEgressClient(HttpClient httpClient, IConfiguration conf
         HttpResponseMessage response;
         try
         {
-            response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

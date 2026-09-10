@@ -12,12 +12,20 @@ public interface IMergeOutboxRepository
 }
 
 // Infrastructure dispatch deliberately reads pending messages for every account.
-public sealed class MergeOutboxRepository(CatalogSyncDbContext dbContext) : IMergeOutboxRepository
+public sealed class MergeOutboxRepository : IMergeOutboxRepository
 {
+    private readonly CatalogSyncDbContext _dbContext;
+
+    public MergeOutboxRepository(
+        CatalogSyncDbContext dbContext)
+    {
+        _dbContext = dbContext;
+    }
+
     public async Task<IReadOnlyList<SyncOutboxMessage>> GetPendingAsync(CancellationToken cancellationToken) =>
-        await dbContext.OutboxMessages.Where(x => x.PublishedAt == null && x.EventType == nameof(MergeRequested))
+        await _dbContext.OutboxMessages.Where(x => x.PublishedAt == null && x.EventType == nameof(MergeRequested))
             .OrderBy(x => x.CreatedAt).Take(50).ToListAsync(cancellationToken);
 
     public async Task SavePublicationResultsAsync(CancellationToken cancellationToken) =>
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
 }

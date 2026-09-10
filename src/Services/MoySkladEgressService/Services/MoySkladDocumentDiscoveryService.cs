@@ -16,11 +16,22 @@ public interface IMoySkladDocumentDiscoveryService
         CancellationToken cancellationToken);
 }
 
-public sealed class MoySkladDocumentDiscoveryService(
-    IMoySkladDocumentGateway gateway,
-    MoySkladDocumentDiscoveryOptions options,
-    ILogger<MoySkladDocumentDiscoveryService> logger) : IMoySkladDocumentDiscoveryService
+public sealed class MoySkladDocumentDiscoveryService : IMoySkladDocumentDiscoveryService
 {
+    private readonly IMoySkladDocumentGateway _gateway;
+    private readonly MoySkladDocumentDiscoveryOptions _options;
+    private readonly ILogger<MoySkladDocumentDiscoveryService> _logger;
+
+    public MoySkladDocumentDiscoveryService(
+        IMoySkladDocumentGateway gateway,
+        MoySkladDocumentDiscoveryOptions options,
+        ILogger<MoySkladDocumentDiscoveryService> logger)
+    {
+        _gateway = gateway;
+        _options = options;
+        _logger = logger;
+    }
+
     public const int PageSize = 1000;
 
     public async Task<MoySkladDocumentDiscoveryResponse> DiscoverAsync(
@@ -32,9 +43,9 @@ public sealed class MoySkladDocumentDiscoveryService(
     {
         var requestedIds = counterpartyIds.ToHashSet();
         var documents = new List<MoySkladDocumentReference>();
-        var counts = new List<MoySkladDocumentTypeCount>(options.DocumentTypes.Count);
+        var counts = new List<MoySkladDocumentTypeCount>(_options.DocumentTypes.Count);
 
-        foreach (var documentType in options.DocumentTypes)
+        foreach (var documentType in _options.DocumentTypes)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var documentIds = new HashSet<Guid>();
@@ -45,7 +56,7 @@ public sealed class MoySkladDocumentDiscoveryService(
             for (var offset = 0; expectedSize is null || offset < expectedSize.Value; offset += PageSize)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var page = await gateway.GetPageAsync(
+                var page = await _gateway.GetPageAsync(
                     accountId,
                     requestedByUserId,
                     correlationId,
@@ -86,7 +97,7 @@ public sealed class MoySkladDocumentDiscoveryService(
                 if (loadedCount > expectedSize.Value)
                     throw Incomplete("MoySklad returned more documents than declared by pagination metadata.");
 
-                logger.LogInformation(
+                _logger.LogInformation(
                     "MoySklad document page loaded: account_id={AccountId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}, document_type={DocumentType}, counterparties_count={CounterpartiesCount}, page_offset={Offset}, page_limit={Limit}, expected_total={ExpectedTotal}, page_count={PageCount}, loaded_count={LoadedCount}, status={StatusCode}",
                     accountId,
                     requestedByUserId,
@@ -105,7 +116,7 @@ public sealed class MoySkladDocumentDiscoveryService(
                 throw Incomplete("MoySklad document discovery did not load the declared number of documents.");
 
             counts.Add(new MoySkladDocumentTypeCount(documentType, expectedSize.Value));
-            logger.LogInformation(
+            _logger.LogInformation(
                 "MoySklad document discovery completed: account_id={AccountId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}, document_type={DocumentType}, counterparties_count={CounterpartiesCount}, documents_count={DocumentsCount}, pages_count={PagesCount}",
                 accountId,
                 requestedByUserId,

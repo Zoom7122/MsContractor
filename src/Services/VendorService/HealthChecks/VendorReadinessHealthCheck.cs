@@ -5,21 +5,30 @@ using StackExchange.Redis;
 
 namespace MsContractor.VendorService.HealthChecks;
 
-public sealed class VendorReadinessHealthCheck(
-    IServiceScopeFactory scopeFactory,
-    IConnectionMultiplexer redis) : IHealthCheck
+public sealed class VendorReadinessHealthCheck : IHealthCheck
 {
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IConnectionMultiplexer _redis;
+
+    public VendorReadinessHealthCheck(
+        IServiceScopeFactory scopeFactory,
+        IConnectionMultiplexer redis)
+    {
+        _scopeFactory = scopeFactory;
+        _redis = redis;
+    }
+
     public async Task<HealthCheckResult> CheckHealthAsync(
         HealthCheckContext context,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            await using var scope = scopeFactory.CreateAsyncScope();
+            await using var scope = _scopeFactory.CreateAsyncScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<VendorDbContext>();
             if (!await dbContext.Database.CanConnectAsync(cancellationToken))
                 return HealthCheckResult.Unhealthy("PostgreSQL is unavailable.");
-            await redis.GetDatabase().PingAsync().WaitAsync(cancellationToken);
+            await _redis.GetDatabase().PingAsync().WaitAsync(cancellationToken);
             return HealthCheckResult.Healthy("PostgreSQL and Redis are available.");
         }
         catch (Exception exception)

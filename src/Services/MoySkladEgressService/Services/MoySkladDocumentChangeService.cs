@@ -17,11 +17,22 @@ public interface IMoySkladDocumentChangeService
         CancellationToken cancellationToken);
 }
 
-public sealed class MoySkladDocumentChangeService(
-    IMoySkladDocumentGateway gateway,
-    MoySkladDocumentChangeOptions options,
-    ILogger<MoySkladDocumentChangeService> logger) : IMoySkladDocumentChangeService
+public sealed class MoySkladDocumentChangeService : IMoySkladDocumentChangeService
 {
+    private readonly IMoySkladDocumentGateway _gateway;
+    private readonly MoySkladDocumentChangeOptions _options;
+    private readonly ILogger<MoySkladDocumentChangeService> _logger;
+
+    public MoySkladDocumentChangeService(
+        IMoySkladDocumentGateway gateway,
+        MoySkladDocumentChangeOptions options,
+        ILogger<MoySkladDocumentChangeService> logger)
+    {
+        _gateway = gateway;
+        _options = options;
+        _logger = logger;
+    }
+
     public const int BatchSize = 1000;
 
     public async Task<MoySkladDocumentChangeCounterpartyResponse> ChangeCounterpartyAsync(
@@ -34,7 +45,7 @@ public sealed class MoySkladDocumentChangeService(
         CancellationToken cancellationToken)
     {
         var documents = request.Documents!;
-        var configuredTypes = options.DocumentTypes.ToHashSet(StringComparer.Ordinal);
+        var configuredTypes = _options.DocumentTypes.ToHashSet(StringComparer.Ordinal);
         var changed = new List<MoySkladDocumentChangeItem>();
         var skipped = documents
             .Where(item => !configuredTypes.Contains(item.DocumentType))
@@ -45,7 +56,7 @@ public sealed class MoySkladDocumentChangeService(
             .ToList();
         var failures = new List<MoySkladDocumentChangeFailure>();
 
-        foreach (var documentType in options.DocumentTypes)
+        foreach (var documentType in _options.DocumentTypes)
         {
             var typedDocuments = documents
                 .Where(item => string.Equals(item.DocumentType, documentType, StringComparison.Ordinal))
@@ -55,7 +66,7 @@ public sealed class MoySkladDocumentChangeService(
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    var result = await gateway.ChangeCounterpartyAsync(
+                    var result = await _gateway.ChangeCounterpartyAsync(
                         accountId,
                         requestedByUserId,
                         mergeJobId,
@@ -69,7 +80,7 @@ public sealed class MoySkladDocumentChangeService(
                     failures.AddRange(result.Failures);
                     foreach (var failure in result.Failures)
                     {
-                        logger.LogError(
+                        _logger.LogError(
                             "MoySklad document counterparty item failed: account_id={AccountId}, merge_job_id={MergeJobId}, merge_operation_id={OperationId}, correlation_id={CorrelationId}, http_method={HttpMethod}, entity_type={DocumentType}, entity_id={DocumentId}, http_status={StatusCode}, error_code={ErrorCode}, error_message={ErrorMessage}, retryable={Retryable}",
                             accountId, mergeJobId, operationId, correlationId,
                             chunk.Length == 1 ? "PUT" : "POST",
@@ -92,7 +103,7 @@ public sealed class MoySkladDocumentChangeService(
                         exception.MoySkladErrorCode,
                         exception.MoySkladErrorMessage,
                         exception.ValidationError)));
-                    logger.Log(
+                    _logger.Log(
                         exception.Retryable ? LogLevel.Warning : LogLevel.Error,
                         "MoySklad document counterparty chunk failed: account_id={AccountId}, merge_job_id={MergeJobId}, merge_operation_id={OperationId}, correlation_id={CorrelationId}, entity_type={DocumentType}, chunk_size={ChunkSize}, http_status={HttpStatus}, error_code={ErrorCode}, error_message={ErrorMessage}, moysklad_error_code={MoySkladErrorCode}, moysklad_error_message={MoySkladErrorMessage}, response_validation_error={ValidationError}, retryable={Retryable}",
                         accountId, mergeJobId, operationId, correlationId, documentType, chunk.Length,

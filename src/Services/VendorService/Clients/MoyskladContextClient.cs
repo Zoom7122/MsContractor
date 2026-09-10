@@ -15,11 +15,22 @@ public interface IMoyskladContextClient
         CancellationToken cancellationToken);
 }
 
-public sealed class MoyskladContextClient(
-    HttpClient httpClient,
-    MoyskladVendorJwtFactory jwtFactory,
-    ILogger<MoyskladContextClient> logger) : IMoyskladContextClient
+public sealed class MoyskladContextClient : IMoyskladContextClient
 {
+    private readonly HttpClient _httpClient;
+    private readonly MoyskladVendorJwtFactory _jwtFactory;
+    private readonly ILogger<MoyskladContextClient> _logger;
+
+    public MoyskladContextClient(
+        HttpClient httpClient,
+        MoyskladVendorJwtFactory jwtFactory,
+        ILogger<MoyskladContextClient> logger)
+    {
+        _httpClient = httpClient;
+        _jwtFactory = jwtFactory;
+        _logger = logger;
+    }
+
     public async Task<MoyskladEmployeeContext> GetAsync(
         string contextKey,
         Guid appId,
@@ -30,14 +41,14 @@ public sealed class MoyskladContextClient(
             $"context/{Uri.EscapeDataString(contextKey)}" +
             $"?appUid={Uri.EscapeDataString(appUid)}&appId={appId:D}";
         using var request = new HttpRequestMessage(HttpMethod.Post, path);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", jwtFactory.Create());
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _jwtFactory.Create());
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         request.Headers.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
 
         HttpResponseMessage response;
         try
         {
-            response = await httpClient.SendAsync(
+            response = await _httpClient.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
@@ -59,7 +70,7 @@ public sealed class MoyskladContextClient(
                 throw new VendorContextExpiredException();
             if (!response.IsSuccessStatusCode)
             {
-                logger.LogWarning(
+                _logger.LogWarning(
                     "MoySklad context endpoint returned status {StatusCode}.",
                     (int)response.StatusCode);
                 throw new VendorUpstreamException("MoySklad context endpoint returned an unexpected response.");

@@ -15,10 +15,19 @@ public interface IDocumentDiscoveryEgressClient
         CancellationToken cancellationToken);
 }
 
-public sealed class DocumentDiscoveryEgressClient(
-    HttpClient httpClient,
-    IConfiguration configuration) : IDocumentDiscoveryEgressClient
+public sealed class DocumentDiscoveryEgressClient : IDocumentDiscoveryEgressClient
 {
+    private readonly HttpClient _httpClient;
+    private readonly IConfiguration _configuration;
+
+    public DocumentDiscoveryEgressClient(
+        HttpClient httpClient,
+        IConfiguration configuration)
+    {
+        _httpClient = httpClient;
+        _configuration = configuration;
+    }
+
     /// <summary>
     /// Запрос документов КА основного и дублей у Engress
     /// </summary>
@@ -46,7 +55,7 @@ public sealed class DocumentDiscoveryEgressClient(
         {
             Content = JsonContent.Create(new MoySkladDocumentDiscoveryRequest(counterpartyIds))
         };
-        request.Headers.TryAddWithoutValidation(InternalApiHeaders.ApiKey, configuration["InternalApi:Key"]);
+        request.Headers.TryAddWithoutValidation(InternalApiHeaders.ApiKey, _configuration["InternalApi:Key"]);
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.MergeJobId, mergeJobId.ToString("D"));
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.OperationId, operationId.ToString("D"));
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.UserId, userId.ToString("D"));
@@ -55,7 +64,7 @@ public sealed class DocumentDiscoveryEgressClient(
         HttpResponseMessage response;
         try
         {
-            response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

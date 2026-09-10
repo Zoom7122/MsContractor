@@ -22,15 +22,15 @@ public sealed partial class MoySkladDocumentGateway
             var path = $"entity/salesreturn/{documentId:D}/positions?limit=1000&offset={offset}";
             var context = new MoySkladRequestContext(accountId, correlationId, null, null, "GET", path, "salesreturn", documentId);
             var watch = Stopwatch.StartNew();
-            await rateLimiter.WaitAsync(accountId, userId, cancellationToken);
+            await _rateLimiter.WaitAsync(accountId, userId, cancellationToken);
             using var request = new HttpRequestMessage(HttpMethod.Get, path);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             request.Headers.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
             try
             {
-                using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                await rateLimiter.ObserveAsync(accountId, response, cancellationToken);
-                var body = await responseHandler.ReadAsync(response, context, watch.Elapsed, cancellationToken);
+                using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                await _rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+                var body = await _responseHandler.ReadAsync(response, context, watch.Elapsed, cancellationToken);
                 var page = JsonNode.Parse(body.Body)?.AsObject() ?? throw new JsonException();
                 var size = page["meta"]?["size"]?.GetValue<int>() ?? throw new JsonException();
                 if (size < 0 || page["meta"]?["limit"]?.GetValue<int>() != 1000 ||
@@ -46,9 +46,9 @@ public sealed partial class MoySkladDocumentGateway
                 }
             }
             catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
-            { throw responseHandler.TransportFailure(context, "Salesreturn positions request timed out.", watch.Elapsed, exception); }
+            { throw _responseHandler.TransportFailure(context, "Salesreturn positions request timed out.", watch.Elapsed, exception); }
             catch (Exception exception) when (exception is HttpRequestException or IOException)
-            { throw responseHandler.TransportFailure(context, "Salesreturn positions are unavailable.", watch.Elapsed, exception); }
+            { throw _responseHandler.TransportFailure(context, "Salesreturn positions are unavailable.", watch.Elapsed, exception); }
             catch (Exception exception) when (exception is JsonException or InvalidOperationException or FormatException)
             { throw new EgressException(502, "SALESRETURN_POSITIONS_INCOMPLETE", "MoySklad returned incomplete salesreturn positions.", exception); }
         }

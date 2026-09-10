@@ -8,13 +8,28 @@ using MsContractor.VendorService.Contracts;
 
 namespace MsContractor.VendorService.Services;
 
-public sealed class MoyskladSessionService(
-    IMoyskladContextClient contextClient,
-    IVendorSessionStore sessionStore,
-    IVendorInstallationRepository repository,
-    IOptions<VendorOptions> options,
-    TimeProvider timeProvider)
+public sealed class MoyskladSessionService
 {
+    private readonly IMoyskladContextClient _contextClient;
+    private readonly IVendorSessionStore _sessionStore;
+    private readonly IVendorInstallationRepository _repository;
+    private readonly IOptions<VendorOptions> _options;
+    private readonly TimeProvider _timeProvider;
+
+    public MoyskladSessionService(
+        IMoyskladContextClient contextClient,
+        IVendorSessionStore sessionStore,
+        IVendorInstallationRepository repository,
+        IOptions<VendorOptions> options,
+        TimeProvider timeProvider)
+    {
+        _contextClient = contextClient;
+        _sessionStore = sessionStore;
+        _repository = repository;
+        _options = options;
+        _timeProvider = timeProvider;
+    }
+
     private static readonly HashSet<string> SupportedLocales =
         new(StringComparer.Ordinal) { "ru_RU", "en_US" };
 
@@ -30,15 +45,15 @@ public sealed class MoyskladSessionService(
             throw new VendorValidationException("appId must be a UUID.");
         if (!SupportedLocales.Contains(userLocale))
             throw new VendorValidationException("Unsupported userLocale.");
-        if (appId != options.Value.AppId || !string.Equals(appUid, options.Value.AppUid, StringComparison.Ordinal))
+        if (appId != _options.Value.AppId || !string.Equals(appUid, _options.Value.AppUid, StringComparison.Ordinal))
             throw new VendorForbiddenException();
 
-        var context = await contextClient.GetAsync(
+        var context = await _contextClient.GetAsync(
             contextKey,
             appId,
             appUid,
             cancellationToken);
-        var installation = await repository.GetByAccountIdAsync(context.AccountId, cancellationToken);
+        var installation = await _repository.GetByAccountIdAsync(context.AccountId, cancellationToken);
         if (installation is null ||
             installation.Status != "Active" ||
             installation.AppId != appId ||
@@ -47,12 +62,12 @@ public sealed class MoyskladSessionService(
             throw new VendorForbiddenException();
         }
 
-        installation.LastContextAt = timeProvider.GetUtcNow();
-        await repository.SaveChangesAsync(cancellationToken);
+        installation.LastContextAt = _timeProvider.GetUtcNow();
+        await _repository.SaveChangesAsync(cancellationToken);
 
         if (!string.IsNullOrWhiteSpace(priorToken))
-            await sessionStore.DeleteAsync(priorToken, cancellationToken);
-        var token = await sessionStore.CreateAsync(
+            await _sessionStore.DeleteAsync(priorToken, cancellationToken);
+        var token = await _sessionStore.CreateAsync(
             context.AccountId,
             context.Id,
             cancellationToken);
@@ -68,7 +83,7 @@ public sealed class MoyskladSessionService(
     {
         if (string.IsNullOrWhiteSpace(token))
             return null;
-        var session = await sessionStore.GetAndRefreshAsync(token, cancellationToken);
+        var session = await _sessionStore.GetAndRefreshAsync(token, cancellationToken);
         return session is null
             ? null
             : new MoyskladSessionResponse(session.AccountId, session.EmployeeId);
@@ -83,8 +98,8 @@ public sealed class MoyskladSessionService(
             throw new ArgumentException("Dev session account ID must be a non-empty UUID.", nameof(accountId));
 
         if (!string.IsNullOrWhiteSpace(priorToken))
-            await sessionStore.DeleteAsync(priorToken, cancellationToken);
-        var token = await sessionStore.CreateAsync(accountId, accountId, cancellationToken);
+            await _sessionStore.DeleteAsync(priorToken, cancellationToken);
+        var token = await _sessionStore.CreateAsync(accountId, accountId, cancellationToken);
 
         return new CreatedMoyskladSession(
             token,
@@ -94,7 +109,7 @@ public sealed class MoyskladSessionService(
     public Task LogoutAsync(string? token, CancellationToken cancellationToken) =>
         string.IsNullOrWhiteSpace(token)
             ? Task.CompletedTask
-            : sessionStore.DeleteAsync(token, cancellationToken);
+            : _sessionStore.DeleteAsync(token, cancellationToken);
 
     private static string Required(string? value, string name, int maxLength)
     {

@@ -1,5 +1,6 @@
 import importlib.util
 import argparse
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -160,6 +161,36 @@ class DependentDocumentPayloadTests(unittest.TestCase):
         error = ms_docs.error_data("POST", "/entity/salesreturn", ValueError("bad payload"))
         self.assertIsNone(error["status"])
         self.assertEqual(error["body"], "bad payload")
+
+    def test_counterparty_creation_error_is_saved_in_report_and_ms_log(self) -> None:
+        report = {
+            "runId": "20260910124659",
+            "baseUrl": "https://example.test/api/remap/1.2",
+            "counterparties": [],
+            "createdDocuments": [],
+            "failedDocuments": [],
+            "failedCounterparties": [],
+            "skippedDocuments": [],
+        }
+        error = ms_docs.error_data(
+            "POST", "/entity/counterparty", ms_docs.ApiError(
+                "POST", "/entity/counterparty", 403, '{"errors":[{"error":"Forbidden"}]}'
+            )
+        )
+        ms_docs.add_failed_counterparty(report, 1, error)
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(
+            ms_docs, "MS_ERROR_LOG_DIR", Path(temp_dir)
+        ):
+            exit_code = ms_docs.finish_run(report, should_write_report=True)
+            report_file = Path(temp_dir) / "mscontractor_docs_report_20260910124659.json"
+            error_log_file = Path(temp_dir) / "mscontractor_document_errors_20260910124659.json"
+
+            self.assertEqual(1, exit_code)
+            self.assertTrue(report_file.exists())
+            self.assertTrue(error_log_file.exists())
+            self.assertIn("failedCounterparties", report_file.read_text(encoding="utf-8"))
+            self.assertIn("Forbidden", error_log_file.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

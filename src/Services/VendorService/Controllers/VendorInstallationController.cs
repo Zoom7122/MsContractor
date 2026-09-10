@@ -8,8 +8,16 @@ namespace MsContractor.VendorService.Controllers;
 
 [ApiController]
 [Route("api/moysklad/vendor/1.0/apps")]
-public sealed class VendorInstallationController(VendorInstallationService service) : ControllerBase
+public sealed class VendorInstallationController : ControllerBase
 {
+    private readonly VendorInstallationService _service;
+
+    public VendorInstallationController(
+        VendorInstallationService service)
+    {
+        _service = service;
+    }
+
     [HttpPut("{appId:guid}/{accountId:guid}")]
     [ProducesResponseType<VendorActivationResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<VendorErrorResponse>(StatusCodes.Status400BadRequest)]
@@ -33,7 +41,7 @@ public sealed class VendorInstallationController(VendorInstallationService servi
 
         try
         {
-            await service.ActivateAsync(new VendorActivationCommand(
+            await _service.ActivateAsync(new VendorActivationCommand(
                 appId, accountId, authorization, requestId, request), cancellationToken);
             return Ok(new VendorActivationResponse("Activated"));
         }
@@ -81,7 +89,7 @@ public sealed class VendorInstallationController(VendorInstallationService servi
 
         try
         {
-            await service.DeactivateAsync(new VendorDeactivationCommand(
+            await _service.DeactivateAsync(new VendorDeactivationCommand(
                 appId, accountId, authorization, requestId, request), cancellationToken);
             return Ok();
         }

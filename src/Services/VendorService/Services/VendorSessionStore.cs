@@ -23,12 +23,23 @@ public interface IVendorSessionStore
     Task RevokeAccountAsync(Guid accountId, CancellationToken cancellationToken);
 }
 
-public sealed class VendorSessionStore(
-    IVendorSessionRepository repository,
-    IOptions<VendorOptions> options,
-    TimeProvider timeProvider) : IVendorSessionStore
+public sealed class VendorSessionStore : IVendorSessionStore
 {
-    private TimeSpan SessionLifetime => options.Value.SessionLifetime;
+    private readonly IVendorSessionRepository _repository;
+    private readonly IOptions<VendorOptions> _options;
+    private readonly TimeProvider _timeProvider;
+
+    public VendorSessionStore(
+        IVendorSessionRepository repository,
+        IOptions<VendorOptions> options,
+        TimeProvider timeProvider)
+    {
+        _repository = repository;
+        _options = options;
+        _timeProvider = timeProvider;
+    }
+
+    private TimeSpan SessionLifetime => _options.Value.SessionLifetime;
 
     public async Task<string> CreateAsync(
         Guid accountId,
@@ -38,9 +49,9 @@ public sealed class VendorSessionStore(
         cancellationToken.ThrowIfCancellationRequested();
         var token = Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
         var tokenHash = HashToken(token);
-        var now = timeProvider.GetUtcNow();
+        var now = _timeProvider.GetUtcNow();
         var session = new VendorSession(accountId, employeeId, now, now);
-        await repository.CreateAsync(tokenHash, session, SessionLifetime, cancellationToken);
+        await _repository.CreateAsync(tokenHash, session, SessionLifetime, cancellationToken);
 
         return token;
     }
@@ -54,12 +65,12 @@ public sealed class VendorSessionStore(
             return null;
 
         var tokenHash = HashToken(token);
-        var session = await repository.ReadAsync(tokenHash, cancellationToken);
+        var session = await _repository.ReadAsync(tokenHash, cancellationToken);
         if (session is null)
             return null;
 
-        var refreshed = session with { LastActivityAt = timeProvider.GetUtcNow() };
-        await repository.RefreshAsync(tokenHash, refreshed, SessionLifetime, cancellationToken);
+        var refreshed = session with { LastActivityAt = _timeProvider.GetUtcNow() };
+        await _repository.RefreshAsync(tokenHash, refreshed, SessionLifetime, cancellationToken);
 
         return refreshed;
     }
@@ -70,11 +81,11 @@ public sealed class VendorSessionStore(
         if (string.IsNullOrWhiteSpace(token))
             return;
 
-        await repository.DeleteAsync(HashToken(token), cancellationToken);
+        await _repository.DeleteAsync(HashToken(token), cancellationToken);
     }
 
     public Task RevokeAccountAsync(Guid accountId, CancellationToken cancellationToken) =>
-        repository.RevokeAccountAsync(accountId, cancellationToken);
+        _repository.RevokeAccountAsync(accountId, cancellationToken);
 
     private static string HashToken(string token) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(token)));

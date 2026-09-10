@@ -14,8 +14,19 @@ public interface IMergeJobsClient
         CancellationToken cancellationToken);
 }
 
-public sealed class MergeJobsClient(HttpClient httpClient, IConfiguration configuration) : IMergeJobsClient
+public sealed class MergeJobsClient : IMergeJobsClient
 {
+    private readonly HttpClient _httpClient;
+    private readonly IConfiguration _configuration;
+
+    public MergeJobsClient(
+        HttpClient httpClient,
+        IConfiguration configuration)
+    {
+        _httpClient = httpClient;
+        _configuration = configuration;
+    }
+
     public async Task<MergeJobAccepted> CreateAsync(
         Guid accountId,
         Guid userId,
@@ -27,14 +38,14 @@ public sealed class MergeJobsClient(HttpClient httpClient, IConfiguration config
         {
             Content = JsonContent.Create(mergeRequest)
         };
-        request.Headers.TryAddWithoutValidation(InternalApiHeaders.ApiKey, configuration["InternalApi:Key"]);
+        request.Headers.TryAddWithoutValidation(InternalApiHeaders.ApiKey, _configuration["InternalApi:Key"]);
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.AccountId, accountId.ToString("D"));
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.UserId, userId.ToString("D"));
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.CorrelationId, correlationId.ToString("D"));
 
         try
         {
-            using var response = await httpClient.SendAsync(request, cancellationToken);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 var error = await TryReadErrorAsync(response, cancellationToken);

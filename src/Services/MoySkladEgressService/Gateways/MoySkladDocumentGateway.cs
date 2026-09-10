@@ -69,13 +69,13 @@ public interface IMoySkladDocumentGateway
 public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private readonly HttpClient httpClient;
-    private readonly IVendorTokenClient tokenClient;
-    private readonly IMoySkladRateLimiter rateLimiter;
-    private readonly ILogger<MoySkladDocumentGateway> logger;
-    private readonly IMoySkladResponseHandler responseHandler;
-    private readonly IMoySkladSingleDocumentResponseValidator singleValidator;
-    private readonly IMoySkladBulkDocumentResponseValidator bulkValidator;
+    private readonly HttpClient _httpClient;
+    private readonly IVendorTokenClient _tokenClient;
+    private readonly IMoySkladRateLimiter _rateLimiter;
+    private readonly ILogger<MoySkladDocumentGateway> _logger;
+    private readonly IMoySkladResponseHandler _responseHandler;
+    private readonly IMoySkladSingleDocumentResponseValidator _singleValidator;
+    private readonly IMoySkladBulkDocumentResponseValidator _bulkValidator;
 
     [ActivatorUtilitiesConstructor]
     public MoySkladDocumentGateway(
@@ -87,13 +87,13 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
         IMoySkladSingleDocumentResponseValidator singleValidator,
         IMoySkladBulkDocumentResponseValidator bulkValidator)
     {
-        this.httpClient = httpClient;
-        this.tokenClient = tokenClient;
-        this.rateLimiter = rateLimiter;
-        this.logger = logger;
-        this.responseHandler = responseHandler;
-        this.singleValidator = singleValidator;
-        this.bulkValidator = bulkValidator;
+        _httpClient = httpClient;
+        _tokenClient = tokenClient;
+        _rateLimiter = rateLimiter;
+        _logger = logger;
+        _responseHandler = responseHandler;
+        _singleValidator = singleValidator;
+        _bulkValidator = bulkValidator;
     }
 
     public MoySkladDocumentGateway(
@@ -126,13 +126,13 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
         if (!SupportedMoySkladDocumentTypes.Contains(documentType))
             throw new ArgumentOutOfRangeException(nameof(documentType));
 
-        var accessToken = await tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
-        await rateLimiter.WaitAsync(accountId, requestedByUserId, cancellationToken);
+        var accessToken = await _tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
+        await _rateLimiter.WaitAsync(accountId, requestedByUserId, cancellationToken);
 
         var filter = string.Join(
             ';',
             counterpartyIds.Select(counterpartyId =>
-                $"agent={new Uri(httpClient.BaseAddress!, $"entity/counterparty/{counterpartyId:D}")}"));
+                $"agent={new Uri(_httpClient.BaseAddress!, $"entity/counterparty/{counterpartyId:D}")}"));
         var requestUri = $"entity/{documentType}?filter={Uri.EscapeDataString(filter)}" +
                          $"&limit={limit}&offset={offset}";
         using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
@@ -140,7 +140,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
         request.Headers.TryAddWithoutValidation("Accept", "application/json;charset=utf-8");
         request.Headers.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
 
-        logger.LogInformation(
+        _logger.LogInformation(
             "Sending MoySklad document page request: account_id={AccountId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}, document_type={DocumentType}, counterparties_count={CounterpartiesCount}, page_offset={Offset}, page_limit={Limit}",
             accountId,
             requestedByUserId,
@@ -156,28 +156,28 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
         HttpResponseMessage response;
         try
         {
-            response = await httpClient.SendAsync(
+            response = await _httpClient.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            throw responseHandler.TransportFailure(
+            throw _responseHandler.TransportFailure(
                 context, "MoySklad request timed out.", stopwatch.Elapsed, exception);
         }
         catch (HttpRequestException exception)
         {
-            throw responseHandler.TransportFailure(
+            throw _responseHandler.TransportFailure(
                 context, "MoySklad is unavailable.", stopwatch.Elapsed, exception);
         }
 
         using (response)
         {
-            await rateLimiter.ObserveAsync(accountId, response, cancellationToken);
-            var responseBody = await responseHandler.ReadAsync(
+            await _rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+            var responseBody = await _responseHandler.ReadAsync(
                 response, context, stopwatch.Elapsed, cancellationToken);
-            logger.LogInformation(
+            _logger.LogInformation(
                 "MoySklad document page response received: account_id={AccountId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}, document_type={DocumentType}, page_offset={Offset}, page_limit={Limit}, status={StatusCode}, duration_ms={DurationMs}",
                 accountId,
                 requestedByUserId,
@@ -195,7 +195,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
             }
             catch (Exception exception) when (exception is JsonException or NotSupportedException)
             {
-                throw responseHandler.ValidationFailure(
+                throw _responseHandler.ValidationFailure(
                     context, responseBody.HttpStatus,
                     $"MoySklad returned invalid document JSON: {exception.GetType().Name}.",
                     responseBody.Body, stopwatch.Elapsed);
@@ -206,7 +206,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
                 payload.Meta.Offset is null ||
                 payload.Rows is null)
             {
-                throw responseHandler.ValidationFailure(
+                throw _responseHandler.ValidationFailure(
                     context, responseBody.HttpStatus, "MoySklad returned incomplete document page metadata.",
                     responseBody.Body, stopwatch.Elapsed);
             }
@@ -225,7 +225,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
             }
             catch (JsonException exception)
             {
-                throw responseHandler.ValidationFailure(
+                throw _responseHandler.ValidationFailure(
                     context, responseBody.HttpStatus,
                     $"MoySklad returned document rows without raw JSON: {exception.Message}",
                     responseBody.Body, stopwatch.Elapsed);
@@ -233,7 +233,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
 
             if (rawRows.Length != payload.Rows.Count)
             {
-                throw responseHandler.ValidationFailure(
+                throw _responseHandler.ValidationFailure(
                     context, responseBody.HttpStatus, "MoySklad returned inconsistent document rows.",
                     responseBody.Body, stopwatch.Elapsed);
             }
@@ -243,7 +243,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
             {
                 var row = payload.Rows[index];
                 if (row?.Agent?.Meta?.Href is null)
-                    throw responseHandler.ValidationFailure(
+                    throw _responseHandler.ValidationFailure(
                         context, responseBody.HttpStatus, "MoySklad returned a document without agent metadata.",
                         responseBody.Body, stopwatch.Elapsed);
 
@@ -300,14 +300,14 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
             throw new ArgumentException("Document mutation chunk is invalid.", nameof(documents));
         }
 
-        var accessToken = await tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
-        await rateLimiter.WaitAsync(accountId, requestedByUserId, cancellationToken);
+        var accessToken = await _tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
+        await _rateLimiter.WaitAsync(accountId, requestedByUserId, cancellationToken);
 
         var agent = new
         {
             meta = new
             {
-                href = new Uri(httpClient.BaseAddress!, $"entity/counterparty/{mainCounterpartyId:D}").ToString(),
+                href = new Uri(_httpClient.BaseAddress!, $"entity/counterparty/{mainCounterpartyId:D}").ToString(),
                 type = "counterparty",
                 mediaType = "application/json"
             }
@@ -319,7 +319,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
             {
                 meta = new
                 {
-                    href = new Uri(httpClient.BaseAddress!, $"entity/{documentType}/{item.DocumentId:D}").ToString(),
+                    href = new Uri(_httpClient.BaseAddress!, $"entity/{documentType}/{item.DocumentId:D}").ToString(),
                     type = documentType,
                     mediaType = "application/json"
                 },
@@ -339,7 +339,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
         request.Headers.TryAddWithoutValidation("Accept", "application/json;charset=utf-8");
         request.Headers.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
 
-        logger.LogInformation(
+        _logger.LogInformation(
             "Sending MoySklad document counterparty mutation: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}, document_type={DocumentType}, method={Method}, chunk_size={ChunkSize}",
             accountId, mergeJobId, operationId, requestedByUserId, correlationId, documentType,
             request.Method.Method, documents.Count);
@@ -358,31 +358,31 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
 
         try
         {
-            response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            throw responseHandler.TransportFailure(
+            throw _responseHandler.TransportFailure(
                 context, "MoySklad document update timed out.", stopwatch.Elapsed, exception);
         }
         catch (HttpRequestException exception)
         {
-            throw responseHandler.TransportFailure(
+            throw _responseHandler.TransportFailure(
                 context, "MoySklad is unavailable.", stopwatch.Elapsed, exception);
         }
 
         using (response)
         {
-            await rateLimiter.ObserveAsync(accountId, response, cancellationToken);
-            var responseBody = await responseHandler.ReadAsync(
+            await _rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+            var responseBody = await _responseHandler.ReadAsync(
                 response, context, stopwatch.Elapsed, cancellationToken);
             var json = responseBody.Body;
-            logger.LogInformation(
+            _logger.LogInformation(
                 "MoySklad document counterparty mutation completed: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, method={Method}, chunk_size={ChunkSize}, status={StatusCode}, duration_ms={DurationMs}",
                 accountId, mergeJobId, operationId, correlationId, documentType, request.Method.Method,
                 documents.Count, responseBody.HttpStatus, stopwatch.Elapsed.TotalMilliseconds);
             if (string.IsNullOrWhiteSpace(json))
-                throw responseHandler.ValidationFailure(
+                throw _responseHandler.ValidationFailure(
                     context, responseBody.HttpStatus, "MoySklad returned an empty document update response.", json,
                     stopwatch.Elapsed);
 
@@ -393,7 +393,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
             }
             catch (JsonException exception)
             {
-                throw responseHandler.ValidationFailure(
+                throw _responseHandler.ValidationFailure(
                     context,
                     responseBody.HttpStatus,
                     $"MoySklad returned invalid document update JSON: {exception.GetType().Name}.",
@@ -405,15 +405,15 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
             {
                 if (isSingle)
                 {
-                    var validationError = singleValidator.Validate(
+                    var validationError = _singleValidator.Validate(
                         responseDocument.RootElement, documents[0], mainCounterpartyId);
                     if (validationError is not null)
-                        throw responseHandler.ValidationFailure(
+                        throw _responseHandler.ValidationFailure(
                             context, responseBody.HttpStatus, validationError, json, stopwatch.Elapsed);
                     return new MoySkladDocumentChangeChunkResult([documents[0]], []);
                 }
 
-                var validation = bulkValidator.Validate(
+                var validation = _bulkValidator.Validate(
                     responseDocument.RootElement, documents, mainCounterpartyId);
                 var failures = validation.Failed.Select(item => new MoySkladDocumentChangeFailure(
                     item.Document.DocumentType,
@@ -427,7 +427,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
                 if (failures.Length > 0)
                 {
                     var validationError = string.Join(" | ", failures.Select(item => item.Message));
-                    _ = responseHandler.ValidationFailure(
+                    _ = _responseHandler.ValidationFailure(
                         context, responseBody.HttpStatus, validationError, json, stopwatch.Elapsed);
                 }
                 return new MoySkladDocumentChangeChunkResult(validation.Succeeded, failures);
@@ -474,8 +474,8 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
             throw new ArgumentException("Document mutation chunk is invalid.", nameof(documents));
         }
 
-        var accessToken = await tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
-        await rateLimiter.WaitAsync(accountId, requestedByUserId, cancellationToken);
+        var accessToken = await _tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
+        await _rateLimiter.WaitAsync(accountId, requestedByUserId, cancellationToken);
         var agent = EntityReference("counterparty", mainCounterpartyId);
         var isSingle = documents.Count == 1;
         object payload = isSingle
@@ -499,24 +499,24 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
         HttpResponseMessage response;
         try
         {
-            response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            throw responseHandler.TransportFailure(context, "MoySklad document update timed out.", stopwatch.Elapsed, exception);
+            throw _responseHandler.TransportFailure(context, "MoySklad document update timed out.", stopwatch.Elapsed, exception);
         }
         catch (HttpRequestException exception)
         {
-            throw responseHandler.TransportFailure(context, "MoySklad is unavailable.", stopwatch.Elapsed, exception);
+            throw _responseHandler.TransportFailure(context, "MoySklad is unavailable.", stopwatch.Elapsed, exception);
         }
 
         using (response)
         {
-            await rateLimiter.ObserveAsync(accountId, response, cancellationToken);
-            var responseBody = await responseHandler.ReadAsync(response, context, stopwatch.Elapsed, cancellationToken);
+            await _rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+            var responseBody = await _responseHandler.ReadAsync(response, context, stopwatch.Elapsed, cancellationToken);
             var json = responseBody.Body;
             if (string.IsNullOrWhiteSpace(json))
-                throw responseHandler.ValidationFailure(
+                throw _responseHandler.ValidationFailure(
                     context, responseBody.HttpStatus, "MoySklad returned an empty document update response.", json,
                     stopwatch.Elapsed);
 
@@ -524,7 +524,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
             try { responseDocument = JsonDocument.Parse(json); }
             catch (JsonException exception)
             {
-                throw responseHandler.ValidationFailure(
+                throw _responseHandler.ValidationFailure(
                     context, responseBody.HttpStatus,
                     $"MoySklad returned invalid document update JSON: {exception.GetType().Name}.", json,
                     stopwatch.Elapsed);
@@ -536,16 +536,16 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
                     .Select(item => new MoySkladDocumentChangeItem(item.DocumentType, item.DocumentId)).ToArray();
                 if (isSingle)
                 {
-                    var validationError = singleValidator.Validate(
+                    var validationError = _singleValidator.Validate(
                         responseDocument.RootElement, plainDocuments[0], mainCounterpartyId)
                         ?? ValidateContract(responseDocument.RootElement, documents[0].Contract);
                     if (validationError is not null)
-                        throw responseHandler.ValidationFailure(
+                        throw _responseHandler.ValidationFailure(
                             context, responseBody.HttpStatus, validationError, json, stopwatch.Elapsed);
                     return new MoySkladDocumentChangeChunkResult(plainDocuments, []);
                 }
 
-                var validation = bulkValidator.Validate(responseDocument.RootElement, plainDocuments, mainCounterpartyId);
+                var validation = _bulkValidator.Validate(responseDocument.RootElement, plainDocuments, mainCounterpartyId);
                 var failedIds = validation.Failed.Select(item => item.Document.DocumentId).ToHashSet();
                 var failures = validation.Failed.Select(item => new MoySkladDocumentChangeFailure(
                     item.Document.DocumentType, item.Document.DocumentId, item.Code, item.Message,
@@ -569,7 +569,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
                         responseBody.HttpStatus, false, request.RequestUri!.ToString(), ValidationError: contractError));
                 }
                 if (failures.Count > 0)
-                    _ = responseHandler.ValidationFailure(
+                    _ = _responseHandler.ValidationFailure(
                         context, responseBody.HttpStatus, string.Join(" | ", failures.Select(item => item.Message)), json,
                         stopwatch.Elapsed);
                 return new MoySkladDocumentChangeChunkResult(
@@ -594,8 +594,8 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
         Guid mainCounterpartyId, string entityType, IReadOnlyList<MoySkladDocumentChangeItem> entities,
         CancellationToken cancellationToken)
     {
-        var accessToken = await tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
-        await rateLimiter.WaitAsync(accountId, requestedByUserId, cancellationToken);
+        var accessToken = await _tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
+        await _rateLimiter.WaitAsync(accountId, requestedByUserId, cancellationToken);
         var agent = EntityReference("counterparty", mainCounterpartyId);
         var isSingle = entities.Count == 1;
         object payload = isSingle ? new { agent } : entities.Select(item => new
@@ -615,41 +615,41 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
             request.Method.Method, request.RequestUri!.ToString(), entityType, isSingle ? entities[0].DocumentId : null);
         var stopwatch = Stopwatch.StartNew();
         HttpResponseMessage response;
-        try { response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken); }
+        try { response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken); }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
-        { throw responseHandler.TransportFailure(context, "MoySklad document update timed out.", stopwatch.Elapsed, exception); }
+        { throw _responseHandler.TransportFailure(context, "MoySklad document update timed out.", stopwatch.Elapsed, exception); }
         catch (HttpRequestException exception)
-        { throw responseHandler.TransportFailure(context, "MoySklad is unavailable.", stopwatch.Elapsed, exception); }
+        { throw _responseHandler.TransportFailure(context, "MoySklad is unavailable.", stopwatch.Elapsed, exception); }
         using (response)
         {
-            await rateLimiter.ObserveAsync(accountId, response, cancellationToken);
-            var responseBody = await responseHandler.ReadAsync(response, context, stopwatch.Elapsed, cancellationToken);
+            await _rateLimiter.ObserveAsync(accountId, response, cancellationToken);
+            var responseBody = await _responseHandler.ReadAsync(response, context, stopwatch.Elapsed, cancellationToken);
             var json = responseBody.Body;
             if (string.IsNullOrWhiteSpace(json))
-                throw responseHandler.ValidationFailure(context, responseBody.HttpStatus,
+                throw _responseHandler.ValidationFailure(context, responseBody.HttpStatus,
                     "MoySklad returned an empty document update response.", json, stopwatch.Elapsed);
             JsonDocument responseDocument;
             try { responseDocument = JsonDocument.Parse(json); }
             catch (JsonException exception)
             {
-                throw responseHandler.ValidationFailure(context, responseBody.HttpStatus,
+                throw _responseHandler.ValidationFailure(context, responseBody.HttpStatus,
                 $"MoySklad returned invalid document update JSON: {exception.GetType().Name}.", json, stopwatch.Elapsed);
             }
             using (responseDocument)
             {
                 if (isSingle)
                 {
-                    var validationError = singleValidator.Validate(responseDocument.RootElement, entities[0], mainCounterpartyId);
+                    var validationError = _singleValidator.Validate(responseDocument.RootElement, entities[0], mainCounterpartyId);
                     if (validationError is not null)
-                        throw responseHandler.ValidationFailure(context, responseBody.HttpStatus, validationError, json, stopwatch.Elapsed);
+                        throw _responseHandler.ValidationFailure(context, responseBody.HttpStatus, validationError, json, stopwatch.Elapsed);
                     return new MoySkladDocumentChangeChunkResult([entities[0]], []);
                 }
-                var validation = bulkValidator.Validate(responseDocument.RootElement, entities, mainCounterpartyId);
+                var validation = _bulkValidator.Validate(responseDocument.RootElement, entities, mainCounterpartyId);
                 var failures = validation.Failed.Select(item => new MoySkladDocumentChangeFailure(
                     item.Document.DocumentType, item.Document.DocumentId, item.Code, item.Message, responseBody.HttpStatus,
                     false, request.RequestUri!.ToString(), ValidationError: item.Message)).ToArray();
                 if (failures.Length > 0)
-                    _ = responseHandler.ValidationFailure(context, responseBody.HttpStatus,
+                    _ = _responseHandler.ValidationFailure(context, responseBody.HttpStatus,
                         string.Join(" | ", failures.Select(item => item.Message)), json, stopwatch.Elapsed);
                 return new MoySkladDocumentChangeChunkResult(validation.Succeeded, failures);
             }
@@ -657,7 +657,7 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
     }
 
     private EntityReferencePayload EntityReference(string entityType, Guid id) => new(new EntityMeta(
-        new Uri(httpClient.BaseAddress!, $"entity/{entityType}/{id:D}").ToString(),
+        new Uri(_httpClient.BaseAddress!, $"entity/{entityType}/{id:D}").ToString(),
         entityType,
         "application/json"));
 

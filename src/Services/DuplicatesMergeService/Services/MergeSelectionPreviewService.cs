@@ -13,9 +13,16 @@ public interface IMergeSelectionPreviewService
         CancellationToken cancellationToken);
 }
 
-public sealed class MergeSelectionPreviewService(ICounterpartyRepository repository)
-    : IMergeSelectionPreviewService
+public sealed class MergeSelectionPreviewService : IMergeSelectionPreviewService
 {
+    private readonly ICounterpartyRepository _repository;
+
+    public MergeSelectionPreviewService(
+        ICounterpartyRepository repository)
+    {
+        _repository = repository;
+    }
+
     public async Task<MergeSelectionPreviewResponse> GetAsync(
         Guid accountId,
         MergeSelectionPreviewRequest request,
@@ -24,7 +31,7 @@ public sealed class MergeSelectionPreviewService(ICounterpartyRepository reposit
         Validate(request);
 
         var ids = request.CounterpartyIds.ToArray();
-        var counterparties = await repository.GetSelectionAsync(accountId, ids, cancellationToken);
+        var counterparties = await _repository.GetSelectionAsync(accountId, ids, cancellationToken);
 
         if (counterparties.Count != ids.Length)
         {

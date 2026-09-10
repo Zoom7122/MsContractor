@@ -31,8 +31,15 @@ public interface IMoySkladResponseHandler
         Exception exception);
 }
 
-public sealed class MoySkladResponseHandler(ILogger<MoySkladResponseHandler> logger) : IMoySkladResponseHandler
+public sealed class MoySkladResponseHandler : IMoySkladResponseHandler
 {
+    private readonly ILogger<MoySkladResponseHandler> _logger;
+
+    public MoySkladResponseHandler(ILogger<MoySkladResponseHandler> logger)
+    {
+        _logger = logger;
+    }
+
     public const int MaximumDiagnosticBodyLength = 32 * 1024;
     private static readonly JsonSerializerOptions DiagnosticJsonOptions = new()
     {
@@ -176,7 +183,7 @@ public sealed class MoySkladResponseHandler(ILogger<MoySkladResponseHandler> log
         string responseBody,
         bool retryable,
         TimeSpan duration) =>
-        logger.Log(
+        _logger.Log(
             level,
             "MoySklad request failed: account_id={AccountId}, correlation_id={CorrelationId}, merge_job_id={MergeJobId}, merge_operation_id={MergeOperationId}, http_method={HttpMethod}, entity_type={EntityType}, entity_id={EntityId}, endpoint={Endpoint}, http_status={HttpStatus}, retry_attempt={RetryAttempt}, error_code={ErrorCode}, error_message={ErrorMessage}, moysklad_error_code={MoySkladErrorCode}, moysklad_error_message={MoySkladErrorMessage}, response_validation_error={ResponseValidationError}, retryable={Retryable}, duration_ms={DurationMs}, response_body={ResponseBody}",
             context.AccountId,
@@ -295,15 +302,22 @@ public sealed class MoySkladResponseHandler(ILogger<MoySkladResponseHandler> log
     }
 }
 
-internal sealed class ForwardingLogger<TSource, TTarget>(ILogger<TSource> logger) : ILogger<TTarget>
+internal sealed class ForwardingLogger<TSource, TTarget> : ILogger<TTarget>
 {
-    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => logger.BeginScope(state);
-    public bool IsEnabled(LogLevel logLevel) => logger.IsEnabled(logLevel);
+    private readonly ILogger<TSource> _logger;
+
+    public ForwardingLogger(ILogger<TSource> logger)
+    {
+        _logger = logger;
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => _logger.BeginScope(state);
+    public bool IsEnabled(LogLevel logLevel) => _logger.IsEnabled(logLevel);
     public void Log<TState>(
         LogLevel logLevel,
         EventId eventId,
         TState state,
         Exception? exception,
         Func<TState, Exception?, string> formatter) =>
-        logger.Log(logLevel, eventId, state, exception, formatter);
+        _logger.Log(logLevel, eventId, state, exception, formatter);
 }

@@ -13,8 +13,16 @@ public interface IVendorSessionRepository
     Task RevokeAccountAsync(Guid accountId, CancellationToken cancellationToken);
 }
 
-public sealed class VendorSessionRepository(IConnectionMultiplexer redis) : IVendorSessionRepository
+public sealed class VendorSessionRepository : IVendorSessionRepository
 {
+    private readonly IConnectionMultiplexer _redis;
+
+    public VendorSessionRepository(
+        IConnectionMultiplexer redis)
+    {
+        _redis = redis;
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static string SessionKey(string hash) => $"vendor:session:{hash}";
     private static string AccountKey(Guid accountId) => $"vendor:account-sessions:{accountId:D}";
@@ -22,7 +30,7 @@ public sealed class VendorSessionRepository(IConnectionMultiplexer redis) : IVen
     public async Task<VendorSession?> ReadAsync(string tokenHash, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var database = redis.GetDatabase();
+        var database = _redis.GetDatabase();
         var value = await database.StringGetAsync(SessionKey(tokenHash));
         if (value.IsNullOrEmpty) return null;
         try
@@ -46,7 +54,7 @@ public sealed class VendorSessionRepository(IConnectionMultiplexer redis) : IVen
     private async Task WriteAsync(string tokenHash, VendorSession session, TimeSpan lifetime, string errorMessage, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var transaction = redis.GetDatabase().CreateTransaction();
+        var transaction = _redis.GetDatabase().CreateTransaction();
         _ = transaction.StringSetAsync(SessionKey(tokenHash), JsonSerializer.Serialize(session, JsonOptions), lifetime);
         _ = transaction.SetAddAsync(AccountKey(session.AccountId), tokenHash);
         _ = transaction.KeyExpireAsync(AccountKey(session.AccountId), lifetime);
@@ -56,7 +64,7 @@ public sealed class VendorSessionRepository(IConnectionMultiplexer redis) : IVen
     public async Task DeleteAsync(string tokenHash, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var database = redis.GetDatabase();
+        var database = _redis.GetDatabase();
         var value = await database.StringGetAsync(SessionKey(tokenHash));
         if (!value.IsNullOrEmpty)
         {
@@ -73,7 +81,7 @@ public sealed class VendorSessionRepository(IConnectionMultiplexer redis) : IVen
     public async Task RevokeAccountAsync(Guid accountId, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var database = redis.GetDatabase();
+        var database = _redis.GetDatabase();
         var accountKey = AccountKey(accountId);
         var hashes = await database.SetMembersAsync(accountKey);
         var keys = hashes.Where(x => !x.IsNullOrEmpty).Select(x => (RedisKey)SessionKey(x!)).Append(accountKey).ToArray();

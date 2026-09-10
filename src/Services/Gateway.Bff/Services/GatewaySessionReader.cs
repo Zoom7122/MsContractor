@@ -11,8 +11,15 @@ public interface IGatewaySessionReader
     Task<GatewaySession?> ReadAsync(string? token, CancellationToken cancellationToken);
 }
 
-public sealed class GatewaySessionReader(IGatewaySessionRepository repository) : IGatewaySessionReader
+public sealed class GatewaySessionReader : IGatewaySessionReader
 {
+    private readonly IGatewaySessionRepository _repository;
+
+    public GatewaySessionReader(IGatewaySessionRepository repository)
+    {
+        _repository = repository;
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<GatewaySession?> ReadAsync(string? token, CancellationToken cancellationToken)
@@ -23,7 +30,7 @@ public sealed class GatewaySessionReader(IGatewaySessionRepository repository) :
 
         var hash = Convert.ToHexStringLower(
             SHA256.HashData(Encoding.UTF8.GetBytes(token)));
-        var value = await repository.ReadAsync(hash, cancellationToken);
+        var value = await _repository.ReadAsync(hash, cancellationToken);
         if (string.IsNullOrEmpty(value))
             return null;
 

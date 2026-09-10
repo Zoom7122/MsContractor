@@ -7,30 +7,51 @@ using Microsoft.Extensions.Options;
 
 namespace MsContractor.VendorService.Services;
 
-public sealed class VendorInstallationService(
-    VendorJwtValidator jwtValidator,
-    VendorJwtReplayStore replayStore,
-    IVendorInstallationRepository repository,
-    AccessTokenProtector tokenProtector,
-    IVendorSessionStore sessionStore,
-    IOptions<VendorOptions> options,
-    TimeProvider timeProvider,
-    ILogger<VendorInstallationService> logger)
+public sealed class VendorInstallationService
 {
+    private readonly VendorJwtValidator _jwtValidator;
+    private readonly VendorJwtReplayStore _replayStore;
+    private readonly IVendorInstallationRepository _repository;
+    private readonly AccessTokenProtector _tokenProtector;
+    private readonly IVendorSessionStore _sessionStore;
+    private readonly IOptions<VendorOptions> _options;
+    private readonly TimeProvider _timeProvider;
+    private readonly ILogger<VendorInstallationService> _logger;
+
+    public VendorInstallationService(
+        VendorJwtValidator jwtValidator,
+        VendorJwtReplayStore replayStore,
+        IVendorInstallationRepository repository,
+        AccessTokenProtector tokenProtector,
+        IVendorSessionStore sessionStore,
+        IOptions<VendorOptions> options,
+        TimeProvider timeProvider,
+        ILogger<VendorInstallationService> logger)
+    {
+        _jwtValidator = jwtValidator;
+        _replayStore = replayStore;
+        _repository = repository;
+        _tokenProtector = tokenProtector;
+        _sessionStore = sessionStore;
+        _options = options;
+        _timeProvider = timeProvider;
+        _logger = logger;
+    }
+
     private const string JsonApiResource = "https://api.moysklad.ru/api/remap/1.2";
 
     public async Task<VendorActivationResult> ActivateAsync(
         VendorActivationCommand command,
         CancellationToken cancellationToken)
     {
-        var jwt = jwtValidator.Validate(command.Authorization);
-        await replayStore.EnsureUnusedAsync(jwt, cancellationToken);
+        var jwt = _jwtValidator.Validate(command.Authorization);
+        await _replayStore.EnsureUnusedAsync(jwt, cancellationToken);
 
         if (string.IsNullOrWhiteSpace(command.RequestId))
             throw new VendorValidationException("X-Lognex-RequestId header is required.");
         if (command.RequestId.Length > 128)
             throw new VendorValidationException("Request ID is too long.");
-        if (command.AppId != options.Value.AppId || command.Request.AppUid != options.Value.AppUid)
+        if (command.AppId != _options.Value.AppId || command.Request.AppUid != _options.Value.AppUid)
             throw new VendorForbiddenException();
 
         var cause = command.Request.Cause switch
@@ -38,8 +59,8 @@ public sealed class VendorInstallationService(
             "Install" or "Resume" or "TariffChanged" or "Autoprolongation" => command.Request.Cause,
             _ => throw new VendorValidationException("Unsupported activation cause.")
         };
-        var now = timeProvider.GetUtcNow();
-        var installation = await repository.GetByAccountIdAsync(command.AccountId, cancellationToken);
+        var now = _timeProvider.GetUtcNow();
+        var installation = await _repository.GetByAccountIdAsync(command.AccountId, cancellationToken);
 
         if (cause is "TariffChanged" or "Autoprolongation")
         {
@@ -65,7 +86,7 @@ public sealed class VendorInstallationService(
             installation.Status = "Active";
             installation.ActivatedAt = now;
             installation.DeactivatedAt = null;
-            var protectedToken = tokenProtector.Protect(access.AccessToken);
+            var protectedToken = _tokenProtector.Protect(access.AccessToken);
             installation.AccessTokenCiphertext = protectedToken.Ciphertext;
             installation.AccessTokenNonce = protectedToken.Nonce;
             installation.AccessTokenTag = protectedToken.Tag;
@@ -99,9 +120,9 @@ public sealed class VendorInstallationService(
                 occurredAt = now
             }))
         };
-        var saved = await repository.SaveAsync(
+        var saved = await _repository.SaveAsync(
             new SaveVendorInstallationCommand(command.RequestId, installation, outbox), cancellationToken);
-        logger.LogInformation("Vendor activation handled. RequestId={RequestId}, AccountId={AccountId}, AppId={AppId}, Cause={Cause}, IdempotentReplay={IdempotentReplay}",
+        _logger.LogInformation("Vendor activation handled. RequestId={RequestId}, AccountId={AccountId}, AppId={AppId}, Cause={Cause}, IdempotentReplay={IdempotentReplay}",
             command.RequestId, command.AccountId, command.AppId, cause, saved.IdempotentReplay);
         return new VendorActivationResult("Activated", command.AccountId, saved.IdempotentReplay);
     }
@@ -110,17 +131,17 @@ public sealed class VendorInstallationService(
         VendorDeactivationCommand command,
         CancellationToken cancellationToken)
     {
-        logger.LogInformation("Vendor deactivation received. RequestId={RequestId}, AccountId={AccountId}, AppId={AppId}, Cause={Cause}",
+        _logger.LogInformation("Vendor deactivation received. RequestId={RequestId}, AccountId={AccountId}, AppId={AppId}, Cause={Cause}",
             command.RequestId, command.AccountId, command.AppId, command.Request.Cause);
 
-        var jwt = jwtValidator.Validate(command.Authorization);
-        await replayStore.EnsureUnusedAsync(jwt, cancellationToken);
+        var jwt = _jwtValidator.Validate(command.Authorization);
+        await _replayStore.EnsureUnusedAsync(jwt, cancellationToken);
 
         if (string.IsNullOrWhiteSpace(command.RequestId))
             throw new VendorValidationException("X-Lognex-RequestId header is required.");
         if (command.RequestId.Length > 128)
             throw new VendorValidationException("Request ID is too long.");
-        if (command.AppId != options.Value.AppId || command.Request.AppUid != options.Value.AppUid)
+        if (command.AppId != _options.Value.AppId || command.Request.AppUid != _options.Value.AppUid)
             throw new VendorForbiddenException();
 
         var cause = command.Request.Cause switch
@@ -128,14 +149,14 @@ public sealed class VendorInstallationService(
             "Uninstall" or "Suspend" => command.Request.Cause,
             _ => throw new VendorValidationException("Unsupported deactivation cause.")
         };
-        var now = timeProvider.GetUtcNow();
-        var installation = await repository.GetByAccountIdAsync(command.AccountId, cancellationToken);
+        var now = _timeProvider.GetUtcNow();
+        var installation = await _repository.GetByAccountIdAsync(command.AccountId, cancellationToken);
         if (installation is null)
         {
-            await sessionStore.RevokeAccountAsync(command.AccountId, cancellationToken);
-            await repository.SaveAsync(
+            await _sessionStore.RevokeAccountAsync(command.AccountId, cancellationToken);
+            await _repository.SaveAsync(
                 new SaveVendorInstallationCommand(command.RequestId, null, null), cancellationToken);
-            logger.LogInformation("Vendor deactivation completed. RequestId={RequestId}, AccountId={AccountId}, AppId={AppId}, Cause={Cause}, InstallationFound={InstallationFound}, IdempotentReplay={IdempotentReplay}, Status={Status}",
+            _logger.LogInformation("Vendor deactivation completed. RequestId={RequestId}, AccountId={AccountId}, AppId={AppId}, Cause={Cause}, InstallationFound={InstallationFound}, IdempotentReplay={IdempotentReplay}, Status={Status}",
                 command.RequestId, command.AccountId, command.AppId, cause, false, false, "NotFound");
             return new VendorDeactivationResult("NotFound", command.AccountId, false, false);
         }
@@ -160,10 +181,10 @@ public sealed class VendorInstallationService(
             PublishAttempts = 0,
             Payload = CreateOutboxPayload(command.RequestId, command.AccountId, command.AppId, cause, now)
         };
-        var saved = await repository.SaveAsync(
+        var saved = await _repository.SaveAsync(
             new SaveVendorInstallationCommand(command.RequestId, installation, outbox), cancellationToken);
-        await sessionStore.RevokeAccountAsync(command.AccountId, cancellationToken);
-        logger.LogInformation("Vendor deactivation completed. RequestId={RequestId}, AccountId={AccountId}, AppId={AppId}, Cause={Cause}, InstallationFound={InstallationFound}, IdempotentReplay={IdempotentReplay}, Status={Status}",
+        await _sessionStore.RevokeAccountAsync(command.AccountId, cancellationToken);
+        _logger.LogInformation("Vendor deactivation completed. RequestId={RequestId}, AccountId={AccountId}, AppId={AppId}, Cause={Cause}, InstallationFound={InstallationFound}, IdempotentReplay={IdempotentReplay}, Status={Status}",
             command.RequestId, command.AccountId, command.AppId, cause, true, saved.IdempotentReplay, installation.Status);
         return new VendorDeactivationResult(installation.Status, command.AccountId, true, saved.IdempotentReplay);
     }

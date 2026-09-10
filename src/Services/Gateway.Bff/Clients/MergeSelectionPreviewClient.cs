@@ -12,9 +12,19 @@ public interface IMergeSelectionPreviewClient
         CancellationToken cancellationToken);
 }
 
-public sealed class MergeSelectionPreviewClient(HttpClient httpClient, IConfiguration configuration)
-    : IMergeSelectionPreviewClient
+public sealed class MergeSelectionPreviewClient : IMergeSelectionPreviewClient
 {
+    private readonly HttpClient _httpClient;
+    private readonly IConfiguration _configuration;
+
+    public MergeSelectionPreviewClient(
+        HttpClient httpClient,
+        IConfiguration configuration)
+    {
+        _httpClient = httpClient;
+        _configuration = configuration;
+    }
+
     public async Task<MergeSelectionPreviewResponse> GetAsync(
         Guid accountId,
         MergeSelectionPreviewRequest previewRequest,
@@ -24,12 +34,12 @@ public sealed class MergeSelectionPreviewClient(HttpClient httpClient, IConfigur
         {
             Content = JsonContent.Create(previewRequest)
         };
-        request.Headers.TryAddWithoutValidation(InternalApiHeaders.ApiKey, configuration["InternalApi:Key"]);
+        request.Headers.TryAddWithoutValidation(InternalApiHeaders.ApiKey, _configuration["InternalApi:Key"]);
         request.Headers.TryAddWithoutValidation(InternalApiHeaders.AccountId, accountId.ToString("D"));
 
         try
         {
-            using var response = await httpClient.SendAsync(request, cancellationToken);
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 var error = await TryReadErrorAsync(response, cancellationToken);

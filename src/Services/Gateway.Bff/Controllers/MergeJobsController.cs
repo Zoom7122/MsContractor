@@ -10,20 +10,31 @@ namespace MsContractor.Gateway.Bff.Controllers;
 
 [ApiController]
 [Route("api/merge-jobs")]
-public sealed class MergeJobsController(
-    IGatewaySessionReader sessionReader,
-    IMergeJobsClient mergeJobsClient,
-    IConfiguration configuration) : ControllerBase
+public sealed class MergeJobsController : ControllerBase
 {
+    private readonly IGatewaySessionReader _sessionReader;
+    private readonly IMergeJobsClient _mergeJobsClient;
+    private readonly IConfiguration _configuration;
+
+    public MergeJobsController(
+        IGatewaySessionReader sessionReader,
+        IMergeJobsClient mergeJobsClient,
+        IConfiguration configuration)
+    {
+        _sessionReader = sessionReader;
+        _mergeJobsClient = mergeJobsClient;
+        _configuration = configuration;
+    }
+
     [HttpPost]
     [ProducesResponseType<MergeJobAccepted>(StatusCodes.Status202Accepted)]
     public async Task<IActionResult> CreateAsync(
         [FromBody] CreateMergeJobRequest request,
         CancellationToken cancellationToken)
     {
-        var cookieName = configuration["Session:CookieName"] ?? "mscontractor.session";
+        var cookieName = _configuration["Session:CookieName"] ?? "mscontractor.session";
         Request.Cookies.TryGetValue(cookieName, out var token);
-        var session = await sessionReader.ReadAsync(token, cancellationToken);
+        var session = await _sessionReader.ReadAsync(token, cancellationToken);
         if (session is null)
             return Unauthorized(new { code = "SESSION_UNAUTHORIZED", message = "Session is missing or expired." });
 
@@ -31,7 +42,7 @@ public sealed class MergeJobsController(
         var correlationId = Guid.TryParse(correlationText, out var parsed) ? parsed : Guid.NewGuid();
         try
         {
-            return Accepted(await mergeJobsClient.CreateAsync(
+            return Accepted(await _mergeJobsClient.CreateAsync(
                 session.AccountId,
                 session.EmployeeId,
                 correlationId,

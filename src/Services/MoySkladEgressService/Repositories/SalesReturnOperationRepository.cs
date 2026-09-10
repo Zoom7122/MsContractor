@@ -17,14 +17,22 @@ public interface ISalesReturnOperationRepository
     Task<IReadOnlyList<SalesReturnOperationKey>> GetDueAsync(DateTimeOffset now, CancellationToken cancellationToken);
 }
 
-public sealed class SalesReturnOperationRepository(EgressDbContext db) : ISalesReturnOperationRepository
+public sealed class SalesReturnOperationRepository : ISalesReturnOperationRepository
 {
+    private readonly EgressDbContext _db;
+
+    public SalesReturnOperationRepository(
+        EgressDbContext db)
+    {
+        _db = db;
+    }
+
     // Dedicated non-pooled session: closing it releases the advisory lock even on an exception.
     // This lease is not an EF transaction; journal commits stay short and precede HTTP writes.
     public async Task<IAsyncDisposable?> TryLockAccountAsync(Guid accountId, CancellationToken cancellationToken)
     {
         if (accountId == Guid.Empty) throw new ArgumentException("Account is required.", nameof(accountId));
-        var connection = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(db.Database.GetConnectionString())
+        var connection = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(_db.Database.GetConnectionString())
             { Pooling = false }.ConnectionString);
         try
         {
@@ -41,12 +49,12 @@ public sealed class SalesReturnOperationRepository(EgressDbContext db) : ISalesR
 
     public async Task<SalesReturnOperation?> GetAsync(Guid accountId, Guid operationId, CancellationToken cancellationToken)
     {
-        var operation = await db.SalesReturnOperations.AsNoTracking()
+        var operation = await _db.SalesReturnOperations.AsNoTracking()
             .SingleOrDefaultAsync(x => x.AccountId == accountId && x.OperationId == operationId, cancellationToken);
         if (operation is not null)
         {
             operation.DeserializeItems();
-            var payloads = await db.SalesReturnClaims.AsNoTracking()
+            var payloads = await _db.SalesReturnClaims.AsNoTracking()
                 .Where(x => x.AccountId == accountId && x.OperationId == operationId)
                 .ToDictionaryAsync(x => x.OldDocumentId, x => x.Payload, cancellationToken);
             foreach (var item in operation.Items) item.Payload = payloads[item.OldDocumentId];
@@ -57,22 +65,22 @@ public sealed class SalesReturnOperationRepository(EgressDbContext db) : ISalesR
     public async Task CreateAsync(SalesReturnOperation operation, CancellationToken cancellationToken)
     {
         var ids = operation.Items.Select(x => x.OldDocumentId).ToArray();
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        if (await db.SalesReturnClaims.AnyAsync(x => x.AccountId == operation.AccountId && ids.Contains(x.OldDocumentId), cancellationToken))
+        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+        if (await _db.SalesReturnClaims.AnyAsync(x => x.AccountId == operation.AccountId && ids.Contains(x.OldDocumentId), cancellationToken))
             throw new EgressException(409, "SALESRETURN_ALREADY_CLAIMED", "A source document belongs to another recreation operation.");
         operation.SerializeItems();
-        db.SalesReturnOperations.Add(operation);
-        db.SalesReturnClaims.AddRange(operation.Items.Select(item => new SalesReturnClaim
+        _db.SalesReturnOperations.Add(operation);
+        _db.SalesReturnClaims.AddRange(operation.Items.Select(item => new SalesReturnClaim
             { AccountId = operation.AccountId, OldDocumentId = item.OldDocumentId, OperationId = operation.OperationId, Payload = item.Payload }));
-        await db.SaveChangesAsync(cancellationToken);
+        await _db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        db.ChangeTracker.Clear();
+        _db.ChangeTracker.Clear();
     }
 
     public async Task SaveAsync(SalesReturnOperation operation, CancellationToken cancellationToken)
     {
         operation.SerializeItems();
-        var count = await db.SalesReturnOperations
+        var count = await _db.SalesReturnOperations
             .Where(x => x.AccountId == operation.AccountId && x.OperationId == operation.OperationId)
             .ExecuteUpdateAsync(set => set.SetProperty(x => x.ItemsJson, operation.ItemsJson)
                 .SetProperty(x => x.NextAttemptAt, operation.NextAttemptAt)
@@ -83,7 +91,7 @@ public sealed class SalesReturnOperationRepository(EgressDbContext db) : ISalesR
 
     // Explicit infrastructure scan; returns only account/operation keys, never tenant payloads.
     public async Task<IReadOnlyList<SalesReturnOperationKey>> GetDueAsync(DateTimeOffset now, CancellationToken cancellationToken) =>
-        await db.SalesReturnOperations.AsNoTracking().Where(x => x.NextAttemptAt <= now)
+        await _db.SalesReturnOperations.AsNoTracking().Where(x => x.NextAttemptAt <= now)
             .OrderBy(x => x.NextAttemptAt).Take(100)
             .Select(x => new SalesReturnOperationKey(x.AccountId, x.OperationId)).ToListAsync(cancellationToken);
 }

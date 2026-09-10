@@ -18,75 +18,83 @@ public interface ISyncRepository
     Task FailAsync(Guid accountId, SyncRun run, InboxMessage inbox, SyncOutboxMessage outbox, CancellationToken cancellationToken);
 }
 
-public sealed class SyncRepository(CatalogSyncDbContext dbContext) : ISyncRepository
+public sealed class SyncRepository : ISyncRepository
 {
+    private readonly CatalogSyncDbContext _dbContext;
+
+    public SyncRepository(
+        CatalogSyncDbContext dbContext)
+    {
+        _dbContext = dbContext;
+    }
+
     public async Task<bool> HasProcessedAsync(Guid accountId, Guid messageId, string consumerName, CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
-        return await dbContext.InboxMessages.AnyAsync(x => x.MessageId == messageId && x.ConsumerName == consumerName, cancellationToken);
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
+        return await _dbContext.InboxMessages.AnyAsync(x => x.MessageId == messageId && x.ConsumerName == consumerName, cancellationToken);
     }
 
     public async Task<SyncRun?> FindRunAsync(Guid accountId, Guid messageId, CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
-        return await dbContext.SyncRuns.SingleOrDefaultAsync(x => x.AccountId == accountId && x.MessageId == messageId, cancellationToken);
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
+        return await _dbContext.SyncRuns.SingleOrDefaultAsync(x => x.AccountId == accountId && x.MessageId == messageId, cancellationToken);
     }
 
     public async Task<SyncRun> ReloadRunAsync(Guid accountId, Guid messageId, CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
-        dbContext.ChangeTracker.Clear();
-        return await dbContext.SyncRuns.SingleAsync(x => x.AccountId == accountId && x.MessageId == messageId, cancellationToken);
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
+        _dbContext.ChangeTracker.Clear();
+        return await _dbContext.SyncRuns.SingleAsync(x => x.AccountId == accountId && x.MessageId == messageId, cancellationToken);
     }
 
     public async Task<SyncWatermark?> FindWatermarkAsync(Guid accountId, CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
-        return await dbContext.SyncWatermarks.AsNoTracking().SingleOrDefaultAsync(x => x.AccountId == accountId, cancellationToken);
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
+        return await _dbContext.SyncWatermarks.AsNoTracking().SingleOrDefaultAsync(x => x.AccountId == accountId, cancellationToken);
     }
 
     public async Task SaveRunAsync(Guid accountId, SyncRun run, CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
         if (run.AccountId != accountId) throw new InvalidOperationException("Sync run belongs to another account.");
-        if (dbContext.Entry(run).State == EntityState.Detached) dbContext.SyncRuns.Add(run);
+        if (_dbContext.Entry(run).State == EntityState.Detached) _dbContext.SyncRuns.Add(run);
         await SaveAsync(cancellationToken);
     }
 
     public async Task<(int Documents, int Counterparties)> ClearSnapshotAsync(Guid accountId, CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        var documents = await dbContext.CounterpartyDocuments.Where(x => x.AccountId == accountId).ExecuteDeleteAsync(cancellationToken);
-        var counterparties = await dbContext.Counterparties.Where(x => x.AccountId == accountId).ExecuteDeleteAsync(cancellationToken);
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var documents = await _dbContext.CounterpartyDocuments.Where(x => x.AccountId == accountId).ExecuteDeleteAsync(cancellationToken);
+        var counterparties = await _dbContext.Counterparties.Where(x => x.AccountId == accountId).ExecuteDeleteAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return (documents, counterparties);
     }
 
     public async Task CompleteFullAsync(Guid accountId, IReadOnlyCollection<Counterparty> rows, SyncCompletion completion, CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
         EnsureAccount(accountId, rows, completion);
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        dbContext.Counterparties.AddRange(rows);
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        _dbContext.Counterparties.AddRange(rows);
         await SaveCompletionAsync(completion, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<(int Inserted, int Updated)> CompleteIncrementalAsync(Guid accountId, IReadOnlyCollection<Counterparty> rows, SyncCompletion completion, Func<Counterparty, Counterparty, bool> applyIncoming, CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
         EnsureAccount(accountId, rows, completion);
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
         var ids = rows.Select(x => x.Id).ToArray();
-        var existing = await dbContext.Counterparties.Where(x => x.AccountId == accountId && ids.Contains(x.Id)).ToDictionaryAsync(x => x.Id, cancellationToken);
+        var existing = await _dbContext.Counterparties.Where(x => x.AccountId == accountId && ids.Contains(x.Id)).ToDictionaryAsync(x => x.Id, cancellationToken);
         var inserted = 0;
         var updated = 0;
         foreach (var row in rows)
         {
             if (!existing.TryGetValue(row.Id, out var current))
             {
-                dbContext.Counterparties.Add(row);
+                _dbContext.Counterparties.Add(row);
                 inserted++;
             }
             else if (applyIncoming(current, row)) updated++;
@@ -98,23 +106,23 @@ public sealed class SyncRepository(CatalogSyncDbContext dbContext) : ISyncReposi
 
     public async Task FailAsync(Guid accountId, SyncRun run, InboxMessage inbox, SyncOutboxMessage outbox, CancellationToken cancellationToken)
     {
-        await dbContext.SetTenantAsync(accountId, cancellationToken);
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
         if (run.AccountId != accountId) throw new InvalidOperationException("Sync run belongs to another account.");
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-        if (!await dbContext.InboxMessages.AnyAsync(x => x.MessageId == inbox.MessageId && x.ConsumerName == inbox.ConsumerName, cancellationToken))
-            dbContext.InboxMessages.Add(inbox);
-        dbContext.OutboxMessages.Add(outbox);
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        if (!await _dbContext.InboxMessages.AnyAsync(x => x.MessageId == inbox.MessageId && x.ConsumerName == inbox.ConsumerName, cancellationToken))
+            _dbContext.InboxMessages.Add(inbox);
+        _dbContext.OutboxMessages.Add(outbox);
         await SaveAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
 
     private async Task SaveCompletionAsync(SyncCompletion completion, CancellationToken cancellationToken)
     {
-        dbContext.InboxMessages.Add(completion.Inbox);
-        dbContext.OutboxMessages.Add(completion.Outbox);
+        _dbContext.InboxMessages.Add(completion.Inbox);
+        _dbContext.OutboxMessages.Add(completion.Outbox);
         var incoming = completion.Watermark;
-        var watermark = await dbContext.SyncWatermarks.SingleOrDefaultAsync(x => x.AccountId == incoming.AccountId, cancellationToken);
-        if (watermark is null) dbContext.SyncWatermarks.Add(incoming);
+        var watermark = await _dbContext.SyncWatermarks.SingleOrDefaultAsync(x => x.AccountId == incoming.AccountId, cancellationToken);
+        if (watermark is null) _dbContext.SyncWatermarks.Add(incoming);
         else
         {
             watermark.Watermark = incoming.Watermark;
@@ -132,7 +140,7 @@ public sealed class SyncRepository(CatalogSyncDbContext dbContext) : ISyncReposi
 
     private async Task SaveAsync(CancellationToken cancellationToken)
     {
-        try { await dbContext.SaveChangesAsync(cancellationToken); }
+        try { await _dbContext.SaveChangesAsync(cancellationToken); }
         catch (DbUpdateException exception) { throw new CatalogPersistenceException(exception); }
     }
 }

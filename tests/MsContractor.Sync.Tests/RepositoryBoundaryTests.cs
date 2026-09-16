@@ -74,34 +74,32 @@ public sealed class RepositoryBoundaryTests
     }
 
     [Fact]
-    public async Task DocumentReplacement_RestoresDeletedSnapshotAndAdditionalDataOnFailure()
+    public async Task DocumentReplacement_RestoresDeletedSnapshotOnFailure()
     {
         await using var fixture = await Fixture.CreateAsync();
         var old = new CounterpartyDocument
         {
             DocumentId = Guid.NewGuid(),
-            DocumentType = "salesreturn",
+            DocumentType = "purchasereturn",
             AccountId = fixture.AccountId,
             CounterpartyId = fixture.Counterparty.Id
         };
         fixture.Db.CounterpartyDocuments.Add(old);
-        fixture.Db.DocumentAdditionalData.Add(new DocumentAdditionalData { DocumentId = old.DocumentId, RawJson = "{}" });
         await fixture.Db.SaveChangesAsync();
         fixture.Db.ChangeTracker.Clear();
+        var missingCounterpartyId = Guid.NewGuid();
         var replacement = new CounterpartyDocument
         {
             DocumentId = Guid.NewGuid(),
-            DocumentType = "salesreturn",
+            DocumentType = "purchasereturn",
             AccountId = fixture.AccountId,
-            CounterpartyId = fixture.Counterparty.Id
+            CounterpartyId = missingCounterpartyId
         };
         await Assert.ThrowsAsync<DbUpdateException>(() => fixture.Documents.ReplaceAsync(
-            fixture.AccountId, [fixture.Counterparty.Id], [replacement], [],
-            [new DocumentAdditionalData { DocumentId = replacement.DocumentId, RawJson = null! }], CancellationToken.None));
+            fixture.AccountId, [fixture.Counterparty.Id, missingCounterpartyId], [replacement], [], CancellationToken.None));
 
         fixture.Db.ChangeTracker.Clear();
         Assert.Equal(old.DocumentId, (await fixture.Db.CounterpartyDocuments.SingleAsync()).DocumentId);
-        Assert.Equal(old.DocumentId, (await fixture.Db.DocumentAdditionalData.SingleAsync()).DocumentId);
     }
 
     [Fact]

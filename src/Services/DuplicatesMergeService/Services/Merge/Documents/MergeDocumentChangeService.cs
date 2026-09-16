@@ -16,7 +16,6 @@ public interface IMergeDocumentChangeService
 public sealed class MergeDocumentChangeService(
     IDocumentSnapshotRepository documentSnapshots,
     IDocumentChangeEgressClient documentChangeClient,
-    ISalesReturnRecreationService salesReturnRecreationService,
     TimeProvider timeProvider) : IMergeDocumentChangeService
 {
     private const int CommissionReportBatchSize = 950;
@@ -25,7 +24,7 @@ public sealed class MergeDocumentChangeService(
         CancellationToken cancellationToken)
     {
         var rows = await documentSnapshots.GetForCounterpartiesAsync(job.AccountId, duplicateCounterpartyIds, cancellationToken);
-        if (rows.Count == 0 && operation.SalesReturnRequestJson is null)
+        if (rows.Count == 0)
             return;
 
         var commissionRows = rows.Where(item => IsCommissionReport(item.DocumentType)).ToArray();
@@ -46,7 +45,7 @@ public sealed class MergeDocumentChangeService(
             }
         }
 
-        var ordinaryRows = rows.Where(item => !IsCommissionReport(item.DocumentType) && item.DocumentType != "salesreturn").ToArray();
+        var ordinaryRows = rows.Where(item => !IsCommissionReport(item.DocumentType)).ToArray();
         if (ordinaryRows.Length > 0)
         {
             var documents = ordinaryRows.Select(item => new MoySkladDocumentChangeItem(item.DocumentType, item.DocumentId)).ToArray();
@@ -56,9 +55,6 @@ public sealed class MergeDocumentChangeService(
             await ApplyChangedDocumentsAsync(ordinaryRows, response, job.MainCounterpartyId, cancellationToken);
             ThrowIfDocumentChangeFailed(response);
         }
-
-        await salesReturnRecreationService.RecreateAsync(job, operation,
-            rows.Where(x => x.DocumentType == "salesreturn").ToArray(), cancellationToken);
     }
 
     private async Task ApplyChangedDocumentsAsync(IReadOnlyList<CounterpartyDocument> rows,

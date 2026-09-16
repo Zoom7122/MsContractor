@@ -1,5 +1,7 @@
 using MsContractor.MoySkladEgressService.Clients;
-using MsContractor.MoySkladEgressService.Gateways;
+using MsContractor.MoySkladEgressService.Gateways.Counterparties;
+using MsContractor.MoySkladEgressService.Gateways.Documents;
+using MsContractor.MoySkladEgressService.ResponseHandling;
 using MsContractor.MoySkladEgressService.RateLimiting;
 using MsContractor.MoySkladEgressService.RateLimiting.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;

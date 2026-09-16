@@ -55,110 +55,22 @@ public sealed class MergeProcessorTests
     }
 
     [Fact]
-    public async Task SalesReturnsRunAfterOrdinaryDocumentsAndReplaceLocalIdsAndData()
+    public async Task ProcessAsync_IgnoresSalesReturnsReturnedByDiscovery()
     {
         await using var fixture = await Fixture.CreateAsync(1);
-        var source = AddSalesReturn(fixture);
-        var command = await fixture.CreateJobAsync();
-        await fixture.Processor.ProcessAsync(command, default);
-        Assert.Equal(["counterparty", "salesreturn"], fixture.DocumentChanges.CallOrder);
-        Assert.DoesNotContain(fixture.DocumentChanges.Calls.SelectMany(x => x), x => x.DocumentType == "salesreturn");
-        var request = Assert.Single(fixture.DocumentChanges.SalesReturnCalls);
-        var sent = Assert.Single(request.Documents);
-        Assert.Equal(source.DocumentId, sent.OldDocumentId);
-        Assert.Equal(fixture.Duplicates[0].Id, sent.DuplicateCounterpartyId);
-        Assert.Null(sent.NewContractId);
-        Assert.Null(sent.NewAgentAccountId);
-        Assert.NotEmpty(sent.Data.Positions!);
+        fixture.Documents.Documents =
+        [
+            new MoySkladDocumentReference("salesreturn", Guid.NewGuid(), fixture.Duplicates[0].Id)
+        ];
+
+        await fixture.Processor.ProcessAsync(await fixture.CreateJobAsync(), CancellationToken.None);
+
         fixture.Db.ChangeTracker.Clear();
-        var replacement = await fixture.Db.CounterpartyDocuments.SingleAsync(x => x.DocumentType == "salesreturn");
-        Assert.NotEqual(source.DocumentId, replacement.DocumentId);
-        Assert.Equal(fixture.Main.Id, replacement.CounterpartyId);
-        Assert.False(await fixture.Db.DocumentAdditionalData.AnyAsync(x => x.DocumentId == source.DocumentId));
-        var raw = await fixture.Db.DocumentAdditionalData.SingleAsync(x => x.DocumentId == replacement.DocumentId);
-        using var payload = JsonDocument.Parse(raw.RawJson);
-        Assert.Equal(replacement.DocumentId, payload.RootElement.GetProperty("id").GetGuid());
+        Assert.Empty(await fixture.Db.CounterpartyDocuments
+            .Where(document => document.DocumentType == "salesreturn")
+            .ToListAsync());
+        Assert.Empty(fixture.DocumentChanges.Calls);
         Assert.Single(fixture.Egress.ArchiveCalls);
-    }
-
-    [Fact]
-    public async Task PartialSalesReturnSuccessIsSavedAndRetryKeepsTheFullOriginalRequest()
-    {
-        await using var fixture = await Fixture.CreateAsync(1);
-        AddSalesReturn(fixture);
-        AddSalesReturn(fixture);
-        var newIds = new Dictionary<Guid, Guid>();
-        var first = true;
-        fixture.DocumentChanges.SalesReturnResponse = (operationId, request) =>
-        {
-            var results = request.Documents.Select((x, index) =>
-            {
-                if (first && index == 1) return new RecreateSalesReturnResult(x.OldDocumentId, null, "Creating", "Pending", "TIMEOUT", "Retry.", true);
-                if (!newIds.ContainsKey(x.OldDocumentId)) newIds[x.OldDocumentId] = Guid.NewGuid();
-                return new RecreateSalesReturnResult(x.OldDocumentId, newIds[x.OldDocumentId], "Completed", "Completed", null, null, false, x.Data);
-            }).ToArray();
-            first = false;
-            return new RecreateSalesReturnsResponse(operationId, request.MainCounterpartyId, results);
-        };
-        var command = await fixture.CreateJobAsync();
-        await Assert.ThrowsAsync<MergeRetryableException>(() => fixture.Processor.ProcessAsync(command, default));
-        fixture.Db.ChangeTracker.Clear();
-        Assert.Equal(1, await fixture.Db.CounterpartyDocuments.CountAsync(x => x.DocumentType == "salesreturn" && x.CounterpartyId == fixture.Main.Id));
-        Assert.Empty(fixture.Egress.ArchiveCalls);
-        var saved = (await fixture.Db.MergeOperations.SingleAsync(x => x.OperationType == MergeOperationTypes.ChangeDocumentCounterparties)).SalesReturnRequestJson;
-        Assert.NotNull(saved);
-        await fixture.Processor.ProcessAsync(command, default);
-        Assert.Equal(2, fixture.DocumentChanges.SalesReturnCalls.Count);
-        Assert.Equal(JsonSerializer.Serialize(fixture.DocumentChanges.SalesReturnCalls[0]), JsonSerializer.Serialize(fixture.DocumentChanges.SalesReturnCalls[1]));
-        Assert.Equal(2, await fixture.Db.CounterpartyDocuments.CountAsync(x => x.DocumentType == "salesreturn" && x.CounterpartyId == fixture.Main.Id));
-        Assert.Single(fixture.DocumentChanges.Calls); // Ordinary documents already moved.
-        Assert.Single(fixture.Egress.ArchiveCalls);
-        await fixture.Processor.ProcessAsync(command, default);
-        Assert.Equal(2, fixture.DocumentChanges.SalesReturnCalls.Count);
-    }
-
-    [Fact]
-    public async Task PermanentSalesReturnFailureDoesNotArchiveDuplicate()
-    {
-        await using var fixture = await Fixture.CreateAsync(1);
-        AddSalesReturn(fixture);
-        fixture.DocumentChanges.SalesReturnResponse = (operationId, request) => new(operationId, request.MainCounterpartyId,
-            request.Documents.Select(x => new RecreateSalesReturnResult(x.OldDocumentId, null, "Creating", "Failed", "REJECTED", "Rejected.", false)).ToArray());
-        await fixture.Processor.ProcessAsync(await fixture.CreateJobAsync(), default);
-        Assert.Empty(fixture.Egress.ArchiveCalls);
-        Assert.Equal(MergeJobStatuses.Failed, (await fixture.Db.MergeJobs.SingleAsync()).Status);
-    }
-
-    [Fact]
-    public async Task MissingSalesReturnDataFailsBeforeRecreation()
-    {
-        await using var fixture = await Fixture.CreateAsync(1);
-        fixture.Documents.Documents = [new MoySkladDocumentReference("salesreturn", Guid.NewGuid(), fixture.Duplicates[0].Id)];
-        await fixture.Processor.ProcessAsync(await fixture.CreateJobAsync(), default);
-        Assert.Empty(fixture.DocumentChanges.SalesReturnCalls);
-        Assert.Empty(fixture.Egress.ArchiveCalls);
-        Assert.Equal("SALESRETURN_SNAPSHOT_MISSING", (await fixture.Db.MergeOperations.SingleAsync(x => x.OperationType == MergeOperationTypes.ChangeDocumentCounterparties)).ErrorCode);
-    }
-
-    [Fact]
-    public async Task InvalidRecreationResponseDoesNotApplyLocalChangesOrArchive()
-    {
-        await using var fixture = await Fixture.CreateAsync(1, maxAttempts: 1);
-        var source = AddSalesReturn(fixture);
-        fixture.DocumentChanges.SalesReturnResponse = (operationId, request) => new(operationId, request.MainCounterpartyId,
-            [new RecreateSalesReturnResult(source.DocumentId, source.DocumentId, "Completed", "Completed", null, null, false, request.Documents[0].Data)]);
-        await fixture.Processor.ProcessAsync(await fixture.CreateJobAsync(), default);
-        Assert.Empty(fixture.Egress.ArchiveCalls);
-        Assert.Equal(fixture.Duplicates[0].Id, (await fixture.Db.CounterpartyDocuments.SingleAsync(x => x.DocumentId == source.DocumentId)).CounterpartyId);
-    }
-
-    private static MoySkladDocumentReference AddSalesReturn(Fixture fixture)
-    {
-        var data = SalesReturnRecreationTests.Request().Documents[0].Data;
-        var document = new MoySkladDocumentReference("salesreturn", Guid.NewGuid(), fixture.Duplicates[0].Id,
-            RawJson: JsonSerializer.Serialize(data, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-        fixture.Documents.Documents = [.. fixture.Documents.Documents, document];
-        return document;
     }
 
     [Fact]
@@ -241,42 +153,6 @@ public sealed class MergeProcessorTests
         Assert.Equal(2, additionalData.Count);
         Assert.Contains(additionalData, item => item.DocumentId == commissionInId && item.Contract == contractId);
         Assert.Contains(additionalData, item => item.DocumentId == commissionOutId && item.Contract is null);
-    }
-
-    [Fact]
-    public async Task ProcessAsync_PersistsRawJsonOnlyForSpecialDocuments()
-    {
-        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
-        var documentTypes = new[]
-        {
-            "salesreturn", "purchasereturn", "retailsalesreturn", "factureout", "facturein"
-        };
-        var specialDocuments = documentTypes.Select(documentType =>
-        {
-            var documentId = Guid.NewGuid();
-            return new MoySkladDocumentReference(
-                documentType,
-                documentId,
-                fixture.Duplicates[0].Id,
-                RawJson: $"{{\"id\":\"{documentId:D}\",\"documentType\":\"{documentType}\",\"customField\":\"preserved\"}}");
-        }).ToArray();
-        fixture.Documents.Documents =
-        [
-            .. specialDocuments,
-            new MoySkladDocumentReference("demand", Guid.NewGuid(), fixture.Duplicates[0].Id, RawJson: "{\"customField\":\"ignored\"}")
-        ];
-        var command = await fixture.CreateJobAsync();
-
-        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
-
-        fixture.Db.ChangeTracker.Clear();
-        var additionalData = await fixture.Db.DocumentAdditionalData
-            .OrderBy(item => item.DocumentId)
-            .ToListAsync();
-
-        Assert.Equal(specialDocuments.Select(item => item.DocumentId).Order(),
-            additionalData.Select(item => item.DocumentId));
-        Assert.All(additionalData, item => Assert.Contains("\"customField\":\"preserved\"", item.RawJson));
     }
 
     [Fact]
@@ -544,8 +420,7 @@ public sealed class MergeProcessorTests
                     new MergeDocumentDiscoveryService(Documents, snapshots, TimeProvider.System,
                         NullLogger<MergeDocumentDiscoveryService>.Instance),
                     new MergeMainCounterpartyUpdateService(Egress, counterparties, parser, normalizer, TimeProvider.System),
-                    new MergeDocumentChangeService(snapshots, DocumentChanges,
-                        new SalesReturnRecreationService(snapshots, DocumentChanges, TimeProvider.System), TimeProvider.System),
+                    new MergeDocumentChangeService(snapshots, DocumentChanges, TimeProvider.System),
                     new MergeCounterpartyArchiveService(Egress, counterparties, parser, normalizer, TimeProvider.System),
                     NullLogger<MergeProcessor>.Instance);
             }
@@ -610,18 +485,6 @@ public sealed class MergeProcessorTests
 
     private sealed class FakeDocumentChangeEgressClient : IDocumentChangeEgressClient
     {
-        public List<RecreateSalesReturnsRequest> SalesReturnCalls { get; } = [];
-        public Func<Guid, RecreateSalesReturnsRequest, RecreateSalesReturnsResponse>? SalesReturnResponse { get; set; }
-        public Task<RecreateSalesReturnsResponse> RecreateSalesReturnsAsync(Guid accountId, RecreateSalesReturnsRequest request,
-            Guid mergeJobId, Guid operationId, Guid userId, Guid correlationId, CancellationToken cancellationToken)
-        {
-            SalesReturnCalls.Add(request);
-            CallOrder.Add("salesreturn");
-            return Task.FromResult(SalesReturnResponse?.Invoke(operationId, request) ?? new RecreateSalesReturnsResponse(operationId,
-                request.MainCounterpartyId, request.Documents.Select(x => new RecreateSalesReturnResult(x.OldDocumentId, Guid.NewGuid(),
-                    "Completed", "Completed", null, null, false, x.Data)).ToArray()));
-        }
-
         public List<IReadOnlyList<MoySkladDocumentChangeItem>> Calls { get; } = [];
         public List<IReadOnlyList<MoySkladDocumentChangeAgentAndContractItem>> AgentAndContractCalls { get; } = [];
         public List<string> CallOrder { get; } = [];
@@ -745,28 +608,6 @@ public sealed class MergeProcessorTests
 
 public sealed class DocumentChangeEgressClientTests
 {
-    [Fact]
-    public async Task RecreateSalesReturnsSendsArrayAndStableContextAndReads207()
-    {
-        var account = Guid.NewGuid(); var job = Guid.NewGuid(); var operation = Guid.NewGuid();
-        var user = Guid.NewGuid(); var correlation = Guid.NewGuid();
-        var payload = SalesReturnRecreationTests.Request();
-        var client = new DocumentChangeEgressClient(new HttpClient(new CallbackHandler(async (request, ct) =>
-        {
-            Assert.Equal($"/internal/accounts/{account}/documents/salesreturn/recreate", request.RequestUri!.AbsolutePath);
-            Assert.Equal(operation.ToString(), request.Headers.GetValues(InternalApiHeaders.OperationId).Single());
-            Assert.Equal(job.ToString(), request.Headers.GetValues(InternalApiHeaders.MergeJobId).Single());
-            Assert.Equal(user.ToString(), request.Headers.GetValues(InternalApiHeaders.UserId).Single());
-            Assert.Equal(correlation.ToString(), request.Headers.GetValues(InternalApiHeaders.CorrelationId).Single());
-            var sent = await request.Content!.ReadFromJsonAsync<RecreateSalesReturnsRequest>(ct);
-            Assert.Equal(payload.Documents[0].OldDocumentId, Assert.Single(sent!.Documents).OldDocumentId);
-            return new HttpResponseMessage(HttpStatusCode.MultiStatus) { Content = JsonContent.Create(new RecreateSalesReturnsResponse(operation,
-                payload.MainCounterpartyId, [new RecreateSalesReturnResult(sent.Documents[0].OldDocumentId, null, "Creating", "Pending", "TIMEOUT", "Retry.", true)])) };
-        })) { BaseAddress = new Uri("http://egress/") }, new ConfigurationBuilder().Build());
-        var response = await client.RecreateSalesReturnsAsync(account, payload, job, operation, user, correlation, default);
-        Assert.True(Assert.Single(response.Documents).Retryable);
-    }
-
     [Fact]
     public async Task ChangeAgentAndContractAsync_SendsDedicatedEndpointAndContractPayload()
     {

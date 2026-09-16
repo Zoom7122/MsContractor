@@ -47,23 +47,19 @@ public sealed class MergeDocumentDiscoveryService(
         }
 
         var now = timeProvider.GetUtcNow();
-        var rows = documents.Select(document => new CounterpartyDocument
+        var supportedDocuments = documents.Where(document => document.DocumentType != "salesreturn").ToArray();
+        var rows = supportedDocuments.Select(document => new CounterpartyDocument
         {
             AccountId = accountId, CounterpartyId = document.CounterpartyId, DocumentType = document.DocumentType,
             DocumentId = document.DocumentId, UpdatedAt = now
         }).ToArray();
-        var commissions = documents.Where(document => IsCommissionReport(document.DocumentType))
+        var commissions = supportedDocuments.Where(document => IsCommissionReport(document.DocumentType))
             .Select(document => new DocumentAdditionalCommission { DocumentId = document.DocumentId, Contract = document.ContractId })
             .ToArray();
-        var additionalData = documents.Where(document => IsRawAdditionalDataDocument(document.DocumentType) && !string.IsNullOrWhiteSpace(document.RawJson))
-            .Select(document => new DocumentAdditionalData { DocumentId = document.DocumentId, RawJson = document.RawJson! })
-            .ToArray();
-        await documentSnapshots.ReplaceAsync(accountId, counterpartyIds, rows, commissions, additionalData, cancellationToken);
+        await documentSnapshots.ReplaceAsync(accountId, counterpartyIds, rows, commissions, cancellationToken);
     }
 
     private static bool IsCommissionReport(string documentType) =>
         string.Equals(documentType, "commissionreportin", StringComparison.Ordinal) ||
         string.Equals(documentType, "commissionreportout", StringComparison.Ordinal);
-    private static bool IsRawAdditionalDataDocument(string documentType) =>
-        documentType is "salesreturn" or "purchasereturn" or "retailsalesreturn" or "factureout" or "facturein";
 }

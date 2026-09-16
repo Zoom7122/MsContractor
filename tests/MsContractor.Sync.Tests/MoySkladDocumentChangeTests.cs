@@ -1,7 +1,7 @@
 using MsContractor.MoySkladEgressService.Models.Options;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Clients;
-using MsContractor.MoySkladEgressService.Gateways;
+using MsContractor.MoySkladEgressService.Gateways.Documents;
 using MsContractor.MoySkladEgressService.RateLimiting;
 using MsContractor.MoySkladEgressService.RateLimiting.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
@@ -14,7 +14,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using MsContractor.Contracts.Internal;
 using MsContractor.MoySkladEgressService.Controllers;
-using MsContractor.MoySkladEgressService.Services;
+using MsContractor.MoySkladEgressService.Services.Documents;
 
 namespace MsContractor.Sync.Tests;
 
@@ -39,10 +39,10 @@ public sealed class MoySkladDocumentChangeOptionsTests
     public void Parse_AcceptsDocumentsWithRawAdditionalData()
     {
         var options = MoySkladDocumentDiscoveryOptions.Parse(
-            "salesreturn,purchasereturn,retailsalesreturn,factureout,facturein");
+            "purchasereturn,retailsalesreturn,factureout,facturein");
 
         Assert.Equal(
-            ["salesreturn", "purchasereturn", "retailsalesreturn", "factureout", "facturein"],
+            ["purchasereturn", "retailsalesreturn", "factureout", "facturein"],
             options.DocumentTypes);
     }
 }

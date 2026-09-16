@@ -36,7 +36,6 @@ builder.Services.AddScoped<IMergeCommandValidator, MergeCommandValidator>();
 builder.Services.AddScoped<IMergeOperationStateService, MergeOperationStateService>();
 builder.Services.AddScoped<IMergeDocumentDiscoveryService, MergeDocumentDiscoveryService>();
 builder.Services.AddScoped<IMergeDocumentChangeService, MergeDocumentChangeService>();
-builder.Services.AddScoped<ISalesReturnRecreationService, SalesReturnRecreationService>();
 builder.Services.AddScoped<IMergeMainCounterpartyUpdateService, MergeMainCounterpartyUpdateService>();
 builder.Services.AddScoped<IMergeCounterpartyArchiveService, MergeCounterpartyArchiveService>();
 var egressBaseUrl = builder.Configuration["Services:MoySkladEgressService:BaseUrl"] ?? "http://localhost:5012/";

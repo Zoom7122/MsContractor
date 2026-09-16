@@ -5,8 +5,9 @@ using System.Globalization;
 using System.Net.Http.Headers;
 using MsContractor.Contracts.Internal;
 using MsContractor.MoySkladEgressService.RateLimiting;
+using MsContractor.MoySkladEgressService.ResponseHandling;
 
-namespace MsContractor.MoySkladEgressService.Gateways;
+namespace MsContractor.MoySkladEgressService.Gateways.Counterparties;
 
 public interface IMoySkladCounterpartyGateway
 {

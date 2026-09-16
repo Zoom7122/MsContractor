@@ -1,8 +1,9 @@
 using MsContractor.MoySkladEgressService.Models;
 using System.Text.Json;
 using MsContractor.Contracts.Internal;
+using MsContractor.MoySkladEgressService.ResponseHandling;
 
-namespace MsContractor.MoySkladEgressService.Gateways;
+namespace MsContractor.MoySkladEgressService.Validation;
 
 public interface IMoySkladSingleDocumentResponseValidator
 {

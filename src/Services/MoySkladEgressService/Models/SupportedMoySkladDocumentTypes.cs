@@ -18,7 +18,6 @@ public static class SupportedMoySkladDocumentTypes
         "counterpartyadjustment",
         "commissionreportin",
         "commissionreportout",
-        "salesreturn",
         "purchasereturn",
         "retailsalesreturn",
         "factureout",

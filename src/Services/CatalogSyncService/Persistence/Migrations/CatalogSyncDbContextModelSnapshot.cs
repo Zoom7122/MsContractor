@@ -154,20 +154,6 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.ToTable("document_additional_commission", "catalog_sync");
                 });
 
-            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.DocumentAdditionalData", b =>
-                {
-                    b.Property<Guid>("DocumentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("RawJson")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
-                    b.HasKey("DocumentId");
-
-                    b.ToTable("document_additional_data", "catalog_sync");
-                });
-
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.InboxMessage", b =>
                 {
                     b.Property<Guid>("MessageId")
@@ -278,9 +264,6 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
-
-                    b.Property<string>("SalesReturnRequestJson")
-                        .HasColumnType("jsonb");
 
                     b.Property<int>("Sequence")
                         .HasColumnType("integer");
@@ -477,16 +460,6 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.HasOne("MsContractor.CatalogSyncService.Models.CounterpartyDocument", null)
                         .WithOne()
                         .HasForeignKey("MsContractor.CatalogSyncService.Models.DocumentAdditionalCommission", "DocumentId")
-                        .HasPrincipalKey("MsContractor.CatalogSyncService.Models.CounterpartyDocument", "DocumentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.DocumentAdditionalData", b =>
-                {
-                    b.HasOne("MsContractor.CatalogSyncService.Models.CounterpartyDocument", null)
-                        .WithOne()
-                        .HasForeignKey("MsContractor.CatalogSyncService.Models.DocumentAdditionalData", "DocumentId")
                         .HasPrincipalKey("MsContractor.CatalogSyncService.Models.CounterpartyDocument", "DocumentId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();

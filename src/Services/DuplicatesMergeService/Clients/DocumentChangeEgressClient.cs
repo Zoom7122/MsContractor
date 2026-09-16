@@ -5,9 +5,6 @@ namespace MsContractor.DuplicatesMergeService.Clients;
 
 public interface IDocumentChangeEgressClient
 {
-    Task<RecreateSalesReturnsResponse> RecreateSalesReturnsAsync(Guid accountId, RecreateSalesReturnsRequest request,
-        Guid mergeJobId, Guid operationId, Guid userId, Guid correlationId, CancellationToken cancellationToken);
-
     Task<MoySkladDocumentChangeCounterpartyResponse> ChangeCounterpartyAsync(
         Guid accountId,
         Guid mainCounterpartyId,
@@ -41,11 +38,6 @@ public sealed class DocumentChangeEgressClient : IDocumentChangeEgressClient
         _httpClient = httpClient;
         _configuration = configuration;
     }
-
-    public Task<RecreateSalesReturnsResponse> RecreateSalesReturnsAsync(Guid accountId, RecreateSalesReturnsRequest request,
-        Guid mergeJobId, Guid operationId, Guid userId, Guid correlationId, CancellationToken cancellationToken) =>
-        SendAsync<RecreateSalesReturnsRequest, RecreateSalesReturnsResponse>(accountId, "salesreturn/recreate", request,
-            mergeJobId, operationId, userId, correlationId, cancellationToken);
 
     public async Task<MoySkladDocumentChangeCounterpartyResponse> ChangeCounterpartyAsync(
         Guid accountId,
@@ -139,7 +131,7 @@ public sealed class DocumentChangeEgressClient : IDocumentChangeEgressClient
                 throw new MergeEgressException(
                     error?.Code ?? "EGRESS_UNAVAILABLE",
                     error?.Message ?? "MoySklad Egress Service returned an error.",
-                    error?.Code == "SALESRETURN_OPERATION_BUSY" ? 503 : (int)response.StatusCode);
+                    (int)response.StatusCode);
             }
 
             try

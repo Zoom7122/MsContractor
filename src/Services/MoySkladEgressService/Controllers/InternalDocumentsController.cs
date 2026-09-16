@@ -2,7 +2,7 @@ using MsContractor.MoySkladEgressService.Models.Exceptions;
 using Microsoft.AspNetCore.Mvc;
 using MsContractor.BuildingBlocks.Security;
 using MsContractor.Contracts.Internal;
-using MsContractor.MoySkladEgressService.Services;
+using MsContractor.MoySkladEgressService.Services.Documents;
 
 namespace MsContractor.MoySkladEgressService.Controllers;
 

@@ -33,8 +33,7 @@ public sealed record MoySkladDocumentReference(
     string DocumentType,
     Guid DocumentId,
     Guid CounterpartyId,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? ContractId = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RawJson = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? ContractId = null);
 
 public sealed record MoySkladDocumentTypeCount(
     string DocumentType,

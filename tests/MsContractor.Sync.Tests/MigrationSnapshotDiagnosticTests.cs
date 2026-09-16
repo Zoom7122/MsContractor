@@ -2,6 +2,7 @@ using MsContractor.CatalogSyncService.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using MsContractor.MoySkladEgressService.Persistence;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Microsoft.EntityFrameworkCore.Metadata;
 
@@ -87,9 +88,50 @@ public sealed class MigrationSnapshotDiagnosticTests
             "20260902000100_AddCounterpartyDocumentAdditionalData",
             "20260904000100_AddSalesReturnAdditionalData",
             "20260904000200_RenameDocumentAdditionalTables",
-            "20260906125521_PersistSalesReturnRecreationRequest"
+            "20260906125521_PersistSalesReturnRecreationRequest",
+            "20260914120000_RemoveSalesReturnRecreationRequest",
+            "20260916120000_RemoveDocumentAdditionalData"
         ];
         Assert.Equal(expected, context.GetService<IMigrationsAssembly>().Migrations.Keys);
+    }
+
+    [Fact]
+    public void RemoveDocumentAdditionalDataMigration_DropsAndFullyRestoresTable()
+    {
+        using var context = new CatalogSyncDbContext(new DbContextOptionsBuilder<CatalogSyncDbContext>()
+            .UseNpgsql("Host=localhost;Database=test;Username=postgres;Password=postgres").Options);
+        var migrationsAssembly = context.GetService<IMigrationsAssembly>();
+        var migrationType = migrationsAssembly.Migrations["20260916120000_RemoveDocumentAdditionalData"];
+        var migration = migrationsAssembly.CreateMigration(migrationType, context.Database.ProviderName!);
+
+        var drop = Assert.Single(migration.UpOperations.OfType<DropTableOperation>());
+        Assert.Equal("catalog_sync", drop.Schema);
+        Assert.Equal("document_additional_data", drop.Name);
+
+        var create = Assert.Single(migration.DownOperations.OfType<CreateTableOperation>());
+        Assert.Equal("catalog_sync", create.Schema);
+        Assert.Equal("document_additional_data", create.Name);
+        Assert.Equal(["DocumentId", "RawJson"], create.Columns.Select(column => column.Name));
+        var foreignKey = Assert.Single(create.ForeignKeys);
+        Assert.Equal("counterparty_documents", foreignKey.PrincipalTable);
+        Assert.Equal(ReferentialAction.Cascade, foreignKey.OnDelete);
+
+        var sql = string.Join(Environment.NewLine,
+            migration.DownOperations.OfType<SqlOperation>().Select(operation => operation.Sql));
+        Assert.Contains("ENABLE ROW LEVEL SECURITY", sql);
+        Assert.Contains("FORCE ROW LEVEL SECURITY", sql);
+        Assert.Contains("CREATE POLICY account_isolation", sql);
+    }
+
+    [Fact]
+    public void EgressMigrations_IncludeSalesReturnJournalRemoval()
+    {
+        using var context = new EgressDbContext(new DbContextOptionsBuilder<EgressDbContext>()
+            .UseNpgsql("Host=localhost;Database=test;Username=postgres;Password=postgres").Options);
+
+        Assert.Equal(
+            ["20260906110125_AddSalesReturnOperationJournal", "20260914120000_RemoveSalesReturnOperationJournal"],
+            context.GetService<IMigrationsAssembly>().Migrations.Keys);
     }
 
 }

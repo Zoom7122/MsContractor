@@ -27,7 +27,6 @@ public sealed class MergeOperation
     public string OperationType { get; set; } = null!;
     public Guid CounterpartyId { get; set; }
     public string Status { get; set; } = MergeOperationStatuses.Pending;
-    public string? SalesReturnRequestJson { get; set; }
     public int AttemptCount { get; set; }
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }

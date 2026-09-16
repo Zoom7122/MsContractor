@@ -1,9 +1,9 @@
 using MsContractor.MoySkladEgressService.Models.Options;
-using MsContractor.MoySkladEgressService.Gateways;
+using MsContractor.MoySkladEgressService.Gateways.Documents;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
 using MsContractor.Contracts.Internal;
 
-namespace MsContractor.MoySkladEgressService.Services;
+namespace MsContractor.MoySkladEgressService.Services.Documents;
 
 public interface IMoySkladDocumentChangeService
 {

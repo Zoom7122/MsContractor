@@ -60,21 +60,6 @@ public sealed class TenantDatabaseContextTests
         Assert.Equal(DeleteBehavior.Cascade, foreignKey.DeleteBehavior);
     }
 
-    [Fact]
-    public void DocumentAdditionalData_ReferencesDocumentByIdWithCascadeDelete()
-    {
-        using var context = new CatalogSyncDbContext(
-            new DbContextOptionsBuilder<CatalogSyncDbContext>().UseSqlite("Data Source=:memory:").Options);
-
-        var entityType = context.Model.FindEntityType(typeof(DocumentAdditionalData))!;
-        var foreignKey = Assert.Single(entityType.GetForeignKeys());
-
-        Assert.Equal(["DocumentId"], foreignKey.Properties.Select(property => property.Name));
-        Assert.Equal(typeof(CounterpartyDocument), foreignKey.PrincipalEntityType.ClrType);
-        Assert.Equal(["DocumentId"], foreignKey.PrincipalKey.Properties.Select(property => property.Name));
-        Assert.Equal(DeleteBehavior.Cascade, foreignKey.DeleteBehavior);
-    }
-
     private static async Task<Fixture> CreateAsync()
     {
         var connection = new SqliteConnection("Data Source=:memory:");

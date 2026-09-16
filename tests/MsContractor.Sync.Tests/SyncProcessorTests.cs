@@ -31,7 +31,7 @@ public sealed class SyncProcessorTests
             {
                 AccountId = accountId,
                 CounterpartyId = existingCurrent.Id,
-                DocumentType = "salesreturn",
+                DocumentType = "purchasereturn",
                 DocumentId = Guid.NewGuid(),
                 UpdatedAt = DateTimeOffset.UtcNow
             },
@@ -39,7 +39,7 @@ public sealed class SyncProcessorTests
             {
                 AccountId = otherAccountId,
                 CounterpartyId = existingOther.Id,
-                DocumentType = "salesreturn",
+                DocumentType = "purchasereturn",
                 DocumentId = Guid.NewGuid(),
                 UpdatedAt = DateTimeOffset.UtcNow
             });

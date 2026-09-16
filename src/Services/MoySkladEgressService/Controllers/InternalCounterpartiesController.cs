@@ -1,5 +1,5 @@
 using MsContractor.MoySkladEgressService.Models;
-using MsContractor.MoySkladEgressService.Gateways;
+using MsContractor.MoySkladEgressService.Gateways.Counterparties;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
 using System.Text;
 using Microsoft.AspNetCore.Mvc;

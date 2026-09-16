@@ -11,7 +11,8 @@ public sealed class BackendLayerTests
         var allowed = new HashSet<string>
         {
             "Controllers", "Consumers", "Services", "Repositories", "Persistence", "Clients", "Gateways",
-            "Messaging", "Contracts", "Models", "Middleware", "HealthChecks", "RateLimiting"
+            "Messaging", "Contracts", "Models", "Middleware", "HealthChecks", "RateLimiting",
+            "ResponseHandling", "Validation"
         };
         foreach (var service in Directory.EnumerateDirectories(Path.Combine(root, "src", "Services")))
         {

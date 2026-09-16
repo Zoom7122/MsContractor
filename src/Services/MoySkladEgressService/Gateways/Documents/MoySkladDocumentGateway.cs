@@ -5,8 +5,10 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using MsContractor.Contracts.Internal;
 using MsContractor.MoySkladEgressService.RateLimiting;
+using MsContractor.MoySkladEgressService.ResponseHandling;
+using MsContractor.MoySkladEgressService.Validation;
 
-namespace MsContractor.MoySkladEgressService.Gateways;
+namespace MsContractor.MoySkladEgressService.Gateways.Documents;
 
 public interface IMoySkladDocumentGateway
 {
@@ -67,7 +69,7 @@ public interface IMoySkladDocumentGateway
 
 }
 
-public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
+public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly HttpClient _httpClient;
@@ -213,52 +215,19 @@ public sealed partial class MoySkladDocumentGateway : IMoySkladDocumentGateway
                     responseBody.Body, stopwatch.Elapsed);
             }
 
-            JsonElement[] rawRows;
-            try
-            {
-                using var rawPayload = JsonDocument.Parse(responseBody.Body);
-                if (!rawPayload.RootElement.TryGetProperty("rows", out var rawRowsElement) ||
-                    rawRowsElement.ValueKind != JsonValueKind.Array)
-                {
-                    throw new JsonException("Document rows are missing.");
-                }
-
-                rawRows = rawRowsElement.EnumerateArray().Select(row => row.Clone()).ToArray();
-            }
-            catch (JsonException exception)
-            {
-                throw _responseHandler.ValidationFailure(
-                    context, responseBody.HttpStatus,
-                    $"MoySklad returned document rows without raw JSON: {exception.Message}",
-                    responseBody.Body, stopwatch.Elapsed);
-            }
-
-            if (rawRows.Length != payload.Rows.Count)
-            {
-                throw _responseHandler.ValidationFailure(
-                    context, responseBody.HttpStatus, "MoySklad returned inconsistent document rows.",
-                    responseBody.Body, stopwatch.Elapsed);
-            }
-
             var rows = new List<MoySkladDocumentPageRow>(payload.Rows.Count);
-            for (var index = 0; index < payload.Rows.Count; index++)
+            foreach (var row in payload.Rows)
             {
-                var row = payload.Rows[index];
                 if (row?.Agent?.Meta?.Href is null)
                     throw _responseHandler.ValidationFailure(
                         context, responseBody.HttpStatus, "MoySklad returned a document without agent metadata.",
                         responseBody.Body, stopwatch.Elapsed);
 
-                var rawJson = rawRows[index].GetRawText();
-                if (documentType == "salesreturn")
-                    rawJson = await CompleteSalesReturnPositionsAsync(accountId, requestedByUserId, correlationId,
-                        row.Id, rawJson, accessToken, cancellationToken);
                 rows.Add(new MoySkladDocumentPageRow(
                     row.Id,
                     row.Agent.Meta.Href,
                     row.Agent.Meta.Type,
-                    IsCommissionReport(documentType) ? TryReadContractId(row.Contract) : null,
-                    rawJson));
+                    IsCommissionReport(documentType) ? TryReadContractId(row.Contract) : null));
             }
 
             return new MoySkladDocumentPage(

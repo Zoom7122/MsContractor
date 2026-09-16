@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Text.Unicode;
 
-namespace MsContractor.MoySkladEgressService.Gateways;
+namespace MsContractor.MoySkladEgressService.ResponseHandling;
 
 public interface IMoySkladResponseHandler
 {

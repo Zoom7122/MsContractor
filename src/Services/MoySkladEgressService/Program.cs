@@ -1,17 +1,19 @@
 using MsContractor.MoySkladEgressService.Clients;
-using MsContractor.MoySkladEgressService.Gateways;
+using MsContractor.MoySkladEgressService.Gateways.Counterparties;
+using MsContractor.MoySkladEgressService.Gateways.Documents;
 using MsContractor.MoySkladEgressService.HealthChecks;
 using MsContractor.MoySkladEgressService.Models.Options;
 using System.Net;
 using MsContractor.BuildingBlocks.Health;
 using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
-using MsContractor.MoySkladEgressService.Services;
+using MsContractor.MoySkladEgressService.Services.Documents;
 using Microsoft.EntityFrameworkCore;
 using MsContractor.MoySkladEgressService.Persistence;
-using MsContractor.MoySkladEgressService.Repositories;
 using StackExchange.Redis;
 using MsContractor.MoySkladEgressService.RateLimiting;
+using MsContractor.MoySkladEgressService.ResponseHandling;
+using MsContractor.MoySkladEgressService.Validation;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.AddMsContractorLogging();
@@ -68,20 +70,11 @@ builder.Services.AddHttpClient<IMoySkladDocumentGateway, MoySkladDocumentGateway
 {
     AutomaticDecompression = DecompressionMethods.GZip
 });
-builder.Services.AddHttpClient<IMoySkladSalesReturnGateway, MoySkladSalesReturnGateway>(client =>
-{
-    client.BaseAddress = egressOptions.JsonApiBaseUrl;
-    client.Timeout = TimeSpan.FromSeconds(30);
-}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AutomaticDecompression = DecompressionMethods.GZip });
 var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres")
     ?? throw new InvalidOperationException("ConnectionStrings:Postgres is required for the Egress operation journal.");
 builder.Services.AddDbContext<EgressDbContext>(options => options.UseNpgsql(postgresConnectionString,
     postgres => postgres.MigrationsHistoryTable("__EFMigrationsHistory", "egress")));
-builder.Services.AddScoped<ISalesReturnOperationRepository, SalesReturnOperationRepository>();
-builder.Services.AddScoped<SalesReturnPayloadBuilder>();
-builder.Services.AddScoped<SalesReturnRecreationService>();
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddHostedService<SalesReturnRecoveryWorker>();
 builder.Services.AddSingleton<IMoySkladResponseHandler, MoySkladResponseHandler>();
 builder.Services.AddSingleton<IMoySkladSingleDocumentResponseValidator, MoySkladSingleDocumentResponseValidator>();
 builder.Services.AddSingleton<IMoySkladBulkDocumentResponseValidator, MoySkladBulkDocumentResponseValidator>();

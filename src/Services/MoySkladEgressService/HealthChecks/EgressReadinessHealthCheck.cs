@@ -27,7 +27,7 @@ public sealed class EgressReadinessHealthCheck : IHealthCheck
             await _redis.GetDatabase().PingAsync().WaitAsync(cancellationToken);
             if (!await _db.Database.CanConnectAsync(cancellationToken) ||
                 (await _db.Database.GetPendingMigrationsAsync(cancellationToken)).Any())
-                return HealthCheckResult.Unhealthy("Egress operation journal is unavailable or requires migration.");
+                return HealthCheckResult.Unhealthy("Egress database is unavailable or requires migration.");
             return HealthCheckResult.Healthy("Redis and PostgreSQL are available.");
         }
         catch (Exception exception)

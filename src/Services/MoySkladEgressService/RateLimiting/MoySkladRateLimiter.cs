@@ -4,18 +4,6 @@ using StackExchange.Redis;
 
 namespace MsContractor.MoySkladEgressService.RateLimiting;
 
-public interface IMoySkladRateLimiter
-{
-    Task WaitAsync(
-        Guid accountId,
-        CancellationToken cancellationToken);
-
-    Task ObserveAsync(
-        Guid accountId,
-        MoySkladRateLimitObservation observation,
-        CancellationToken cancellationToken);
-}
-
 public sealed class MoySkladRateLimiter : IMoySkladRateLimiter
 {
     private const long DefaultIntervalMs = 3000;

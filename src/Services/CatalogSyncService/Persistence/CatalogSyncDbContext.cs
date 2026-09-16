@@ -17,7 +17,6 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
     public DbSet<MergeOperation> MergeOperations => Set<MergeOperation>();
     public DbSet<CounterpartyDocument> CounterpartyDocuments => Set<CounterpartyDocument>();
     public DbSet<DocumentAdditionalCommission> DocumentAdditionalCommissions => Set<DocumentAdditionalCommission>();
-    public DbSet<DocumentAdditionalData> DocumentAdditionalData => Set<DocumentAdditionalData>();
     internal Guid? TenantAccountId => _tenantAccountId;
 
     public Task SetTenantAsync(Guid accountId, CancellationToken cancellationToken)
@@ -120,7 +119,6 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
 
         modelBuilder.Entity<MergeOperation>(entity =>
         {
-            entity.Property(item => item.SalesReturnRequestJson).HasColumnType("jsonb");
             entity.ToTable("merge_operations");
             entity.HasKey(item => item.Id);
             entity.Property(item => item.OperationType).HasMaxLength(64).IsRequired();
@@ -162,16 +160,5 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-        modelBuilder.Entity<DocumentAdditionalData>(entity =>
-        {
-            entity.ToTable("document_additional_data");
-            entity.HasKey(item => item.DocumentId);
-            entity.Property(item => item.RawJson).HasColumnType("jsonb").IsRequired();
-            entity.HasOne<CounterpartyDocument>()
-                .WithOne()
-                .HasForeignKey<DocumentAdditionalData>(item => item.DocumentId)
-                .HasPrincipalKey<CounterpartyDocument>(item => item.DocumentId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
     }
 }

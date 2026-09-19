@@ -130,8 +130,36 @@ public sealed class MigrationSnapshotDiagnosticTests
             .UseNpgsql("Host=localhost;Database=test;Username=postgres;Password=postgres").Options);
 
         Assert.Equal(
-            ["20260906110125_AddSalesReturnOperationJournal", "20260914120000_RemoveSalesReturnOperationJournal"],
+            [
+                "20260906110125_AddSalesReturnOperationJournal",
+                "20260914120000_RemoveSalesReturnOperationJournal",
+                "20260916130000_AddSalesReturnRawData",
+                "20260916140000_AddAccountIdToSalesReturnRawData",
+                "20260916150000_AddSalesReturnPositionsRawData",
+                "20260916160000_AddSalesReturnRecreationOperations"
+            ],
             context.GetService<IMigrationsAssembly>().Migrations.Keys);
+    }
+
+    [Fact]
+    public void EgressSnapshot_MatchesCurrentModel()
+    {
+        var options = new DbContextOptionsBuilder<EgressDbContext>()
+            .UseNpgsql("Host=localhost;Database=egress;Username=postgres;Password=postgres")
+            .Options;
+        using var context = new EgressDbContext(options);
+        var snapshotType = typeof(EgressDbContext).Assembly.GetType(
+            "MsContractor.MoySkladEgressService.Persistence.Migrations.EgressDbContextModelSnapshot")!;
+        var snapshot = (ModelSnapshot)Activator.CreateInstance(snapshotType, nonPublic: true)!;
+        var runtimeInitializer = context.GetService<IModelRuntimeInitializer>();
+        var snapshotModel = runtimeInitializer.Initialize(snapshot.Model, designTime: true);
+        var differences = context.GetService<IMigrationsModelDiffer>().GetDifferences(
+            snapshotModel.GetRelationalModel(),
+            context.GetService<IDesignTimeModel>().Model.GetRelationalModel());
+
+        Assert.True(
+            differences.Count == 0,
+            string.Join(Environment.NewLine, differences.Select(Describe)));
     }
 
 }

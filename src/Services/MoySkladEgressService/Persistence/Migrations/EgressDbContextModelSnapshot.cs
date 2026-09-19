@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Persistence;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -22,6 +23,142 @@ namespace MsContractor.MoySkladEgressService.Persistence.Migrations
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.SalesReturnRawData", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("DocumentId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("RawJson")
+                    .IsRequired()
+                    .HasColumnType("jsonb");
+
+                b.HasKey("AccountId", "DocumentId");
+
+                b.ToTable("salesreturn_raw_data", "egress");
+            });
+
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.SalesReturnPositionRawData", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("PositionId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("RawJson")
+                    .IsRequired()
+                    .HasColumnType("jsonb");
+
+                b.Property<Guid>("SalesReturnId")
+                    .HasColumnType("uuid");
+
+                b.HasKey("AccountId", "SalesReturnId", "PositionId");
+
+                b.HasIndex("AccountId", "SalesReturnId");
+
+                b.HasOne("MsContractor.MoySkladEgressService.Models.SalesReturnRawData", null)
+                    .WithMany()
+                    .HasForeignKey("AccountId", "SalesReturnId")
+                    .HasPrincipalKey("AccountId", "DocumentId")
+                    .OnDelete(DeleteBehavior.Cascade)
+                    .IsRequired();
+
+                b.ToTable("salesreturn_positions_raw_data", "egress");
+            });
+
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.SalesReturnRecreationOperation", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("OperationId")
+                    .HasColumnType("uuid");
+
+                b.Property<DateTimeOffset>("CreatedAt")
+                    .HasColumnType("timestamp with time zone");
+
+                b.Property<Guid>("MainAgentId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("Status")
+                    .IsRequired()
+                    .HasColumnType("text");
+
+                b.Property<DateTimeOffset>("UpdatedAt")
+                    .HasColumnType("timestamp with time zone");
+
+                b.HasKey("AccountId", "OperationId");
+
+                b.ToTable("salesreturn_recreation_operations", "egress");
+            });
+
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.SalesReturnRecreationItem", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("OperationId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("SourceDocumentId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid?>("DemandId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("Error")
+                    .HasColumnType("text");
+
+                b.Property<string>("ErrorCode")
+                    .HasColumnType("text");
+
+                b.Property<Guid?>("NewDocumentId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("NewPayloadJson")
+                    .IsRequired()
+                    .HasColumnType("jsonb");
+
+                b.Property<Guid>("NewSyncId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid?>("RollbackDocumentId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("RollbackPayloadJson")
+                    .IsRequired()
+                    .HasColumnType("jsonb");
+
+                b.Property<Guid>("RollbackSyncId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("SourceRawJson")
+                    .IsRequired()
+                    .HasColumnType("jsonb");
+
+                b.Property<string>("Stage")
+                    .IsRequired()
+                    .HasColumnType("text");
+
+                b.Property<Guid?>("TargetAgentAccountId")
+                    .HasColumnType("uuid");
+
+                b.HasKey("AccountId", "OperationId", "SourceDocumentId");
+
+                b.HasIndex("AccountId", "OperationId");
+
+                b.HasOne("MsContractor.MoySkladEgressService.Models.SalesReturnRecreationOperation", null)
+                    .WithMany("Items")
+                    .HasForeignKey("AccountId", "OperationId")
+                    .OnDelete(DeleteBehavior.Cascade)
+                    .IsRequired();
+
+                b.ToTable("salesreturn_recreation_items", "egress");
+            });
 
 #pragma warning restore 612, 618
         }

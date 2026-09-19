@@ -53,6 +53,8 @@ Use only populated layers: `Controllers`, `Consumers`, `Services`, `Repositories
 
 Business services, controllers, consumers and publishers must not use EF or DbContext directly. Repositories own materialized queries and atomic persistence methods; EF transactions do not escape them. Infrastructure health checks and startup may access dependencies directly. Redis I/O belongs in repositories, while session/JWT rules stay in services. Consumers own offsets and retries; publishers and DLQ publication belong in Messaging.
 
+New classes with dependencies, especially controllers, services, gateways and repositories, must use an explicit constructor with private fields for dependency assignment. Do not use C# primary-constructor syntax for these classes. DTOs and property-based persistence models may use parameterless/property initialization when their layer requires it.
+
 Catalog and Merge repository registrations are scoped and use the same CatalogSyncDbContext within an operation. Merge still references CatalogSync for its persistence model. Preserve the full-sync cleanup boundary, incremental read/write transaction, job/operations/outbox atomicity and intermediate merge save points. The incremental repository accepts the service's apply-row function to keep business rules outside persistence without moving reads out of the transaction.
 
 ## Critical Architecture Rules

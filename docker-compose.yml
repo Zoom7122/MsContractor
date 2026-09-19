@@ -11,6 +11,7 @@ x-service-env: &service-env
   DOCUMENTS_PUT_CHANGE: ${DOCUMENTS_PUT_CHANGE:?Set DOCUMENTS_PUT_CHANGE to a non-empty comma-separated list}
   DOCUMENTS_CHANGE_AGENT_AND_CONTRACT: ${DOCUMENTS_CHANGE_AGENT_AND_CONTRACT:?Set DOCUMENTS_CHANGE_AGENT_AND_CONTRACT to a non-empty comma-separated list}
   DOCUMENTS_DISCOVERY: ${DOCUMENTS_DISCOVERY:?Set DOCUMENTS_DISCOVERY to a non-empty comma-separated list}
+  DOCUMENTS_MERGE_EXCLUDE: ${DOCUMENTS_MERGE_EXCLUDE:-}
 
   Services__GatewayBff__BaseUrl: http://gateway-bff:${SERVICE_INTERNAL_PORT}
   Services__VendorService__BaseUrl: http://vendor-service:${SERVICE_INTERNAL_PORT}

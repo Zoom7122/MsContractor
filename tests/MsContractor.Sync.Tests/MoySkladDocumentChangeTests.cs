@@ -39,10 +39,10 @@ public sealed class MoySkladDocumentChangeOptionsTests
     public void Parse_AcceptsDocumentsWithRawAdditionalData()
     {
         var options = MoySkladDocumentDiscoveryOptions.Parse(
-            "purchasereturn,retailsalesreturn,factureout,facturein");
+            "purchasereturn,salesreturn,retailsalesreturn,factureout,facturein");
 
         Assert.Equal(
-            ["purchasereturn", "retailsalesreturn", "factureout", "facturein"],
+            ["purchasereturn", "salesreturn", "retailsalesreturn", "factureout", "facturein"],
             options.DocumentTypes);
     }
 }

@@ -11,6 +11,7 @@ using MsContractor.DuplicatesMergeService.Services;
 using MsContractor.DuplicatesMergeService.Services.Merge;
 using MsContractor.DuplicatesMergeService.Services.Merge.Counterparties;
 using MsContractor.DuplicatesMergeService.Services.Merge.Documents;
+using MsContractor.DuplicatesMergeService.Models.Options;
 using Confluent.Kafka;
 using MsContractor.CatalogSyncService.Services;
 
@@ -35,6 +36,8 @@ builder.Services.AddScoped<IMergeProcessor, MergeProcessor>();
 builder.Services.AddScoped<IMergeCommandValidator, MergeCommandValidator>();
 builder.Services.AddScoped<IMergeOperationStateService, MergeOperationStateService>();
 builder.Services.AddScoped<IMergeDocumentDiscoveryService, MergeDocumentDiscoveryService>();
+builder.Services.AddSingleton(MergeDocumentExclusionOptions.Parse(
+    builder.Configuration["DOCUMENTS_MERGE_EXCLUDE"]));
 builder.Services.AddScoped<IMergeDocumentChangeService, MergeDocumentChangeService>();
 builder.Services.AddScoped<IMergeMainCounterpartyUpdateService, MergeMainCounterpartyUpdateService>();
 builder.Services.AddScoped<IMergeCounterpartyArchiveService, MergeCounterpartyArchiveService>();

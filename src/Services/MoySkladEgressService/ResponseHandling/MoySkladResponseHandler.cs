@@ -92,7 +92,7 @@ public sealed class MoySkladResponseHandler : IMoySkladResponseHandler
         upstreamMessage = upstreamMessage is null ? null : SanitizeText(upstreamMessage);
 
         LogFailure(
-            retryable ? LogLevel.Warning : LogLevel.Error,
+            LogLevel.Error,
             context,
             status,
             errorCode,
@@ -152,7 +152,7 @@ public sealed class MoySkladResponseHandler : IMoySkladResponseHandler
         Exception exception)
     {
         LogFailure(
-            LogLevel.Warning,
+            LogLevel.Error,
             context,
             null,
             "MOYSKLAD_UNAVAILABLE",

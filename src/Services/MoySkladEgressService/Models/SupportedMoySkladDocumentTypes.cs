@@ -19,6 +19,7 @@ public static class SupportedMoySkladDocumentTypes
         "commissionreportin",
         "commissionreportout",
         "purchasereturn",
+        "salesreturn",
         "retailsalesreturn",
         "factureout",
         "facturein"

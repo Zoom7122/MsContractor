@@ -186,6 +186,33 @@ public sealed class EgressGatewayTests
     }
 
     [Fact]
+    public async Task GetAsync_LogsRetryableMoySkladStatusAsError()
+    {
+        var logger = new CaptureLogger<MoySkladCounterpartyGateway>();
+        var gateway = CreateGateway(
+            _ => Response(
+                HttpStatusCode.ServiceUnavailable,
+                """{"errors":[{"code":503,"error":"temporary outage"}]}"""),
+            logger);
+
+        await Assert.ThrowsAsync<EgressException>(() => gateway.GetAsync(
+            Guid.NewGuid(),
+            false,
+            1,
+            0,
+            null,
+            null,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "correlation-id",
+            CancellationToken.None));
+
+        var error = Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Error);
+        Assert.Contains("http_status=503", error.Message);
+        Assert.Contains("retryable=True", error.Message);
+    }
+
+    [Fact]
     public async Task GetAsync_LogsEscapedMoySkladCyrillicAsReadableText()
     {
         var logger = new CaptureLogger<MoySkladCounterpartyGateway>();

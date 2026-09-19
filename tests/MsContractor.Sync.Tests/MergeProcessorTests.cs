@@ -18,6 +18,7 @@ using MsContractor.DuplicatesMergeService.Services;
 using MsContractor.DuplicatesMergeService.Services.Merge;
 using MsContractor.DuplicatesMergeService.Services.Merge.Counterparties;
 using MsContractor.DuplicatesMergeService.Services.Merge.Documents;
+using MsContractor.DuplicatesMergeService.Models.Options;
 
 namespace MsContractor.Sync.Tests;
 
@@ -52,25 +53,6 @@ public sealed class MergeProcessorTests
         Assert.Empty(fixture.Documents.Calls);
         Assert.Empty(fixture.Egress.UpdateCalls);
         Assert.Empty(fixture.Egress.ArchiveCalls);
-    }
-
-    [Fact]
-    public async Task ProcessAsync_IgnoresSalesReturnsReturnedByDiscovery()
-    {
-        await using var fixture = await Fixture.CreateAsync(1);
-        fixture.Documents.Documents =
-        [
-            new MoySkladDocumentReference("salesreturn", Guid.NewGuid(), fixture.Duplicates[0].Id)
-        ];
-
-        await fixture.Processor.ProcessAsync(await fixture.CreateJobAsync(), CancellationToken.None);
-
-        fixture.Db.ChangeTracker.Clear();
-        Assert.Empty(await fixture.Db.CounterpartyDocuments
-            .Where(document => document.DocumentType == "salesreturn")
-            .ToListAsync());
-        Assert.Empty(fixture.DocumentChanges.Calls);
-        Assert.Single(fixture.Egress.ArchiveCalls);
     }
 
     [Fact]
@@ -418,6 +400,7 @@ public sealed class MergeProcessorTests
                     new MergeCommandValidator(repository, TimeProvider.System),
                     state,
                     new MergeDocumentDiscoveryService(Documents, snapshots, TimeProvider.System,
+                        MergeDocumentExclusionOptions.Parse("salesreturn"),
                         NullLogger<MergeDocumentDiscoveryService>.Instance),
                     new MergeMainCounterpartyUpdateService(Egress, counterparties, parser, normalizer, TimeProvider.System),
                     new MergeDocumentChangeService(snapshots, DocumentChanges, TimeProvider.System),

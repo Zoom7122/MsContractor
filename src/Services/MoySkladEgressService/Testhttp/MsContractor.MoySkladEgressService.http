@@ -1,0 +1,17 @@
+@MsContractor_MoySkladEgressService_HostAddress = http://localhost:8082
+@internalApiKey = HLgIyekmoPVyJUFAVv6U5XUsmxcQM8XwpmJvxS9EKSU=
+@accountId = b3d34ec3-243f-11f1-0a80-0b21000042b5
+@mainAgentId = 215c68c7-b1fd-11f1-0a80-1df50001710b
+@salesReturnId = 85dead9c-b41c-11f1-0a80-13b0006973f4
+
+### Recreate salesreturns for the main counterparty from saved Egress raw data.
+POST {{MsContractor_MoySkladEgressService_HostAddress}}/internal/accounts/{{accountId}}/documents/salesreturn/recreate
+X-Internal-Api-Key: {{internalApiKey}}
+Content-Type: application/json
+
+{
+  "mainAgentId": "{{mainAgentId}}",
+  "salesReturnIds": [
+    "{{salesReturnId}}"
+  ]
+}

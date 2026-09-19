@@ -1,6 +1,7 @@
 using MsContractor.MoySkladEgressService.Clients;
 using MsContractor.MoySkladEgressService.Gateways.Counterparties;
 using MsContractor.MoySkladEgressService.Gateways.Documents;
+using MsContractor.MoySkladEgressService.Gateways.Documents.Salesreturn;
 using MsContractor.MoySkladEgressService.HealthChecks;
 using MsContractor.MoySkladEgressService.Models.Options;
 using System.Net;
@@ -8,6 +9,8 @@ using MsContractor.BuildingBlocks.Health;
 using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
 using MsContractor.MoySkladEgressService.Services.Documents;
+using MsContractor.MoySkladEgressService.Services.Documents.Salesreturn;
+using MsContractor.MoySkladEgressService.Repositories;
 using Microsoft.EntityFrameworkCore;
 using MsContractor.MoySkladEgressService.Persistence;
 using StackExchange.Redis;
@@ -70,6 +73,22 @@ builder.Services.AddHttpClient<IMoySkladDocumentGateway, MoySkladDocumentGateway
 {
     AutomaticDecompression = DecompressionMethods.GZip
 });
+builder.Services.AddHttpClient<IMoySkladSalesReturnGateway, MoySkladSalesReturnGateway>(client =>
+{
+    client.BaseAddress = egressOptions.JsonApiBaseUrl;
+    client.Timeout = TimeSpan.FromSeconds(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.GZip
+});
+builder.Services.AddHttpClient<IMoySkladSalesReturnPositionsGateway, MoySkladSalesReturnPositionsGateway>(client =>
+{
+    client.BaseAddress = egressOptions.JsonApiBaseUrl;
+    client.Timeout = TimeSpan.FromSeconds(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.GZip
+});
 var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres")
     ?? throw new InvalidOperationException("ConnectionStrings:Postgres is required for the Egress operation journal.");
 builder.Services.AddDbContext<EgressDbContext>(options => options.UseNpgsql(postgresConnectionString,
@@ -81,6 +100,13 @@ builder.Services.AddSingleton<IMoySkladBulkDocumentResponseValidator, MoySkladBu
 builder.Services.AddScoped<IMoySkladDocumentDiscoveryService, MoySkladDocumentDiscoveryService>();
 builder.Services.AddScoped<IMoySkladDocumentChangeService, MoySkladDocumentChangeService>();
 builder.Services.AddScoped<IMoySkladDocumentAgentAndContractService, MoySkladDocumentAgentAndContractService>();
+builder.Services.AddScoped<ISalesReturnRawDataRepository, SalesReturnRawDataRepository>();
+builder.Services.AddScoped<ISalesReturnPositionRawDataRepository, SalesReturnPositionRawDataRepository>();
+builder.Services.AddScoped<ISalesReturnRecreationOperationRepository, SalesReturnRecreationOperationRepository>();
+builder.Services.AddScoped<IMoySkladSalesReturnServiceGetData, MoySkladSalesReturnServiceGetData>();
+builder.Services.AddScoped<IMoySkladSalesReturnPositionsService, MoySkladSalesReturnPositionsService>();
+builder.Services.AddScoped<SalesReturnRecreationPayloadBuilder>();
+builder.Services.AddScoped<ISalesReturnRecreationService, SalesReturnRecreationService>();
 builder.Services.AddSingleton<IMoySkladRateLimiter, MoySkladRateLimiter>();
 builder.Services.AddHealthChecks()
     .AddCheck<EgressReadinessHealthCheck>("egress-dependencies", tags: ["ready"]);

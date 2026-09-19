@@ -47,6 +47,10 @@ public sealed record MoySkladDocumentChangeCounterpartyRequest(
     Guid MainCounterpartyId,
     IReadOnlyList<MoySkladDocumentChangeItem>? Documents);
 
+public sealed record SalesReturnRecreationRequest(
+    Guid MainAgentId,
+    IReadOnlyList<Guid>? SalesReturnIds);
+
 public sealed record MoySkladDocumentChangeItem(
     string DocumentType,
     Guid DocumentId);

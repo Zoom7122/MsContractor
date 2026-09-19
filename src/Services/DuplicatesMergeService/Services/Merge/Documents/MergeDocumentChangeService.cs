@@ -45,7 +45,9 @@ public sealed class MergeDocumentChangeService(
             }
         }
 
-        var ordinaryRows = rows.Where(item => !IsCommissionReport(item.DocumentType)).ToArray();
+        var ordinaryRows = rows.Where(item =>
+            !IsCommissionReport(item.DocumentType) &&
+            !string.Equals(item.DocumentType, "salesreturn", StringComparison.Ordinal)).ToArray();
         if (ordinaryRows.Length > 0)
         {
             var documents = ordinaryRows.Select(item => new MoySkladDocumentChangeItem(item.DocumentType, item.DocumentId)).ToArray();

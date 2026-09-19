@@ -16,6 +16,8 @@ public interface IDocumentSnapshotRepository
     /// <returns></returns>
     Task<IReadOnlyList<CounterpartyDocument>> GetForCounterpartiesAsync(Guid accountId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
     Task<IReadOnlyDictionary<Guid, Guid?>> GetCommissionsAsync(Guid accountId, IReadOnlyCollection<Guid> documentIds, CancellationToken cancellationToken);
+    Task ReplaceDocumentRowsAsync(Guid accountId, IReadOnlyCollection<Guid> sourceDocumentIds,
+        IReadOnlyCollection<CounterpartyDocument> rows, CancellationToken cancellationToken);
     Task ReplaceAsync(Guid accountId, IReadOnlyCollection<Guid> counterpartyIds, IReadOnlyCollection<CounterpartyDocument> rows, IReadOnlyCollection<DocumentAdditionalCommission> commissions, CancellationToken cancellationToken);
     Task SaveProgressAsync(Guid accountId, CancellationToken cancellationToken);
 }
@@ -43,6 +45,23 @@ public sealed class DocumentSnapshotRepository : IDocumentSnapshotRepository
             .Where(x => documentIds.Contains(x.DocumentId) && _dbContext.CounterpartyDocuments.Any(d => d.AccountId == accountId && d.DocumentId == x.DocumentId))
             .ToDictionaryAsync(x => x.DocumentId, x => x.Contract, cancellationToken);
     }
+
+    public async Task ReplaceDocumentRowsAsync(Guid accountId, IReadOnlyCollection<Guid> sourceDocumentIds,
+        IReadOnlyCollection<CounterpartyDocument> rows, CancellationToken cancellationToken)
+    {
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
+        if (rows.Any(x => x.AccountId != accountId) || sourceDocumentIds.Count != rows.Count)
+            throw new InvalidOperationException("Document snapshot replacement is invalid.");
+
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await _dbContext.CounterpartyDocuments
+            .Where(x => x.AccountId == accountId && sourceDocumentIds.Contains(x.DocumentId))
+            .ExecuteDeleteAsync(cancellationToken);
+        _dbContext.CounterpartyDocuments.AddRange(rows);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     public async Task ReplaceAsync(Guid accountId, IReadOnlyCollection<Guid> counterpartyIds, IReadOnlyCollection<CounterpartyDocument> rows, IReadOnlyCollection<DocumentAdditionalCommission> commissions, CancellationToken cancellationToken)
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);

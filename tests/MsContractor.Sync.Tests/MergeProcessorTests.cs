@@ -92,6 +92,58 @@ public sealed class MergeProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_RecreatesSalesReturnsBeforeArchivingDuplicates()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var salesReturnId = Guid.NewGuid();
+        var recreatedId = Guid.NewGuid();
+        fixture.Documents.Documents =
+        [
+            new MoySkladDocumentReference("salesreturn", salesReturnId, fixture.Duplicates[0].Id)
+        ];
+        fixture.SalesReturns.Response = (mainAgentId, documentIds) => new SalesReturnRecreationResponse(
+            Guid.NewGuid(),
+            mainAgentId,
+            [new SalesReturnRecreationDocumentResponse(
+                salesReturnId, recreatedId, null, "Completed", "Completed", null, null)]);
+        var command = await fixture.CreateJobAsync();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        Assert.Empty(fixture.DocumentChanges.Calls);
+        var call = Assert.Single(fixture.SalesReturns.Calls);
+        Assert.Equal(fixture.Main.Id, call.MainAgentId);
+        Assert.Equal("salesreturn", call.DocumentType);
+        Assert.Equal([salesReturnId], call.DocumentIds);
+        Assert.Single(fixture.Egress.ArchiveCalls);
+        fixture.Db.ChangeTracker.Clear();
+        var document = await fixture.Db.CounterpartyDocuments.SingleAsync();
+        Assert.Equal(recreatedId, document.DocumentId);
+        Assert.Equal(fixture.Main.Id, document.CounterpartyId);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_SalesReturnRecreationFailureDoesNotArchiveDuplicates()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var salesReturnId = Guid.NewGuid();
+        fixture.Documents.Documents =
+        [new MoySkladDocumentReference("salesreturn", salesReturnId, fixture.Duplicates[0].Id)];
+        fixture.SalesReturns.Exception = new MergeEgressException(
+            "SALESRETURN_RECREATION_FAILED", "Salesreturn recreation failed.", 400);
+        var command = await fixture.CreateJobAsync();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        Assert.Empty(fixture.Egress.ArchiveCalls);
+        fixture.Db.ChangeTracker.Clear();
+        var job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
+        Assert.Equal(MergeJobStatuses.Failed, job.Status);
+        Assert.Equal(MergeOperationStatuses.Failed,
+            job.Operations.Single(item => item.OperationType == MergeOperationTypes.RecreateSalesReturns).Status);
+    }
+
+    [Fact]
     public async Task ProcessAsync_UpdateFailureDoesNotChangeMainOrArchiveDuplicates()
     {
         await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
@@ -370,6 +422,7 @@ public sealed class MergeProcessorTests
         FakeMergeEgressClient egress,
         FakeDocumentDiscoveryEgressClient documents,
         FakeDocumentChangeEgressClient documentChanges,
+        FakeSalesReturnRecreationSender salesReturns,
         int maxAttempts) : IAsyncDisposable
     {
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -378,6 +431,7 @@ public sealed class MergeProcessorTests
         public FakeMergeEgressClient Egress { get; } = egress;
         public FakeDocumentDiscoveryEgressClient Documents { get; } = documents;
         public FakeDocumentChangeEgressClient DocumentChanges { get; } = documentChanges;
+        public FakeSalesReturnRecreationSender SalesReturns { get; } = salesReturns;
         public Guid AccountId { get; } = Guid.NewGuid();
         public Counterparty Main { get; private set; } = null!;
         public List<Counterparty> Duplicates { get; } = [];
@@ -400,10 +454,12 @@ public sealed class MergeProcessorTests
                     new MergeCommandValidator(repository, TimeProvider.System),
                     state,
                     new MergeDocumentDiscoveryService(Documents, snapshots, TimeProvider.System,
-                        MergeDocumentExclusionOptions.Parse("salesreturn"),
+                        MergeDocumentExclusionOptions.Parse(null),
                         NullLogger<MergeDocumentDiscoveryService>.Instance),
                     new MergeMainCounterpartyUpdateService(Egress, counterparties, parser, normalizer, TimeProvider.System),
                     new MergeDocumentChangeService(snapshots, DocumentChanges, TimeProvider.System),
+                    SalesReturns,
+                    snapshots,
                     new MergeCounterpartyArchiveService(Egress, counterparties, parser, normalizer, TimeProvider.System),
                     NullLogger<MergeProcessor>.Instance);
             }
@@ -417,9 +473,10 @@ public sealed class MergeProcessorTests
                 .UseSqlite(connection).Options);
             await db.Database.EnsureCreatedAsync();
             var egress = new FakeMergeEgressClient();
-            var documents = new FakeDocumentDiscoveryEgressClient();
-            var documentChanges = new FakeDocumentChangeEgressClient();
-            var fixture = new Fixture(connection, db, egress, documents, documentChanges, maxAttempts);
+        var documents = new FakeDocumentDiscoveryEgressClient();
+        var documentChanges = new FakeDocumentChangeEgressClient();
+            var salesReturns = new FakeSalesReturnRecreationSender();
+            var fixture = new Fixture(connection, db, egress, documents, documentChanges, salesReturns, maxAttempts);
             var run = NewRun(fixture.AccountId);
             fixture.Main = NewCounterparty(fixture.AccountId, run, "Main");
             db.Add(run);
@@ -500,6 +557,38 @@ public sealed class MergeProcessorTests
             return Task.FromResult(AgentAndContractResponse?.Invoke(mainCounterpartyId, documents) ??
                 new MoySkladDocumentChangeCounterpartyResponse(
                     mainCounterpartyId, documents.Count, changed.Length, 0, 0, changed, [], []));
+        }
+    }
+
+    private sealed class FakeSalesReturnRecreationSender : ISalesReturnRecreationSender
+    {
+        public List<(Guid MainAgentId, string DocumentType, IReadOnlyList<Guid> DocumentIds)> Calls { get; } = [];
+        public List<string> CallOrder { get; } = [];
+        public Func<Guid, IReadOnlyList<Guid>, SalesReturnRecreationResponse>? Response { get; set; }
+        public Exception? Exception { get; set; }
+
+        public Task<SalesReturnRecreationResponse> SendAsync(
+            Guid accountId,
+            Guid mainAgentId,
+            string documentType,
+            IReadOnlyList<Guid> documentIds,
+            Guid mergeJobId,
+            Guid operationId,
+            Guid userId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add((mainAgentId, documentType, documentIds.ToArray()));
+            CallOrder.Add("salesreturn");
+            if (Exception is not null)
+                return Task.FromException<SalesReturnRecreationResponse>(Exception);
+
+            return Task.FromResult(Response?.Invoke(mainAgentId, documentIds) ??
+                new SalesReturnRecreationResponse(
+                    Guid.NewGuid(),
+                    mainAgentId,
+                    documentIds.Select(id => new SalesReturnRecreationDocumentResponse(
+                        id, Guid.NewGuid(), null, "Completed", "Completed", null, null)).ToArray()));
         }
     }
 

@@ -9,6 +9,7 @@ namespace MsContractor.DuplicatesMergeService.Services.Merge;
 public interface IMergeOperationStateService
 {
     Task EnsureDocumentChangeOperationAsync(MergeJob job, CancellationToken cancellationToken);
+    Task EnsureSalesReturnRecreationOperationAsync(MergeJob job, CancellationToken cancellationToken);
     Task StartJobAsync(MergeJob job, CancellationToken cancellationToken);
     Task<bool> ExecuteAsync(MergeJob job, MergeOperation operation, Func<CancellationToken, Task> action,
         string retryMessage, CancellationToken cancellationToken);
@@ -36,6 +37,23 @@ public sealed class MergeOperationStateService(
         {
             Id = Guid.NewGuid(), MergeJobId = job.Id, MergeJob = job, AccountId = job.AccountId,
             Sequence = 2, OperationType = MergeOperationTypes.ChangeDocumentCounterparties,
+            CounterpartyId = job.MainCounterpartyId, Status = MergeOperationStatuses.Pending,
+            CreatedAt = now, UpdatedAt = now
+        };
+        await repository.InsertOperationAsync(job.AccountId, job, operation, cancellationToken);
+    }
+
+    public async Task EnsureSalesReturnRecreationOperationAsync(MergeJob job, CancellationToken cancellationToken)
+    {
+        if (job.Operations.Any(item => item.OperationType == MergeOperationTypes.RecreateSalesReturns))
+            return;
+
+        var now = timeProvider.GetUtcNow();
+        var operation = new MergeOperation
+        {
+            Id = Guid.NewGuid(), MergeJobId = job.Id, MergeJob = job, AccountId = job.AccountId,
+            Sequence = job.Operations.Any() ? job.Operations.Max(item => item.Sequence) + 1 : 0,
+            OperationType = MergeOperationTypes.RecreateSalesReturns,
             CounterpartyId = job.MainCounterpartyId, Status = MergeOperationStatuses.Pending,
             CreatedAt = now, UpdatedAt = now
         };

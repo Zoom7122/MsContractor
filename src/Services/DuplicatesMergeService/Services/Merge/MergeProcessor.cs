@@ -1,4 +1,7 @@
 using MsContractor.CatalogSyncService.Models;
+using MsContractor.Contracts.Internal;
+using MsContractor.DuplicatesMergeService.Models.Exceptions;
+using MsContractor.DuplicatesMergeService.Repositories;
 using MsContractor.Contracts.Merge;
 using MsContractor.DuplicatesMergeService.Services.Merge.Counterparties;
 using MsContractor.DuplicatesMergeService.Services.Merge.Documents;
@@ -16,6 +19,8 @@ public sealed class MergeProcessor(
     IMergeDocumentDiscoveryService documentDiscovery,
     IMergeMainCounterpartyUpdateService mainCounterpartyUpdate,
     IMergeDocumentChangeService documentChange,
+    ISalesReturnRecreationSender salesReturnRecreationSender,
+    IDocumentSnapshotRepository documentSnapshots,
     IMergeCounterpartyArchiveService counterpartyArchive,
     ILogger<MergeProcessor> logger) : IMergeProcessor
 {
@@ -34,6 +39,7 @@ public sealed class MergeProcessor(
         });
 
         await state.EnsureDocumentChangeOperationAsync(job, cancellationToken);
+        await state.EnsureSalesReturnRecreationOperationAsync(job, cancellationToken);
         await state.StartJobAsync(job, cancellationToken);
 
         var discovery = job.Operations.Single(item => item.OperationType == MergeOperationTypes.DiscoverDocuments);
@@ -55,6 +61,19 @@ public sealed class MergeProcessor(
                 "Document counterparty change will be retried.", cancellationToken))
             return;
 
+        var salesReturnOperation = job.Operations.Single(item =>
+            item.OperationType == MergeOperationTypes.RecreateSalesReturns);
+        if (!await state.ExecuteAsync(job, salesReturnOperation,
+                token => RecreateSalesReturnsAsync(
+                    job,
+                    salesReturnOperation,
+                    command.DuplicateCounterpartyIds,
+                    salesReturnRecreationSender,
+                    documentSnapshots,
+                    token),
+                "Salesreturn recreation will be retried.", cancellationToken))
+            return;
+
         var archiveOperations = job.Operations
             .Where(item => item.OperationType == MergeOperationTypes.ArchiveDuplicate)
             .Where(item => !MergeOperationStatuses.IsTerminal(item.Status))
@@ -68,5 +87,88 @@ public sealed class MergeProcessor(
         }
 
         await state.CompleteJobAsync(job, cancellationToken);
+    }
+
+    private static async Task RecreateSalesReturnsAsync(
+        MergeJob job,
+        MergeOperation operation,
+        IReadOnlyList<Guid> duplicateCounterpartyIds,
+        ISalesReturnRecreationSender sender,
+        IDocumentSnapshotRepository documentSnapshots,
+        CancellationToken cancellationToken)
+    {
+        var rows = await documentSnapshots.GetForCounterpartiesAsync(
+            job.AccountId, duplicateCounterpartyIds, cancellationToken);
+        var salesReturns = rows
+            .Where(item => string.Equals(item.DocumentType, "salesreturn", StringComparison.Ordinal))
+            .ToArray();
+        if (salesReturns.Length == 0)
+            return;
+
+        var sourceIds = salesReturns.Select(item => item.DocumentId).ToArray();
+        var response = await sender.SendAsync(
+            job.AccountId,
+            job.MainCounterpartyId,
+            "salesreturn",
+            sourceIds,
+            job.Id,
+            operation.Id,
+            job.RequestedByUserId,
+            job.CorrelationId,
+            cancellationToken);
+
+        ValidateSalesReturnResponse(job.MainCounterpartyId, sourceIds, response);
+
+        var responseBySourceId = response.Documents.ToDictionary(item => item.SourceDocumentId);
+        var now = DateTimeOffset.UtcNow;
+        var replacements = salesReturns.Select(row =>
+        {
+            var item = responseBySourceId[row.DocumentId];
+            return item.Status == "Completed" && item.NewDocumentId is Guid newDocumentId
+                ? new CounterpartyDocument
+                {
+                    AccountId = row.AccountId,
+                    CounterpartyId = job.MainCounterpartyId,
+                    DocumentType = row.DocumentType,
+                    DocumentId = newDocumentId,
+                    UpdatedAt = now
+                }
+                : row;
+        }).ToArray();
+
+        await documentSnapshots.ReplaceDocumentRowsAsync(
+            job.AccountId,
+            salesReturns.Select(row => row.DocumentId).ToArray(),
+            replacements,
+            cancellationToken);
+
+        var failed = response.Documents.FirstOrDefault(item =>
+            item.Status != "Completed" || item.NewDocumentId is null);
+        if (failed is not null)
+        {
+            throw new MergeEgressException(
+                failed.ErrorCode ?? "SALESRETURN_RECREATION_FAILED",
+                failed.Error ?? $"Salesreturn recreation failed for document {failed.SourceDocumentId:D}.",
+                400);
+        }
+    }
+
+    private static void ValidateSalesReturnResponse(
+        Guid mainAgentId,
+        IReadOnlyList<Guid> requestedIds,
+        SalesReturnRecreationResponse response)
+    {
+        var requested = requestedIds.ToHashSet();
+        var returned = response.Documents.Select(item => item.SourceDocumentId).ToArray();
+        if (response.MainAgentId != mainAgentId ||
+            returned.Length != requested.Count ||
+            returned.Distinct().Count() != returned.Length ||
+            !returned.ToHashSet().SetEquals(requested))
+        {
+            throw new MergeEgressException(
+                "EGRESS_INVALID_RESPONSE",
+                "MoySklad Egress Service returned an inconsistent salesreturn recreation response.",
+                502);
+        }
     }
 }

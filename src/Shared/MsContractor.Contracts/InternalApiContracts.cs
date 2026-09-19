@@ -51,6 +51,20 @@ public sealed record SalesReturnRecreationRequest(
     Guid MainAgentId,
     IReadOnlyList<Guid>? SalesReturnIds);
 
+public sealed record SalesReturnRecreationResponse(
+    Guid OperationId,
+    Guid MainAgentId,
+    IReadOnlyList<SalesReturnRecreationDocumentResponse> Documents);
+
+public sealed record SalesReturnRecreationDocumentResponse(
+    Guid SourceDocumentId,
+    Guid? NewDocumentId,
+    Guid? RollbackDocumentId,
+    string Stage,
+    string Status,
+    string? ErrorCode,
+    string? Error);
+
 public sealed record MoySkladDocumentChangeItem(
     string DocumentType,
     Guid DocumentId);

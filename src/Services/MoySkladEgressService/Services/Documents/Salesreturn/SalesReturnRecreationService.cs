@@ -101,13 +101,10 @@ public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
         await _operations.CreateAsync(operation, cancellationToken);
         await DeleteSourcesAsync(operation, correlationId, cancellationToken);
         await CreateNewDocumentsAsync(operation, correlationId, cancellationToken);
-        await CleanupAndRollbackAsync(operation, correlationId, cancellationToken);
 
         operation.Status = operation.Items.All(item => item.Stage == "Completed")
             ? "Completed"
-            : operation.Items.Any(item => item.Stage == "RolledBack")
-                ? "CompletedWithRollback"
-                : "Failed";
+            : "Failed";
         await _operations.SaveAsync(operation, cancellationToken);
         return Result(operation);
     }
@@ -185,7 +182,7 @@ public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
                     if (result.ErrorCode is not null)
                     {
                         Fail(item, "SALESRETURN_NEW_CREATE_FAILED", result.Error ?? result.ErrorCode);
-                        item.Stage = "RollbackPending";
+                        item.Stage = "Failed";
                     }
                     else
                     {
@@ -193,7 +190,7 @@ public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
                         if (result.RawJson is null || !_payloads.MatchesNewPayload(item.NewPayloadJson, result.RawJson, out validationError))
                         {
                             Fail(item, "SALESRETURN_NEW_VALIDATION_FAILED", validationError);
-                            item.Stage = item.NewDocumentId is null ? "RollbackPending" : "DeleteNewForRollback";
+                            item.Stage = "Failed";
                         }
                         else
                         {
@@ -209,79 +206,8 @@ public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
                 foreach (var item in chunk)
                 {
                     Fail(item, "SALESRETURN_NEW_CREATE_FAILED", exception.Message);
-                    item.Stage = "RollbackPending";
+                    item.Stage = "Failed";
                 }
-            }
-            await _operations.SaveAsync(operation, cancellationToken);
-        }
-    }
-
-    private async Task CleanupAndRollbackAsync(
-        SalesReturnRecreationOperation operation,
-        string correlationId,
-        CancellationToken cancellationToken)
-    {
-        foreach (var chunk in operation.Items.Where(item => item.Stage == "DeleteNewForRollback").Chunk(BatchSize))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                var results = await _gateway.DeleteBatchAsync(
-                    operation.AccountId, correlationId, chunk.Select(item => item.NewDocumentId!.Value).ToArray(), cancellationToken);
-                foreach (var item in chunk)
-                {
-                    var result = results.Single(result => result.DocumentId == item.NewDocumentId);
-                    if (result.Succeeded)
-                        item.Stage = "RollbackPending";
-                    else
-                        Fail(item, "SALESRETURN_NEW_DELETE_FOR_ROLLBACK_FAILED", result.Error ?? "MoySklad rejected invalid new salesreturn deletion.");
-                }
-            }
-            catch (Exception exception) when (exception is EgressException or InvalidOperationException)
-            {
-                foreach (var item in chunk)
-                    Fail(item, "SALESRETURN_NEW_DELETE_FOR_ROLLBACK_FAILED", exception.Message);
-            }
-            await _operations.SaveAsync(operation, cancellationToken);
-        }
-
-        foreach (var chunk in operation.Items.Where(item => item.Stage == "RollbackPending").Chunk(BatchSize))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                var results = await _gateway.CreateBatchAsync(
-                    operation.AccountId,
-                    correlationId,
-                    chunk.Select(item => new MoySkladSalesReturnBatchCreateItem(
-                        item.SourceDocumentId, item.RollbackSyncId, item.RollbackPayloadJson)).ToArray(),
-                    cancellationToken);
-                foreach (var item in chunk)
-                {
-                    var result = results.Single(result => result.SourceDocumentId == item.SourceDocumentId);
-                    item.RollbackDocumentId = result.DocumentId;
-                    if (result.ErrorCode is not null)
-                    {
-                        Fail(item, "SALESRETURN_ROLLBACK_CREATE_FAILED", result.Error ?? result.ErrorCode);
-                    }
-                    else
-                    {
-                        var validationError = "MoySklad did not return a restored salesreturn body.";
-                        if (result.RawJson is null || !_payloads.MatchesRollbackPayload(item.RollbackPayloadJson, result.RawJson, out validationError))
-                        {
-                            Fail(item, "SALESRETURN_ROLLBACK_VALIDATION_FAILED", validationError);
-                        }
-                        else
-                        {
-                            item.Stage = "RolledBack";
-                        }
-                    }
-                }
-            }
-            catch (Exception exception) when (exception is EgressException or InvalidOperationException)
-            {
-                foreach (var item in chunk)
-                    Fail(item, "SALESRETURN_ROLLBACK_CREATE_FAILED", exception.Message);
             }
             await _operations.SaveAsync(operation, cancellationToken);
         }
@@ -317,7 +243,7 @@ public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
             item.NewDocumentId,
             item.RollbackDocumentId,
             item.Stage,
-            item.Stage is "Completed" or "RolledBack" ? item.Stage : "Failed",
+            item.Stage == "Completed" ? "Completed" : "Failed",
             item.ErrorCode,
             item.Error)).ToArray());
 

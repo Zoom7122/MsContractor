@@ -56,7 +56,7 @@ public sealed class SalesReturnRecreationServiceTests
     }
 
     [Fact]
-    public async Task RecreateAsync_DeletesInvalidNewDocumentAndRestoresSource()
+    public async Task RecreateAsync_DoesNotDeleteInvalidNewDocumentOrRestoreSource()
     {
         var sourceId = Guid.NewGuid();
         var gateway = new RecordingGateway([]) { ReturnInvalidNewDocument = true };
@@ -68,12 +68,32 @@ public sealed class SalesReturnRecreationServiceTests
             gateway).RecreateAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
 
         var document = Assert.Single(result.Documents);
-        Assert.Equal("RolledBack", document.Status);
-        Assert.Equal("RolledBack", document.Stage);
+        Assert.Equal("Failed", document.Status);
+        Assert.Equal("Failed", document.Stage);
         Assert.Equal("SALESRETURN_NEW_VALIDATION_FAILED", document.ErrorCode);
-        Assert.Equal(["delete:1", "create:1", "delete:1", "create:1"], gateway.Writes);
-        Assert.NotNull(document.RollbackDocumentId);
-        Assert.Equal("CompletedWithRollback", operations.Operation!.Status);
+        Assert.Equal(["delete:1", "create:1"], gateway.Writes);
+        Assert.Null(document.RollbackDocumentId);
+        Assert.Equal("Failed", operations.Operation!.Status);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_CreateFailureWithoutDocumentDoesNotRestoreSource()
+    {
+        var sourceId = Guid.NewGuid();
+        var gateway = new RecordingGateway([]) { ReturnCreateErrorWithoutDocument = true };
+        var operations = new RecordingOperationsRepository();
+
+        var result = await Service(
+            new Dictionary<Guid, string> { [sourceId] = SourceDocument(sourceId) },
+            new Dictionary<Guid, IReadOnlyDictionary<Guid, string>> { [sourceId] = Positions(sourceId) },
+            operations,
+            gateway).RecreateAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
+
+        var document = Assert.Single(result.Documents);
+        Assert.Equal("Failed", document.Status);
+        Assert.Equal("SALESRETURN_NEW_CREATE_FAILED", document.ErrorCode);
+        Assert.Equal(["delete:1", "create:1"], gateway.Writes);
+        Assert.Equal("Failed", operations.Operation!.Status);
     }
 
     [Fact]
@@ -329,6 +349,7 @@ public sealed class SalesReturnRecreationServiceTests
         public List<string> Writes { get; } = [];
         public List<string> NewPayloads { get; } = [];
         public bool ReturnInvalidNewDocument { get; set; }
+        public bool ReturnCreateErrorWithoutDocument { get; set; }
         private int _createCalls;
 
         public Task<IReadOnlyDictionary<Guid, string>> GetAsync(Guid accountId, Guid requestedByUserId,
@@ -358,6 +379,12 @@ public sealed class SalesReturnRecreationServiceTests
                 NewPayloads.AddRange(documents.Select(item => item.PayloadJson));
             return Task.FromResult<IReadOnlyList<MoySkladSalesReturnBatchCreateResult>>(documents.Select(item =>
             {
+                if (ReturnCreateErrorWithoutDocument && _createCalls == 1)
+                {
+                    return new MoySkladSalesReturnBatchCreateResult(
+                        item.SourceDocumentId, item.SyncId, null, null,
+                        "CREATE_FAILED", "create failed");
+                }
                 var response = item.PayloadJson;
                 if (ReturnInvalidNewDocument && _createCalls == 1)
                 {

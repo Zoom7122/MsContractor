@@ -136,9 +136,49 @@ public sealed class MigrationSnapshotDiagnosticTests
                 "20260916130000_AddSalesReturnRawData",
                 "20260916140000_AddAccountIdToSalesReturnRawData",
                 "20260916150000_AddSalesReturnPositionsRawData",
-                "20260916160000_AddSalesReturnRecreationOperations"
+                "20260916160000_AddSalesReturnRecreationOperations",
+                "20260920120000_LinkSalesReturnRecreationItemsToRawData",
+                "20260920130000_RemoveSalesReturnRollbackData"
             ],
             context.GetService<IMigrationsAssembly>().Migrations.Keys);
+    }
+
+    [Fact]
+    public void RollbackDataMigrationDropsRollbackColumns()
+    {
+        using var context = new EgressDbContext(new DbContextOptionsBuilder<EgressDbContext>()
+            .UseNpgsql("Host=localhost;Database=test;Username=postgres;Password=postgres").Options);
+        var migration = context.GetService<IMigrationsAssembly>().CreateMigration(
+            context.GetService<IMigrationsAssembly>().Migrations[
+                "20260920130000_RemoveSalesReturnRollbackData"],
+            context.Database.ProviderName!);
+
+        var droppedColumns = migration.UpOperations
+            .OfType<DropColumnOperation>()
+            .Select(operation => operation.Name)
+            .ToArray();
+        Assert.Equal(["RollbackDocumentId", "RollbackPayloadJson", "RollbackSyncId"], droppedColumns);
+    }
+
+    [Fact]
+    public void RecreationItemsMigrationBackfillsRawDataAndAddsRestrictiveForeignKey()
+    {
+        using var context = new EgressDbContext(new DbContextOptionsBuilder<EgressDbContext>()
+            .UseNpgsql("Host=localhost;Database=test;Username=postgres;Password=postgres").Options);
+        var migration = context.GetService<IMigrationsAssembly>().CreateMigration(
+            context.GetService<IMigrationsAssembly>().Migrations[
+                "20260920120000_LinkSalesReturnRecreationItemsToRawData"],
+            context.Database.ProviderName!);
+
+        var sql = string.Join(Environment.NewLine,
+            migration.UpOperations.OfType<SqlOperation>().Select(operation => operation.Sql));
+        Assert.Contains("INSERT INTO egress.salesreturn_raw_data", sql);
+        var foreignKey = Assert.Single(migration.UpOperations.OfType<AddForeignKeyOperation>());
+        Assert.Equal("salesreturn_recreation_items", foreignKey.Table);
+        Assert.Equal(["AccountId", "SourceDocumentId"], foreignKey.Columns!);
+        Assert.Equal("salesreturn_raw_data", foreignKey.PrincipalTable);
+        Assert.Equal(["AccountId", "DocumentId"], foreignKey.PrincipalColumns!);
+        Assert.Equal(ReferentialAction.Restrict, foreignKey.OnDelete);
     }
 
     [Fact]

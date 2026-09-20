@@ -105,7 +105,7 @@ public sealed class MergeProcessorTests
             Guid.NewGuid(),
             mainAgentId,
             [new SalesReturnRecreationDocumentResponse(
-                salesReturnId, recreatedId, null, "Completed", "Completed", null, null)]);
+                salesReturnId, recreatedId, "Completed", "Completed", null, null)]);
         var command = await fixture.CreateJobAsync();
 
         await fixture.Processor.ProcessAsync(command, CancellationToken.None);
@@ -588,7 +588,7 @@ public sealed class MergeProcessorTests
                     Guid.NewGuid(),
                     mainAgentId,
                     documentIds.Select(id => new SalesReturnRecreationDocumentResponse(
-                        id, Guid.NewGuid(), null, "Completed", "Completed", null, null)).ToArray()));
+                        id, Guid.NewGuid(), "Completed", "Completed", null, null)).ToArray()));
         }
     }
 

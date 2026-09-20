@@ -72,7 +72,6 @@ public sealed class SalesReturnRecreationServiceTests
         Assert.Equal("Completed", document.Stage);
         Assert.Null(document.ErrorCode);
         Assert.Equal(["delete:1", "create:1"], gateway.Writes);
-        Assert.Null(document.RollbackDocumentId);
         Assert.NotNull(document.NewDocumentId);
         Assert.Equal("Completed", operations.Operation!.Status);
     }

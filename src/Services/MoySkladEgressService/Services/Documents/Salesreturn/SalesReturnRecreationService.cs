@@ -80,7 +80,6 @@ public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
             var positions = sourcePositions[documentId];
             _payloads.ValidateSource(source, positions);
             var newSyncId = Guid.NewGuid();
-            var rollbackSyncId = Guid.NewGuid();
             operation.Items.Add(new SalesReturnRecreationItem
             {
                 AccountId = accountId,
@@ -89,11 +88,9 @@ public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
                 DemandId = _payloads.ReadDemandId(source),
                 TargetAgentAccountId = targetAgentAccountId,
                 NewSyncId = newSyncId,
-                RollbackSyncId = rollbackSyncId,
                 SourceRawJson = source,
                 NewPayloadJson = _payloads.BuildNewPayload(
                     source, positions, mainAgentId, targetAgentAccountId, newSyncId),
-                RollbackPayloadJson = _payloads.BuildRollbackPayload(source, positions, rollbackSyncId),
                 Stage = "Prepared"
             });
         }
@@ -238,7 +235,6 @@ public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
         operation.Items.Select(item => new SalesReturnRecreationDocumentResult(
             item.SourceDocumentId,
             item.NewDocumentId,
-            item.RollbackDocumentId,
             item.Stage,
             item.Stage == "Completed" ? "Completed" : "Failed",
             item.ErrorCode,

@@ -60,7 +60,7 @@ public sealed class InternalSalesReturnsControllerTests
                 Guid.NewGuid(),
                 Guid.NewGuid(),
                 [new SalesReturnRecreationDocumentResult(
-                    Guid.NewGuid(), null, null, "Failed", "Failed", "SALESRETURN_DELETE_FAILED", "MoySklad rejected deletion.")])
+                    Guid.NewGuid(), null, "Failed", "Failed", "SALESRETURN_DELETE_FAILED", "MoySklad rejected deletion.")])
         };
         var controller = Controller(service, authorized: true);
 
@@ -107,7 +107,7 @@ public sealed class InternalSalesReturnsControllerTests
                 Guid.NewGuid(),
                 mainAgentId,
                 salesReturnIds.Select(documentId => new SalesReturnRecreationDocumentResult(
-                    documentId, Guid.NewGuid(), null, "Completed", "Completed", null, null)).ToArray()));
+                    documentId, Guid.NewGuid(), "Completed", "Completed", null, null)).ToArray()));
         }
     }
 }

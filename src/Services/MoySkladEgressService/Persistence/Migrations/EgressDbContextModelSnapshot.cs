@@ -126,16 +126,6 @@ namespace MsContractor.MoySkladEgressService.Persistence.Migrations
                 b.Property<Guid>("NewSyncId")
                     .HasColumnType("uuid");
 
-                b.Property<Guid?>("RollbackDocumentId")
-                    .HasColumnType("uuid");
-
-                b.Property<string>("RollbackPayloadJson")
-                    .IsRequired()
-                    .HasColumnType("jsonb");
-
-                b.Property<Guid>("RollbackSyncId")
-                    .HasColumnType("uuid");
-
                 b.Property<string>("SourceRawJson")
                     .IsRequired()
                     .HasColumnType("jsonb");
@@ -151,10 +141,19 @@ namespace MsContractor.MoySkladEgressService.Persistence.Migrations
 
                 b.HasIndex("AccountId", "OperationId");
 
+                b.HasIndex("AccountId", "SourceDocumentId");
+
                 b.HasOne("MsContractor.MoySkladEgressService.Models.SalesReturnRecreationOperation", null)
                     .WithMany("Items")
                     .HasForeignKey("AccountId", "OperationId")
                     .OnDelete(DeleteBehavior.Cascade)
+                    .IsRequired();
+
+                b.HasOne("MsContractor.MoySkladEgressService.Models.SalesReturnRawData", null)
+                    .WithMany()
+                    .HasForeignKey("AccountId", "SourceDocumentId")
+                    .HasPrincipalKey("AccountId", "DocumentId")
+                    .OnDelete(DeleteBehavior.Restrict)
                     .IsRequired();
 
                 b.ToTable("salesreturn_recreation_items", "egress");

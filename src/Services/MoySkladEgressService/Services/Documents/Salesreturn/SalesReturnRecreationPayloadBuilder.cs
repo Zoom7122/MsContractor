@@ -32,9 +32,6 @@ public sealed class SalesReturnRecreationPayloadBuilder
         return payload.ToJsonString();
     }
 
-    public string BuildRollbackPayload(string sourceRawJson, IReadOnlyDictionary<Guid, string> positions, Guid syncId) =>
-        BuildBase(sourceRawJson, positions, syncId).ToJsonString();
-
     public Guid? ReadDemandId(string sourceRawJson) =>
         TryReadReferenceId(ParseObject(sourceRawJson)["demand"] as JsonObject);
 

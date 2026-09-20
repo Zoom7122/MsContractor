@@ -8,7 +8,6 @@ public sealed record SalesReturnRecreationResult(
 public sealed record SalesReturnRecreationDocumentResult(
     Guid SourceDocumentId,
     Guid? NewDocumentId,
-    Guid? RollbackDocumentId,
     string Stage,
     string Status,
     string? ErrorCode,

@@ -31,11 +31,7 @@ public sealed class SalesReturnRecreationItem
 
     public Guid NewSyncId { get; set; }
 
-    public Guid RollbackSyncId { get; set; }
-
     public Guid? NewDocumentId { get; set; }
-
-    public Guid? RollbackDocumentId { get; set; }
 
     public string Stage { get; set; } = string.Empty;
 
@@ -46,6 +42,4 @@ public sealed class SalesReturnRecreationItem
     public string SourceRawJson { get; set; } = string.Empty;
 
     public string NewPayloadJson { get; set; } = string.Empty;
-
-    public string RollbackPayloadJson { get; set; } = string.Empty;
 }

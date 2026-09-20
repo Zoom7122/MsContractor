@@ -80,7 +80,6 @@ public sealed record SalesReturnRecreationResponse(
 public sealed record SalesReturnRecreationDocumentResponse(
     Guid SourceDocumentId,
     Guid? NewDocumentId,
-    Guid? RollbackDocumentId,
     string Stage,
     string Status,
     string? ErrorCode,

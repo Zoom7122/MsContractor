@@ -25,7 +25,7 @@ public sealed class SalesReturnRecreationEgressClientTests
             operationId,
             mainAgentId,
             salesReturnIds.Select(id => new SalesReturnRecreationDocumentResponse(
-                id, Guid.NewGuid(), null, "Completed", "Completed", null, null)).ToArray()));
+                id, Guid.NewGuid(), "Completed", "Completed", null, null)).ToArray()));
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["InternalApi:Key"] = "test-key" })
             .Build();

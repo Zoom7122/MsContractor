@@ -52,11 +52,15 @@ public sealed class EgressDbContext : DbContext
         salesReturnRecreationItem.HasKey(item => new { item.AccountId, item.OperationId, item.SourceDocumentId });
         salesReturnRecreationItem.Property(item => item.SourceRawJson).HasColumnType("jsonb");
         salesReturnRecreationItem.Property(item => item.NewPayloadJson).HasColumnType("jsonb");
-        salesReturnRecreationItem.Property(item => item.RollbackPayloadJson).HasColumnType("jsonb");
         salesReturnRecreationItem.HasIndex(item => new { item.AccountId, item.OperationId });
         salesReturnRecreationItem.HasOne<SalesReturnRecreationOperation>()
             .WithMany(item => item.Items)
             .HasForeignKey(item => new { item.AccountId, item.OperationId })
             .OnDelete(DeleteBehavior.Cascade);
+        salesReturnRecreationItem.HasOne<SalesReturnRawData>()
+            .WithMany()
+            .HasForeignKey(item => new { item.AccountId, item.SourceDocumentId })
+            .HasPrincipalKey(item => new { item.AccountId, item.DocumentId })
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

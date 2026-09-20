@@ -950,7 +950,9 @@ public sealed class InternalDocumentsControllerTests
         if (correlationId is not null)
             context.Request.Headers[InternalApiHeaders.CorrelationId] = correlationId;
 
-        return new InternalDocumentsController(service, new NoopDocumentChangeService(), new NoopAgentAndContractService(), configuration)
+        return new InternalDocumentsController(
+            service, new NoopDocumentChangeService(), new NoopAgentAndContractService(),
+            new TestMergeVerificationSnapshotService(), configuration)
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };

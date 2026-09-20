@@ -56,7 +56,7 @@ public sealed class SalesReturnRecreationServiceTests
     }
 
     [Fact]
-    public async Task RecreateAsync_DoesNotDeleteInvalidNewDocumentOrRestoreSource()
+    public async Task RecreateAsync_AcceptsCreatedDocumentWithoutValidatingMoySkladBody()
     {
         var sourceId = Guid.NewGuid();
         var gateway = new RecordingGateway([]) { ReturnInvalidNewDocument = true };
@@ -68,12 +68,13 @@ public sealed class SalesReturnRecreationServiceTests
             gateway).RecreateAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
 
         var document = Assert.Single(result.Documents);
-        Assert.Equal("Failed", document.Status);
-        Assert.Equal("Failed", document.Stage);
-        Assert.Equal("SALESRETURN_NEW_VALIDATION_FAILED", document.ErrorCode);
+        Assert.Equal("Completed", document.Status);
+        Assert.Equal("Completed", document.Stage);
+        Assert.Null(document.ErrorCode);
         Assert.Equal(["delete:1", "create:1"], gateway.Writes);
         Assert.Null(document.RollbackDocumentId);
-        Assert.Equal("Failed", operations.Operation!.Status);
+        Assert.NotNull(document.NewDocumentId);
+        Assert.Equal("Completed", operations.Operation!.Status);
     }
 
     [Fact]

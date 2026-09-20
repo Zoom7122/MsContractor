@@ -282,7 +282,7 @@ class ClientTests(CleanupTestCase):
         self.assertEqual(self.client(session, on_error=errors.append).list_ids("demand"), [])
 
         self.assertEqual(len(session.calls), 4)
-        self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [0.25, 5, 0.25, 3, 0.25, 4, 0.25])
+        self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [0.4, 5, 0.4, 3, 0.4, 4, 0.4])
         self.assertEqual([error.status for error in errors], [429, 503, 502])
 
     def test_transport_failure_is_retried_and_recorded(self):
@@ -295,7 +295,7 @@ class ClientTests(CleanupTestCase):
         self.assertEqual(self.client(session, on_error=errors.append).list_ids("demand"), [])
 
         self.assertEqual([error.status for error in errors], [0])
-        self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [0.25, 1, 0.25])
+        self.assertEqual([call.args[0] for call in self.sleep.call_args_list], [0.4, 1, 0.4])
 
     def test_transient_retries_are_bounded(self):
         session = Session(responses=[Response(503, {"errors": []}) for _ in range(4)])
@@ -308,6 +308,20 @@ class ClientTests(CleanupTestCase):
 
 
 class PhaseOrderTests(CleanupTestCase):
+    def test_counterparties_are_deleted_before_contracts(self):
+        client = FakeClient({
+            "contract": [uid(1)], "counterparty": [uid(2)], "product": [uid(3)],
+        })
+        report = {"phases": {}}
+        cleanup = ms_cleanup.Cleanup(client, report, lambda: None, ms_cleanup.PHASES)
+
+        self.assertTrue(cleanup.execute())
+
+        self.assertEqual(
+            client.deletes,
+            [("counterparty", uid(2)), ("contract", uid(1)), ("product", uid(3))],
+        )
+
     def test_documents_then_counterparties_then_assortment(self):
         client = FakeClient({"demand": [uid(1)], "counterparty": [uid(2)], "product": [uid(3)]})
         cleanup, report = self.cleanup(client)

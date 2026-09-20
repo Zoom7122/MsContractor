@@ -73,6 +73,14 @@ builder.Services.AddHttpClient<IMoySkladDocumentGateway, MoySkladDocumentGateway
 {
     AutomaticDecompression = DecompressionMethods.GZip
 });
+builder.Services.AddHttpClient<IMoySkladMergeVerificationGateway, MoySkladMergeVerificationGateway>(client =>
+{
+    client.BaseAddress = egressOptions.JsonApiBaseUrl;
+    client.Timeout = TimeSpan.FromSeconds(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.GZip
+});
 builder.Services.AddHttpClient<IMoySkladSalesReturnGateway, MoySkladSalesReturnGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
@@ -98,6 +106,7 @@ builder.Services.AddSingleton<IMoySkladResponseHandler, MoySkladResponseHandler>
 builder.Services.AddSingleton<IMoySkladSingleDocumentResponseValidator, MoySkladSingleDocumentResponseValidator>();
 builder.Services.AddSingleton<IMoySkladBulkDocumentResponseValidator, MoySkladBulkDocumentResponseValidator>();
 builder.Services.AddScoped<IMoySkladDocumentDiscoveryService, MoySkladDocumentDiscoveryService>();
+builder.Services.AddScoped<IMoySkladMergeVerificationSnapshotService, MoySkladMergeVerificationSnapshotService>();
 builder.Services.AddScoped<IMoySkladDocumentChangeService, MoySkladDocumentChangeService>();
 builder.Services.AddScoped<IMoySkladDocumentAgentAndContractService, MoySkladDocumentAgentAndContractService>();
 builder.Services.AddScoped<ISalesReturnRawDataRepository, SalesReturnRawDataRepository>();

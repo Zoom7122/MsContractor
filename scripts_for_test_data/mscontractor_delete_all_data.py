@@ -32,8 +32,9 @@ DOCUMENT_TYPES = (
     "productionstagecompletion", "processing", "productiontask", "processingorder",
     "demand", "supply", "invoiceout", "invoicein", "customerorder", "purchaseorder",
     "move", "enter", "inventory", "internalorder", "counterpartyadjustment",
-    "payroll", "pricelist", "contract", "emissionorder", "retireorder",
+    "payroll", "pricelist", "emissionorder", "retireorder",
 )
+CONTRACT_TYPES = ("contract",)
 ASSORTMENT_TYPES = (
     "processingplan", "processingplanfolder", "processingprocess", "processingstage",
     "consignment", "bundle", "variant", "product", "service", "productfolder",
@@ -41,11 +42,13 @@ ASSORTMENT_TYPES = (
 PHASES = (
     ("documents", DOCUMENT_TYPES),
     ("counterparties", ("counterparty",)),
+    ("contracts", CONTRACT_TYPES),
     ("assortment", ASSORTMENT_TYPES),
 )
 PHASE_TITLES = {
-    "documents": "Документы и договоры",
+    "documents": "Документы",
     "counterparties": "Контрагенты",
+    "contracts": "Договоры",
     "assortment": "Ассортимент и производственные справочники",
 }
 # processingplanfolder возвращает список без фильтрации (filter=archived API
@@ -96,7 +99,7 @@ class ApiError(Exception):
 
 
 class Client:
-    def __init__(self, base_url, token="", login="", password="", delay=0.25,
+    def __init__(self, base_url, token="", login="", password="", delay=0.4,
                  execute=False, on_error=None):
         parsed = urlsplit(base_url)
         if (parsed.scheme not in ("http", "https") or not parsed.netloc
@@ -386,7 +389,7 @@ def main(argv=None):
         client = Client(
             os.getenv("MS_BASE_URL", DEFAULT_BASE_URL), token=os.getenv("MS_TOKEN", ""),
             login=os.getenv("MS_LOGIN", ""), password=os.getenv("MS_PASSWORD", ""),
-            delay=float(os.getenv("MS_REQUEST_DELAY_SECONDS", "0.25")),
+            delay=float(os.getenv("MS_REQUEST_DELAY_SECONDS", "0.4")),
             execute=args.execute, on_error=record_error,
         )
         report["baseUrl"] = client.base_url

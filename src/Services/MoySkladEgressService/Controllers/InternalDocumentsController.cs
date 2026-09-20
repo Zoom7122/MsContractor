@@ -13,18 +13,52 @@ public sealed class InternalDocumentsController : ControllerBase
     private readonly IMoySkladDocumentDiscoveryService _discoveryService;
     private readonly IMoySkladDocumentChangeService _changeService;
     private readonly IMoySkladDocumentAgentAndContractService _agentAndContractService;
+    private readonly IMoySkladMergeVerificationSnapshotService _mergeVerificationSnapshotService;
     private readonly IConfiguration _configuration;
 
     public InternalDocumentsController(
         IMoySkladDocumentDiscoveryService discoveryService,
         IMoySkladDocumentChangeService changeService,
         IMoySkladDocumentAgentAndContractService agentAndContractService,
+        IMoySkladMergeVerificationSnapshotService mergeVerificationSnapshotService,
         IConfiguration configuration)
     {
         _discoveryService = discoveryService;
         _changeService = changeService;
         _agentAndContractService = agentAndContractService;
+        _mergeVerificationSnapshotService = mergeVerificationSnapshotService;
         _configuration = configuration;
+    }
+
+    [HttpPost("merge-verification-snapshot")]
+    [ProducesResponseType<MoySkladMergeVerificationSnapshotResponse>(StatusCodes.Status200OK)]
+    public async Task<IActionResult> CaptureMergeVerificationSnapshotAsync(
+        Guid accountId,
+        [FromBody] MoySkladMergeVerificationSnapshotRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!InternalApiKeyAuthentication.IsAuthorized(Request, _configuration))
+            return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
+        if (accountId == Guid.Empty || request.CounterpartyIds is null || request.CounterpartyIds.Count == 0 ||
+            request.CounterpartyIds.Any(id => id == Guid.Empty) ||
+            request.CounterpartyIds.Distinct().Count() != request.CounterpartyIds.Count)
+        {
+            return BadRequest(new InternalErrorResponse("INVALID_COUNTERPARTY_IDS",
+                "At least one unique non-empty counterparty id is required."));
+        }
+
+        var correlationId = Request.Headers[InternalApiHeaders.CorrelationId].ToString();
+        if (string.IsNullOrWhiteSpace(correlationId)) correlationId = Guid.NewGuid().ToString("D");
+        Response.Headers[InternalApiHeaders.CorrelationId] = correlationId;
+        try
+        {
+            return Ok(await _mergeVerificationSnapshotService.CaptureAsync(accountId, request.CounterpartyIds,
+                correlationId, cancellationToken));
+        }
+        catch (EgressException exception)
+        {
+            return StatusCode(exception.StatusCode, new InternalErrorResponse(exception.Code, exception.SafeMessage));
+        }
     }
 
     [HttpPost("discover")]
@@ -168,4 +202,5 @@ public sealed class InternalDocumentsController : ControllerBase
 
     private bool TryHeaderGuid(string name, out Guid value) =>
         Guid.TryParse(Request.Headers[name].ToString(), out value) && value != Guid.Empty;
+
 }

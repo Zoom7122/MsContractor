@@ -564,7 +564,9 @@ public sealed class InternalDocumentChangeControllerTests
             context.Request.Headers[InternalApiHeaders.MergeJobId] = Guid.NewGuid().ToString("D");
             context.Request.Headers[InternalApiHeaders.OperationId] = Guid.NewGuid().ToString("D");
         }
-        return new InternalDocumentsController(new NoopDiscovery(), service, new NoopAgentAndContractService(), configuration)
+        return new InternalDocumentsController(
+            new NoopDiscovery(), service, new NoopAgentAndContractService(),
+            new TestMergeVerificationSnapshotService(), configuration)
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };

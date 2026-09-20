@@ -69,7 +69,7 @@ TEST_MARKED_PRODUCT_ID = os.getenv("TEST_MARKED_PRODUCT_ID", "")
 TEST_TRACKING_CODE = os.getenv("TEST_TRACKING_CODE", "")
 TEST_RETIRE_ORDER_TYPE = os.getenv("TEST_RETIRE_ORDER_TYPE", "")
 TEST_SUPPORTING_TRANSACTION = os.getenv("TEST_SUPPORTING_TRANSACTION", "")
-REQUEST_DELAY_SECONDS = float(os.getenv("MS_REQUEST_DELAY_SECONDS", "0.25"))
+REQUEST_DELAY_SECONDS = float(os.getenv("MS_REQUEST_DELAY_SECONDS", "0.4"))
 MS_ERROR_LOG_DIR = Path(__file__).with_name("Logs_MS_test_data")
 
 # Документы, которые участвуют в показателе "Сумма продаж" контрагента:

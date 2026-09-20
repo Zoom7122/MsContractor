@@ -48,6 +48,9 @@ public sealed class MergeProcessor(
                 "Document discovery will be retried.", cancellationToken))
             return;
 
+        var documentsToTransferCount = (await documentSnapshots.GetForCounterpartiesAsync(
+            job.AccountId, command.DuplicateCounterpartyIds, cancellationToken)).Count;
+
         var update = job.Operations.Single(item => item.OperationType == MergeOperationTypes.UpdateMainCounterparty);
         if (!await state.ExecuteAsync(job, update,
                 token => mainCounterpartyUpdate.UpdateAsync(job, update, context.MainCounterparty, token),
@@ -87,6 +90,14 @@ public sealed class MergeProcessor(
         }
 
         await state.CompleteJobAsync(job, cancellationToken);
+        logger.LogInformation(
+            "Merge completed: merge_job_id={MergeJobId}, account_id={AccountId}, main_counterparty_id={MainCounterpartyId}, duplicate_counterparties_count={DuplicateCounterpartiesCount}, documents_transferred_count={DocumentsTransferredCount}, status={Status}",
+            job.Id,
+            job.AccountId,
+            job.MainCounterpartyId,
+            command.DuplicateCounterpartyIds.Count,
+            documentsToTransferCount,
+            job.Status);
     }
 
     private static async Task RecreateSalesReturnsAsync(

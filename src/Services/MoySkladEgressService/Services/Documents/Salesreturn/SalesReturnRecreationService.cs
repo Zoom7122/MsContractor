@@ -184,20 +184,17 @@ public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
                         Fail(item, "SALESRETURN_NEW_CREATE_FAILED", result.Error ?? result.ErrorCode);
                         item.Stage = "Failed";
                     }
+                    else if (result.DocumentId is null)
+                    {
+                        Fail(item, "SALESRETURN_NEW_CREATE_FAILED",
+                            result.Error ?? "MoySklad did not return the created salesreturn id.");
+                        item.Stage = "Failed";
+                    }
                     else
                     {
-                        var validationError = "MoySklad did not return a created salesreturn body.";
-                        if (result.RawJson is null || !_payloads.MatchesNewPayload(item.NewPayloadJson, result.RawJson, out validationError))
-                        {
-                            Fail(item, "SALESRETURN_NEW_VALIDATION_FAILED", validationError);
-                            item.Stage = "Failed";
-                        }
-                        else
-                        {
-                            item.Stage = "Completed";
-                            item.ErrorCode = null;
-                            item.Error = null;
-                        }
+                        item.Stage = "Completed";
+                        item.ErrorCode = null;
+                        item.Error = null;
                     }
                 }
             }

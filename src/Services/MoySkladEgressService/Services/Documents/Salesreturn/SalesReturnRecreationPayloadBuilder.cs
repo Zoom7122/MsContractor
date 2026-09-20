@@ -49,12 +49,6 @@ public sealed class SalesReturnRecreationPayloadBuilder
             throw new InvalidOperationException("A salesreturn requires at least one saved position.");
     }
 
-    public bool MatchesNewPayload(string expectedPayloadJson, string actualRawJson, out string error) =>
-        Matches(expectedPayloadJson, actualRawJson, true, out error);
-
-    public bool MatchesRollbackPayload(string expectedPayloadJson, string actualRawJson, out string error) =>
-        Matches(expectedPayloadJson, actualRawJson, false, out error);
-
     private JsonObject BuildBase(string sourceRawJson, IReadOnlyDictionary<Guid, string> positions, Guid syncId)
     {
         var payload = ParseObject(sourceRawJson).DeepClone().AsObject();
@@ -79,67 +73,11 @@ public sealed class SalesReturnRecreationPayloadBuilder
         return payload;
     }
 
-    private static bool Matches(string expectedPayloadJson, string actualRawJson, bool requireNoContract, out string error)
-    {
-        try
-        {
-            var expected = ParseObject(expectedPayloadJson);
-            var actual = ParseObject(actualRawJson);
-            foreach (var field in new[] { "agent", "organization", "store", "demand", "agentAccount" })
-            {
-                if (TryReadReferenceId(expected[field] as JsonObject) != TryReadReferenceId(actual[field] as JsonObject))
-                {
-                    error = $"The recreated salesreturn has different {field}.";
-                    return false;
-                }
-            }
-            if (requireNoContract && actual["contract"] is not null)
-            {
-                error = "The recreated salesreturn contains contract although it must be omitted.";
-                return false;
-            }
-            if (!requireNoContract &&
-                TryReadReferenceId(expected["contract"] as JsonObject) != TryReadReferenceId(actual["contract"] as JsonObject))
-            {
-                error = "The restored salesreturn has different contract.";
-                return false;
-            }
+    private static JsonObject ParseObject(string rawJson) => JsonNode.Parse(rawJson)?.AsObject()
+        ?? throw new InvalidOperationException("Saved salesreturn data is not a JSON object.");
 
-            var expectedPositions = expected["positions"] as JsonArray;
-            var actualPositions = ExtractPositions(actual["positions"]);
-            if (expectedPositions is null || actualPositions is null || expectedPositions.Count != actualPositions.Count)
-            {
-                error = "The recreated salesreturn has different positions count.";
-                return false;
-            }
-            for (var index = 0; index < expectedPositions.Count; index++)
-            {
-                if (!JsonNode.DeepEquals(
-                        CleanPosition(expectedPositions[index] as JsonObject),
-                        CleanPosition(actualPositions[index] as JsonObject)))
-                {
-                    error = $"The recreated salesreturn position at index {index} differs from the source.";
-                    return false;
-                }
-            }
-            error = string.Empty;
-            return true;
-        }
-        catch (Exception exception) when (exception is InvalidOperationException or JsonException or UriFormatException)
-        {
-            error = $"The recreation response cannot be validated: {exception.Message}";
-            return false;
-        }
-    }
-
-    private static JsonArray? ExtractPositions(JsonNode? positions)
-    {
-        if (positions is JsonArray rows)
-            return rows;
-        return positions is JsonObject collection && collection["rows"] is JsonArray collectionRows
-            ? collectionRows
-            : null;
-    }
+    private static JsonObject RequireReference(JsonObject source, string name) => source[name] as JsonObject
+        ?? throw new InvalidOperationException($"Saved salesreturn data does not contain {name}.");
 
     private static JsonObject CleanPosition(JsonObject? source)
     {
@@ -161,12 +99,6 @@ public sealed class SalesReturnRecreationPayloadBuilder
         }
         return result;
     }
-
-    private static JsonObject ParseObject(string rawJson) => JsonNode.Parse(rawJson)?.AsObject()
-        ?? throw new InvalidOperationException("Saved salesreturn data is not a JSON object.");
-
-    private static JsonObject RequireReference(JsonObject source, string name) => source[name] as JsonObject
-        ?? throw new InvalidOperationException($"Saved salesreturn data does not contain {name}.");
 
     private static JsonObject CleanReference(JsonObject reference)
     {

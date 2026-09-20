@@ -138,7 +138,8 @@ public sealed class MigrationSnapshotDiagnosticTests
                 "20260916150000_AddSalesReturnPositionsRawData",
                 "20260916160000_AddSalesReturnRecreationOperations",
                 "20260920120000_LinkSalesReturnRecreationItemsToRawData",
-                "20260920130000_RemoveSalesReturnRollbackData"
+                "20260920130000_RemoveSalesReturnRollbackData",
+                "20260920140000_AddPurchaseReturnPreparationSnapshots"
             ],
             context.GetService<IMigrationsAssembly>().Migrations.Keys);
     }

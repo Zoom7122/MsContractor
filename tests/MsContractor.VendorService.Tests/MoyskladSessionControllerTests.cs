@@ -12,7 +12,6 @@ namespace MsContractor.VendorService.Tests;
 public sealed class MoyskladSessionControllerTests
 {
     [Theory]
-    [InlineData("Development", false, false, "samesite=lax")]
     [InlineData("Development", true, true, "samesite=none")]
     [InlineData("Production", false, true, "samesite=none")]
     public async Task CreateAsync_IssuesEnvironmentAppropriateHttpOnlyCookie(

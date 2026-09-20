@@ -20,6 +20,7 @@ public sealed class MergeProcessor(
     IMergeMainCounterpartyUpdateService mainCounterpartyUpdate,
     IMergeDocumentChangeService documentChange,
     ISalesReturnRecreationSender salesReturnRecreationSender,
+    IPurchaseReturnRecreationSender purchaseReturnRecreationSender,
     IDocumentSnapshotRepository documentSnapshots,
     IMergeCounterpartyArchiveService counterpartyArchive,
     ILogger<MergeProcessor> logger) : IMergeProcessor
@@ -40,6 +41,7 @@ public sealed class MergeProcessor(
 
         await state.EnsureDocumentChangeOperationAsync(job, cancellationToken);
         await state.EnsureSalesReturnRecreationOperationAsync(job, cancellationToken);
+        await state.EnsurePurchaseReturnRecreationOperationAsync(job, cancellationToken);
         await state.StartJobAsync(job, cancellationToken);
 
         var discovery = job.Operations.Single(item => item.OperationType == MergeOperationTypes.DiscoverDocuments);
@@ -75,6 +77,19 @@ public sealed class MergeProcessor(
                     documentSnapshots,
                     token),
                 "Salesreturn recreation will be retried.", cancellationToken))
+            return;
+
+        var purchaseReturnOperation = job.Operations.Single(item =>
+            item.OperationType == MergeOperationTypes.RecreatePurchaseReturns);
+        if (!await state.ExecuteAsync(job, purchaseReturnOperation,
+                token => RecreatePurchaseReturnsAsync(
+                    job,
+                    purchaseReturnOperation,
+                    command.DuplicateCounterpartyIds,
+                    purchaseReturnRecreationSender,
+                    documentSnapshots,
+                    token),
+                "Purchasereturn recreation will be retried.", cancellationToken))
             return;
 
         var archiveOperations = job.Operations
@@ -181,5 +196,33 @@ public sealed class MergeProcessor(
                 "MoySklad Egress Service returned an inconsistent salesreturn recreation response.",
                 502);
         }
+    }
+
+    private static async Task RecreatePurchaseReturnsAsync(
+        MergeJob job,
+        MergeOperation operation,
+        IReadOnlyList<Guid> duplicateCounterpartyIds,
+        IPurchaseReturnRecreationSender sender,
+        IDocumentSnapshotRepository documentSnapshots,
+        CancellationToken cancellationToken)
+    {
+        var rows = await documentSnapshots.GetForCounterpartiesAsync(
+            job.AccountId, duplicateCounterpartyIds, cancellationToken);
+        var purchaseReturns = rows
+            .Where(item => string.Equals(item.DocumentType, "purchasereturn", StringComparison.Ordinal))
+            .ToArray();
+        if (purchaseReturns.Length == 0)
+            return;
+
+        await sender.SendAsync(
+            job.AccountId,
+            job.MainCounterpartyId,
+            "purchasereturn",
+            purchaseReturns.Select(item => item.DocumentId).ToArray(),
+            job.Id,
+            operation.Id,
+            job.RequestedByUserId,
+            job.CorrelationId,
+            cancellationToken);
     }
 }

@@ -6,6 +6,7 @@ public static class MergeOperationTypes
     public const string UpdateMainCounterparty = "update_main_counterparty";
     public const string ChangeDocumentCounterparties = "change_document_counterparties";
     public const string RecreateSalesReturns = "recreate_salesreturns";
+    public const string RecreatePurchaseReturns = "recreate_purchasereturns";
     public const string ArchiveDuplicate = "archive_duplicate";
 }
 

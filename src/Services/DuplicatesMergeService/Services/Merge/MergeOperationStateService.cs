@@ -10,6 +10,7 @@ public interface IMergeOperationStateService
 {
     Task EnsureDocumentChangeOperationAsync(MergeJob job, CancellationToken cancellationToken);
     Task EnsureSalesReturnRecreationOperationAsync(MergeJob job, CancellationToken cancellationToken);
+    Task EnsurePurchaseReturnRecreationOperationAsync(MergeJob job, CancellationToken cancellationToken);
     Task StartJobAsync(MergeJob job, CancellationToken cancellationToken);
     Task<bool> ExecuteAsync(MergeJob job, MergeOperation operation, Func<CancellationToken, Task> action,
         string retryMessage, CancellationToken cancellationToken);
@@ -54,6 +55,25 @@ public sealed class MergeOperationStateService(
             Id = Guid.NewGuid(), MergeJobId = job.Id, MergeJob = job, AccountId = job.AccountId,
             Sequence = job.Operations.Any() ? job.Operations.Max(item => item.Sequence) + 1 : 0,
             OperationType = MergeOperationTypes.RecreateSalesReturns,
+            CounterpartyId = job.MainCounterpartyId, Status = MergeOperationStatuses.Pending,
+            CreatedAt = now, UpdatedAt = now
+        };
+        await repository.InsertOperationAsync(job.AccountId, job, operation, cancellationToken);
+    }
+
+    public async Task EnsurePurchaseReturnRecreationOperationAsync(MergeJob job, CancellationToken cancellationToken)
+    {
+        if (job.Operations.Any(item => item.OperationType == MergeOperationTypes.RecreatePurchaseReturns))
+            return;
+
+        var salesReturn = job.Operations
+            .SingleOrDefault(item => item.OperationType == MergeOperationTypes.RecreateSalesReturns);
+        var now = timeProvider.GetUtcNow();
+        var operation = new MergeOperation
+        {
+            Id = Guid.NewGuid(), MergeJobId = job.Id, MergeJob = job, AccountId = job.AccountId,
+            Sequence = salesReturn is null ? job.Operations.Count : salesReturn.Sequence + 1,
+            OperationType = MergeOperationTypes.RecreatePurchaseReturns,
             CounterpartyId = job.MainCounterpartyId, Status = MergeOperationStatuses.Pending,
             CreatedAt = now, UpdatedAt = now
         };

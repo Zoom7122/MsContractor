@@ -8,6 +8,7 @@ using MergeVerifier.Verification;
 var options = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
 try
 {
+    DotEnv.Load();
     if (args.Length == 0) throw new ArgumentException("Expected 'capture' or 'verify' command.");
     var parsed = Parse(args.Skip(1).ToArray());
     var egressUrl = Environment.GetEnvironmentVariable("MERGE_VERIFIER_EGRESS_URL") ?? "http://localhost:5012/";
@@ -19,7 +20,7 @@ try
     {
         case "capture":
         {
-            var accountId = RequiredGuid(parsed, "account-id");
+            var accountId = RequiredEnvironmentGuid("MERGE_VERIFIER_ACCOUNT_ID");
             var mainId = RequiredEnvironmentGuid("MERGE_VERIFIER_MAIN_KA");
             var duplicates = RequiredEnvironmentGuids("MERGE_VERIFIER_DUPLICATE_IDS");
             ValidateScope(mainId, duplicates);
@@ -68,7 +69,6 @@ static Dictionary<string, string> Parse(string[] values)
     return result;
 }
 static string Required(IReadOnlyDictionary<string, string> values, string name) => values.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value) ? value : throw new ArgumentException($"Missing --{name}.");
-static Guid RequiredGuid(IReadOnlyDictionary<string, string> values, string name) => Guid.TryParse(Required(values, name), out var value) && value != Guid.Empty ? value : throw new ArgumentException($"--{name} must be a non-empty GUID.");
 static Guid RequiredEnvironmentGuid(string name) =>
     Guid.TryParse(Environment.GetEnvironmentVariable(name), out var value) && value != Guid.Empty
         ? value
@@ -93,4 +93,42 @@ static void ValidateSnapshot(MergeSnapshot snapshot)
 {
     if (snapshot.SnapshotVersion != "1" || snapshot.AccountId == Guid.Empty || snapshot.MainCounterpartyId == Guid.Empty || snapshot.CapturedAt == default || snapshot.DuplicateCounterpartyIds.Count == 0) throw new InvalidOperationException("Snapshot integrity validation failed.");
     ValidateScope(snapshot.MainCounterpartyId, snapshot.DuplicateCounterpartyIds);
+}
+
+static class DotEnv
+{
+    public static void Load()
+    {
+        var path = FindPath();
+        if (path is null) return;
+
+        foreach (var rawLine in File.ReadLines(path))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0 || line.StartsWith('#')) continue;
+            if (line.StartsWith("export ", StringComparison.Ordinal)) line = line[7..].TrimStart();
+
+            var separator = line.IndexOf('=');
+            if (separator <= 0) throw new ArgumentException($"Invalid .env entry in {path}: {rawLine}");
+
+            var name = line[..separator].Trim();
+            var value = line[(separator + 1)..].Trim();
+            if (value.Length >= 2 && ((value[0] == '\'' && value[^1] == '\'') || (value[0] == '\"' && value[^1] == '\"')))
+                value = value[1..^1];
+
+            // Explicitly exported process variables have priority over the local file.
+            if (Environment.GetEnvironmentVariable(name) is null)
+                Environment.SetEnvironmentVariable(name, value);
+        }
+    }
+
+    private static string? FindPath()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(Directory.GetCurrentDirectory(), ".env"),
+            Path.Combine(Directory.GetCurrentDirectory(), "tools", "MergeVerifier", ".env")
+        };
+        return candidates.FirstOrDefault(File.Exists);
+    }
 }

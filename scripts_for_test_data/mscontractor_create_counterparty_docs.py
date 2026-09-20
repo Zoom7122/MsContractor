@@ -50,9 +50,13 @@ load_test_data_env()
 
 # Сколько КА создать по умолчанию. Можно переопределить через MS_COUNTERPARTY_COUNT.
 DEFAULT_COUNTERPARTY_COUNT = 2
+# Сколько документов каждого выбранного типа создать на один КА.
+# Можно переопределить через MS_DOCUMENTS_PER_TYPE.
+DEFAULT_DOCUMENTS_PER_TYPE = 1
 
 
-# Значения MS_COUNTERPARTY_COUNT, MS_COUNTERPARTY_NAME, MS_COUNTERPARTY_PHONE,
+# Значения MS_COUNTERPARTY_COUNT, MS_DOCUMENTS_PER_TYPE, MS_COUNTERPARTY_NAME,
+# MS_COUNTERPARTY_PHONE,
 # MS_WRITE_REPORT_JSON, MS_DOCUMENT_TYPES и MS_DOCUMENT_TYPES_OPTIONAL задаются
 # в окружении.
 # Типы документов можно передать через MS_DOCUMENT_TYPES, через запятую или пробел:
@@ -277,6 +281,22 @@ def counterparty_count() -> int:
 
     if count < 1:
         raise ValueError("MS_COUNTERPARTY_COUNT должен быть целым числом не меньше 1")
+    return count
+
+
+def documents_per_type() -> int:
+    """Return the number of documents of each selected type per counterparty."""
+    raw_value = os.getenv("MS_DOCUMENTS_PER_TYPE", str(DEFAULT_DOCUMENTS_PER_TYPE))
+
+    try:
+        count = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "MS_DOCUMENTS_PER_TYPE должен быть целым числом не меньше 1"
+        ) from exc
+
+    if count < 1:
+        raise ValueError("MS_DOCUMENTS_PER_TYPE должен быть целым числом не меньше 1")
     return count
 
 
@@ -810,6 +830,23 @@ def choose_facture_source(
     return None, None
 
 
+def choose_facture_source_at_index(
+    document_type: str,
+    created: Dict[str, list[Optional[Dict[str, Any]]]],
+    document_number: int,
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """Choose the source for a repeated facture by its zero-based sequence."""
+    priorities = {
+        "factureout": ("demand", "paymentin", "cashin", "purchasereturn"),
+        "facturein": ("supply", "paymentout"),
+    }
+    for source_type in priorities[document_type]:
+        sources = created.get(source_type, [])
+        if document_number < len(sources) and sources[document_number] is not None:
+            return source_type, sources[document_number]
+    return None, None
+
+
 def facture_doc(document_type: str, source_type: str, source: Dict[str, Any]) -> Dict[str, Any]:
     template = api(
         "PUT",
@@ -855,6 +892,7 @@ def build_documents(
     retail_shift: Optional[Dict[str, Any]],
     expense_item: Optional[Dict[str, Any]],
     commission_contract: Optional[Dict[str, Any]],
+    documents_per_type: int = DEFAULT_DOCUMENTS_PER_TYPE,
 ) -> list[Dict[str, Any]]:
     def p(
         doc_type: str,
@@ -931,11 +969,13 @@ def build_documents(
     for doc_type in DOCUMENT_CREATION_ORDER:
         if doc_type not in selected:
             continue
-        documents.append({
-            "type": doc_type,
-            "title": DOCUMENT_TITLES[doc_type],
-            "payload": builders[doc_type](),
-        })
+        for document_number in range(1, documents_per_type + 1):
+            documents.append({
+                "type": doc_type,
+                "number": document_number,
+                "title": DOCUMENT_TITLES[doc_type],
+                "payload": builders[doc_type](),
+            })
 
     return documents
 
@@ -1165,6 +1205,7 @@ def main() -> int:
 
     try:
         counterparties_to_create = counterparty_count()
+        documents_to_create_per_type = documents_per_type()
         should_write_report = write_report_json()
     except ValueError as exc:
         print(f"Ошибка: {exc}", file=sys.stderr)
@@ -1186,6 +1227,7 @@ def main() -> int:
         "applicable": applicable,
         "selectedDocumentTypes": sorted(selected),
         "counterpartyCount": counterparties_to_create,
+        "documentsPerType": documents_to_create_per_type,
         "writeReportJson": should_write_report,
         "counterparty": None,
         "counterparties": [],
@@ -1198,6 +1240,7 @@ def main() -> int:
 
     print(f"Run ID: {run_id}")
     print(f"Количество КА: {counterparties_to_create}")
+    print(f"Документов каждого типа на КА: {documents_to_create_per_type}")
     print(f"JSON-отчёт: {'YES' if should_write_report else 'NO'}")
     print(f"Документы: {', '.join(sorted(selected))}")
     print(f"Проведение документов: {'YES' if applicable else 'NO (draft)'}")
@@ -1263,7 +1306,9 @@ def main() -> int:
 
     print("\nСоздаю КА и документы...")
 
-    total_documents = len(selected) * counterparties_to_create
+    total_documents = (
+        len(selected) * documents_to_create_per_type * counterparties_to_create
+    )
     document_index = 0
     for counterparty_index in range(1, counterparties_to_create + 1):
         # Добавляем индекс, чтобы имена, email и externalCode были уникальными.
@@ -1305,16 +1350,23 @@ def main() -> int:
             retail_shift,
             expense_item,
             commission_contract,
+            documents_to_create_per_type,
         )
 
-        created_by_type: Dict[str, Dict[str, Any]] = {}
+        # Сохраняем позиции по номеру документа, включая неуспешные попытки.
+        # Благодаря этому зависимый документ N не привязывается к основанию N+1.
+        created_by_type: Dict[str, list[Optional[Dict[str, Any]]]] = {}
         for doc in documents:
             document_index += 1
             doc_type = doc["type"]
+            document_number = doc["number"]
             title = doc["title"]
             payload = doc["payload"]
 
-            print(f"[{document_index}/{total_documents}] {doc_type} — {title}")
+            print(
+                f"[{document_index}/{total_documents}] "
+                f"{doc_type} #{document_number} — {title}"
+            )
             ok, result = try_api("POST", f"/entity/{doc_type}", payload)
 
             if ok:
@@ -1325,81 +1377,101 @@ def main() -> int:
                     if expanded_ok:
                         result = expanded_result
                 print(f"  OK: id={result.get('id')} name={result.get('name')}")
-                created_by_type[doc_type] = result
+                created_by_type.setdefault(doc_type, []).append(result)
                 add_created_document(report, cp, doc_type, result)
             else:
                 print(f"  FAILED: status={result.get('status')}")
                 print_error_details(result)
+                created_by_type.setdefault(doc_type, []).append(None)
                 add_failed_document(report, cp, doc_type, payload, result)
 
         for doc_type in DOCUMENT_CREATION_ORDER:
             if doc_type not in selected or doc_type not in DEPENDENT_DOCUMENT_TYPES:
                 continue
 
-            document_index += 1
-            print(f"[{document_index}/{total_documents}] {doc_type} — {DOCUMENT_TITLES[doc_type]}")
-            source_type: Optional[str] = None
-            source: Optional[Dict[str, Any]] = None
-            payload: Optional[Dict[str, Any]] = None
-
-            try:
-                if doc_type == "salesreturn":
-                    source_type, source = "demand", created_by_type.get("demand")
-                    if not source:
-                        raise LookupError("не создана отгрузка demand")
-                    source = load_document_positions("demand", source)
-                    if not document_positions(source):
-                        raise LookupError("у отгрузки demand отсутствуют позиции")
-                    payload = salesreturn_doc(source)
-                elif doc_type == "purchasereturn":
-                    source_type, source = "supply", created_by_type.get("supply")
-                    if not source:
-                        raise LookupError("не создана приёмка supply")
-                    source = load_document_positions("supply", source)
-                    if not document_positions(source):
-                        raise LookupError("у приёмки supply отсутствуют позиции")
-                    payload = purchasereturn_doc(source)
-                elif doc_type == "retailsalesreturn":
-                    source_type, source = "demand", created_by_type.get("retaildemand")
-                    if not source:
-                        raise LookupError("не создана розничная продажа retaildemand")
-                    source = load_document_positions("retaildemand", source)
-                    if not document_positions(source):
-                        raise LookupError("у розничной продажи retaildemand отсутствуют позиции")
-                    payload = retailsalesreturn_doc(source)
-                elif doc_type in {"factureout", "facturein"}:
-                    source_type, source = choose_facture_source(doc_type, created_by_type)
-                    if not source_type or not source:
-                        raise LookupError("не создано подходящее основание")
-                    payload = facture_doc(doc_type, source_type, source)
-                else:
-                    payload, reason = retireorder_doc(cp)
-                    if reason:
-                        raise LookupError(reason)
-
-                result = create_and_verify_dependent_document(
-                    doc_type, payload, cp, source_type, source
+            for document_number in range(documents_to_create_per_type):
+                document_index += 1
+                print(
+                    f"[{document_index}/{total_documents}] "
+                    f"{doc_type} #{document_number + 1} — {DOCUMENT_TITLES[doc_type]}"
                 )
-                created_by_type[doc_type] = result
-                print(f"  OK: id={result.get('id')} name={result.get('name')}")
-                add_created_document(report, cp, doc_type, result)
-            except LookupError as exc:
-                print(f"  SKIPPED: {exc}")
-                add_skipped_document(report, doc_type, str(exc), cp)
-            except ApiError as exc:
-                if doc_type == "retireorder":
-                    print("  SKIPPED: создание запрещено настройками МС")
-                    add_skipped_document(report, doc_type, exc.body, cp)
-                    continue
-                error = error_data("POST", f"/entity/{doc_type}", exc)
-                print(f"  FAILED: status={error.get('status')}")
-                print_error_details(error)
-                add_failed_document(report, cp, doc_type, payload, error)
-            except Exception as exc:
-                error = error_data("POST", f"/entity/{doc_type}", exc)
-                print(f"  FAILED: status={error.get('status')}")
-                print_error_details(error)
-                add_failed_document(report, cp, doc_type, payload, error)
+                source_type: Optional[str] = None
+                source: Optional[Dict[str, Any]] = None
+                payload: Optional[Dict[str, Any]] = None
+
+                try:
+                    if doc_type == "salesreturn":
+                        source_type, source = "demand", (
+                            created_by_type.get("demand", [])[document_number]
+                            if document_number < len(created_by_type.get("demand", []))
+                            else None
+                        )
+                        if not source:
+                            raise LookupError("не создана отгрузка demand для этого номера")
+                        source = load_document_positions("demand", source)
+                        if not document_positions(source):
+                            raise LookupError("у отгрузки demand отсутствуют позиции")
+                        payload = salesreturn_doc(source)
+                    elif doc_type == "purchasereturn":
+                        source_type, source = "supply", (
+                            created_by_type.get("supply", [])[document_number]
+                            if document_number < len(created_by_type.get("supply", []))
+                            else None
+                        )
+                        if not source:
+                            raise LookupError("не создана приёмка supply для этого номера")
+                        source = load_document_positions("supply", source)
+                        if not document_positions(source):
+                            raise LookupError("у приёмки supply отсутствуют позиции")
+                        payload = purchasereturn_doc(source)
+                    elif doc_type == "retailsalesreturn":
+                        source_type, source = "demand", (
+                            created_by_type.get("retaildemand", [])[document_number]
+                            if document_number < len(created_by_type.get("retaildemand", []))
+                            else None
+                        )
+                        if not source:
+                            raise LookupError(
+                                "не создана розничная продажа retaildemand для этого номера"
+                            )
+                        source = load_document_positions("retaildemand", source)
+                        if not document_positions(source):
+                            raise LookupError("у розничной продажи retaildemand отсутствуют позиции")
+                        payload = retailsalesreturn_doc(source)
+                    elif doc_type in {"factureout", "facturein"}:
+                        source_type, source = choose_facture_source_at_index(
+                            doc_type, created_by_type, document_number
+                        )
+                        if not source_type or not source:
+                            raise LookupError("не создано подходящее основание для этого номера")
+                        payload = facture_doc(doc_type, source_type, source)
+                    else:
+                        payload, reason = retireorder_doc(cp)
+                        if reason:
+                            raise LookupError(reason)
+
+                    result = create_and_verify_dependent_document(
+                        doc_type, payload, cp, source_type, source
+                    )
+                    print(f"  OK: id={result.get('id')} name={result.get('name')}")
+                    add_created_document(report, cp, doc_type, result)
+                except LookupError as exc:
+                    print(f"  SKIPPED: {exc}")
+                    add_skipped_document(report, doc_type, str(exc), cp)
+                except ApiError as exc:
+                    if doc_type == "retireorder":
+                        print("  SKIPPED: создание запрещено настройками МС")
+                        add_skipped_document(report, doc_type, exc.body, cp)
+                        continue
+                    error = error_data("POST", f"/entity/{doc_type}", exc)
+                    print(f"  FAILED: status={error.get('status')}")
+                    print_error_details(error)
+                    add_failed_document(report, cp, doc_type, payload, error)
+                except Exception as exc:
+                    error = error_data("POST", f"/entity/{doc_type}", exc)
+                    print(f"  FAILED: status={error.get('status')}")
+                    print_error_details(error)
+                    add_failed_document(report, cp, doc_type, payload, error)
 
     return finish_run(report, should_write_report)
 

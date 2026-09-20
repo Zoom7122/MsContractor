@@ -1,6 +1,8 @@
 using MsContractor.MoySkladEgressService.Clients;
+using MsContractor.MoySkladEgressService.Configuration;
 using MsContractor.MoySkladEgressService.Gateways.Counterparties;
 using MsContractor.MoySkladEgressService.Gateways.Documents;
+using MsContractor.MoySkladEgressService.Gateways.Documents.Purchasereturn;
 using MsContractor.MoySkladEgressService.Gateways.Documents.Salesreturn;
 using MsContractor.MoySkladEgressService.HealthChecks;
 using MsContractor.MoySkladEgressService.Models.Options;
@@ -9,6 +11,7 @@ using MsContractor.BuildingBlocks.Health;
 using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
 using MsContractor.MoySkladEgressService.Services.Documents;
+using MsContractor.MoySkladEgressService.Services.Documents.Purchasereturn;
 using MsContractor.MoySkladEgressService.Services.Documents.Salesreturn;
 using MsContractor.MoySkladEgressService.Repositories;
 using Microsoft.EntityFrameworkCore;
@@ -17,6 +20,10 @@ using StackExchange.Redis;
 using MsContractor.MoySkladEgressService.RateLimiting;
 using MsContractor.MoySkladEgressService.ResponseHandling;
 using MsContractor.MoySkladEgressService.Validation;
+
+LocalDotEnvLoader.LoadIfPresent(
+    Path.Combine(AppContext.BaseDirectory, ".env"),
+    Path.Combine(Directory.GetCurrentDirectory(), ".env"));
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.AddMsContractorLogging();
@@ -43,10 +50,12 @@ var agentAndContractOptions = MoySkladDocumentAgentAndContractOptions.Parse(
     builder.Configuration["DOCUMENTS_CHANGE_AGENT_AND_CONTRACT"]);
 var documentDiscoveryOptions = MoySkladDocumentDiscoveryOptions.Parse(
     builder.Configuration["DOCUMENTS_DISCOVERY"]);
+var purchaseReturnRecreationOptions = PurchaseReturnRecreationOptions.Parse(builder.Configuration);
 builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(egressOptions));
 builder.Services.AddSingleton(documentChangeOptions);
 builder.Services.AddSingleton(agentAndContractOptions);
 builder.Services.AddSingleton(documentDiscoveryOptions);
+builder.Services.AddSingleton(purchaseReturnRecreationOptions);
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     ConnectionMultiplexer.Connect(
         builder.Configuration["Redis:ConnectionString"]
@@ -97,6 +106,30 @@ builder.Services.AddHttpClient<IMoySkladSalesReturnPositionsGateway, MoySkladSal
 {
     AutomaticDecompression = DecompressionMethods.GZip
 });
+builder.Services.AddHttpClient<IMoySkladPurchaseReturnGateway, MoySkladPurchaseReturnGateway>(client =>
+{
+    client.BaseAddress = egressOptions.JsonApiBaseUrl;
+    client.Timeout = TimeSpan.FromSeconds(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.GZip
+});
+builder.Services.AddHttpClient<IMoySkladPurchaseReturnPositionsGateway, MoySkladPurchaseReturnPositionsGateway>(client =>
+{
+    client.BaseAddress = egressOptions.JsonApiBaseUrl;
+    client.Timeout = TimeSpan.FromSeconds(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.GZip
+});
+builder.Services.AddHttpClient<IMoySkladSupplyGateway, MoySkladSupplyGateway>(client =>
+{
+    client.BaseAddress = egressOptions.JsonApiBaseUrl;
+    client.Timeout = TimeSpan.FromSeconds(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.GZip
+});
 var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres")
     ?? throw new InvalidOperationException("ConnectionStrings:Postgres is required for the Egress operation journal.");
 builder.Services.AddDbContext<EgressDbContext>(options => options.UseNpgsql(postgresConnectionString,
@@ -116,6 +149,11 @@ builder.Services.AddScoped<IMoySkladSalesReturnServiceGetData, MoySkladSalesRetu
 builder.Services.AddScoped<IMoySkladSalesReturnPositionsService, MoySkladSalesReturnPositionsService>();
 builder.Services.AddScoped<SalesReturnRecreationPayloadBuilder>();
 builder.Services.AddScoped<ISalesReturnRecreationService, SalesReturnRecreationService>();
+builder.Services.AddScoped<PurchaseReturnCreateMapper>();
+builder.Services.AddScoped<IPurchaseReturnPreparationRepository, PurchaseReturnPreparationRepository>();
+builder.Services.AddScoped<IPurchaseReturnPreparationService, PurchaseReturnPreparationService>();
+builder.Services.AddScoped<IPurchaseReturnVerifier, PurchaseReturnVerifier>();
+builder.Services.AddScoped<IPurchaseReturnRecreationOrchestrator, PurchaseReturnRecreationOrchestrator>();
 builder.Services.AddSingleton<IMoySkladRateLimiter, MoySkladRateLimiter>();
 builder.Services.AddHealthChecks()
     .AddCheck<EgressReadinessHealthCheck>("egress-dependencies", tags: ["ready"]);

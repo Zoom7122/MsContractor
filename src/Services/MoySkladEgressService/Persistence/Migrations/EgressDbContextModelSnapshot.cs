@@ -24,6 +24,52 @@ namespace MsContractor.MoySkladEgressService.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.PurchaseReturnRawData", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("DocumentId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("RawJson")
+                    .IsRequired()
+                    .HasColumnType("jsonb");
+
+                b.HasKey("AccountId", "DocumentId");
+
+                b.ToTable("purchasereturn_raw_data", "egress");
+            });
+
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.PurchaseReturnPositionRawData", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("PositionId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("PurchaseReturnId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("RawJson")
+                    .IsRequired()
+                    .HasColumnType("jsonb");
+
+                b.HasKey("AccountId", "PurchaseReturnId", "PositionId");
+
+                b.HasIndex("AccountId", "PurchaseReturnId");
+
+                b.HasOne("MsContractor.MoySkladEgressService.Models.PurchaseReturnRawData", null)
+                    .WithMany()
+                    .HasForeignKey("AccountId", "PurchaseReturnId")
+                    .HasPrincipalKey("AccountId", "DocumentId")
+                    .OnDelete(DeleteBehavior.Cascade)
+                    .IsRequired();
+
+                b.ToTable("purchasereturn_positions_raw_data", "egress");
+            });
+
             modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.SalesReturnRawData", b =>
             {
                 b.Property<Guid>("AccountId")

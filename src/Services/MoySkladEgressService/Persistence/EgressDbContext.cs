@@ -18,6 +18,10 @@ public sealed class EgressDbContext : DbContext
 
     public DbSet<SalesReturnRecreationItem> SalesReturnRecreationItems => Set<SalesReturnRecreationItem>();
 
+    public DbSet<PurchaseReturnRawData> PurchaseReturnRawData => Set<PurchaseReturnRawData>();
+
+    public DbSet<PurchaseReturnPositionRawData> PurchaseReturnPositionRawData => Set<PurchaseReturnPositionRawData>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("egress");
@@ -62,5 +66,26 @@ public sealed class EgressDbContext : DbContext
             .HasForeignKey(item => new { item.AccountId, item.SourceDocumentId })
             .HasPrincipalKey(item => new { item.AccountId, item.DocumentId })
             .OnDelete(DeleteBehavior.Restrict);
+
+        var purchaseReturnRawData = modelBuilder.Entity<PurchaseReturnRawData>();
+        purchaseReturnRawData.ToTable("purchasereturn_raw_data");
+        purchaseReturnRawData.HasKey(item => new { item.AccountId, item.DocumentId });
+        purchaseReturnRawData.Property(item => item.RawJson).HasColumnType("jsonb");
+
+        var purchaseReturnPositionRawData = modelBuilder.Entity<PurchaseReturnPositionRawData>();
+        purchaseReturnPositionRawData.ToTable("purchasereturn_positions_raw_data");
+        purchaseReturnPositionRawData.HasKey(item => new
+        {
+            item.AccountId,
+            item.PurchaseReturnId,
+            item.PositionId
+        });
+        purchaseReturnPositionRawData.Property(item => item.RawJson).HasColumnType("jsonb");
+        purchaseReturnPositionRawData.HasIndex(item => new { item.AccountId, item.PurchaseReturnId });
+        purchaseReturnPositionRawData.HasOne<PurchaseReturnRawData>()
+            .WithMany()
+            .HasForeignKey(item => new { item.AccountId, item.PurchaseReturnId })
+            .HasPrincipalKey(item => new { item.AccountId, item.DocumentId })
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

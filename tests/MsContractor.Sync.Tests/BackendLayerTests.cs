@@ -12,7 +12,7 @@ public sealed class BackendLayerTests
         {
             "Controllers", "Consumers", "Services", "Repositories", "Persistence", "Clients", "Gateways",
             "Messaging", "Contracts", "Models", "Middleware", "HealthChecks", "RateLimiting",
-            "ResponseHandling", "Validation"
+            "ResponseHandling", "Validation", "Configuration"
         };
         foreach (var service in Directory.EnumerateDirectories(Path.Combine(root, "src", "Services")))
         {

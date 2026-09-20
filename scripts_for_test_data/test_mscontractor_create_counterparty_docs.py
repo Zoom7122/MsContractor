@@ -40,6 +40,39 @@ def source(entity_type: str, entity_id: str) -> dict:
 
 
 class DependentDocumentPayloadTests(unittest.TestCase):
+    def test_documents_per_type_is_configurable(self) -> None:
+        with patch.dict(ms_docs.os.environ, {"MS_DOCUMENTS_PER_TYPE": "1000"}):
+            self.assertEqual(1000, ms_docs.documents_per_type())
+
+    def test_documents_per_type_defaults_to_one(self) -> None:
+        with patch.dict(ms_docs.os.environ, {}, clear=False):
+            ms_docs.os.environ.pop("MS_DOCUMENTS_PER_TYPE", None)
+            self.assertEqual(1, ms_docs.documents_per_type())
+
+    def test_documents_per_type_rejects_non_positive_value(self) -> None:
+        with patch.dict(ms_docs.os.environ, {"MS_DOCUMENTS_PER_TYPE": "0"}):
+            with self.assertRaisesRegex(ValueError, "MS_DOCUMENTS_PER_TYPE"):
+                ms_docs.documents_per_type()
+
+    def test_build_documents_repeats_each_selected_type(self) -> None:
+        documents = ms_docs.build_documents(
+            {"customerorder"},
+            "run-1",
+            entity("organization", "org"),
+            entity("counterparty", "cp"),
+            True,
+            entity("product", "product"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            3,
+        )
+
+        self.assertEqual([1, 2, 3], [item["number"] for item in documents])
+        self.assertEqual(["customerorder"] * 3, [item["type"] for item in documents])
+
     def test_get_first_price_type_uses_company_settings_endpoint(self) -> None:
         price_type = entity("pricetype", "price-type-id")
 

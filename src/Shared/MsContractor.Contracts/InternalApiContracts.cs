@@ -72,6 +72,10 @@ public sealed record SalesReturnRecreationRequest(
     Guid MainAgentId,
     IReadOnlyList<Guid>? SalesReturnIds);
 
+public sealed record PurchaseReturnRecreationRequest(
+    Guid MainCounterpartyId,
+    IReadOnlyList<Guid>? PurchaseReturnIds);
+
 public sealed record SalesReturnRecreationResponse(
     Guid OperationId,
     Guid MainAgentId,

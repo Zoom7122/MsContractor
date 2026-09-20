@@ -104,11 +104,13 @@ public sealed class MergeJobCreator : IMergeJobCreator
         job.Operations.Add(NewOperation(job, 2, MergeOperationTypes.ChangeDocumentCounterparties, request.MainCounterpartyId, now));
         job.Operations.Add(NewOperation(job, 3,
             MergeOperationTypes.RecreateSalesReturns, request.MainCounterpartyId, now));
+        job.Operations.Add(NewOperation(job, 4,
+            MergeOperationTypes.RecreatePurchaseReturns, request.MainCounterpartyId, now));
         for (var index = 0; index < request.DuplicateCounterpartyIds.Count; index++)
         {
             job.Operations.Add(NewOperation(
                 job,
-                index + 4,
+                index + 5,
                 MergeOperationTypes.ArchiveDuplicate,
                 request.DuplicateCounterpartyIds[index],
                 now));

@@ -1,0 +1,294 @@
+{
+  "reportVersion": 1,
+  "generatedAt": "2026-09-20T12:11:01+00:00",
+  "mainCounterpartyId": "11111111-1111-1111-1111-111111111111",
+  "types": [
+    {
+      "entityType": "customerorder",
+      "transferMode": "PutAgent",
+      "before": 1,
+      "afterMain": 1,
+      "documents": [
+        {
+          "status": "Matched",
+          "count": 1,
+          "stableDocumentId": "33333333-3333-3333-3333-333333333333",
+          "sourceCounterpartyId": "22222222-2222-2222-2222-222222222222",
+          "data": {
+            "name": "00041",
+            "moment": "2026-09-20 12:00:00.000",
+            "sum": 100,
+            "positions": [
+              {
+                "quantity": 1,
+                "price": 100
+              }
+            ]
+          },
+          "differences": []
+        }
+      ],
+      "passed": true
+    },
+    {
+      "entityType": "demand",
+      "transferMode": "PutAgent",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [],
+      "passed": true
+    },
+    {
+      "entityType": "purchaseorder",
+      "transferMode": "PutAgent",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [],
+      "passed": true
+    },
+    {
+      "entityType": "supply",
+      "transferMode": "PutAgent",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [],
+      "passed": true
+    },
+    {
+      "entityType": "paymentin",
+      "transferMode": "PutAgent",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [],
+      "passed": true
+    },
+    {
+      "entityType": "paymentout",
+      "transferMode": "PutAgent",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [],
+      "passed": true
+    },
+    {
+      "entityType": "cashin",
+      "transferMode": "PutAgent",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [],
+      "passed": true
+    },
+    {
+      "entityType": "cashout",
+      "transferMode": "PutAgent",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [],
+      "passed": true
+    },
+    {
+      "entityType": "retaildemand",
+      "transferMode": "PutAgent",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [],
+      "passed": true
+    },
+    {
+      "entityType": "invoiceout",
+      "transferMode": "PutAgent",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [],
+      "passed": true
+    },
+    {
+      "entityType": "invoicein",
+      "transferMode": "PutAgent",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [],
+      "passed": true
+    },
+    {
+      "entityType": "counterpartyadjustment",
+      "transferMode": "PutAgent",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [],
+      "passed": true
+    },
+    {
+      "entityType": "commissionreportin",
+      "transferMode": "PutAgent",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [],
+      "passed": true
+    },
+    {
+      "entityType": "commissionreportout",
+      "transferMode": "PutAgent",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [],
+      "passed": true
+    },
+    {
+      "entityType": "salesreturn",
+      "transferMode": "Recreate",
+      "before": 1,
+      "afterMain": 1,
+      "documents": [
+        {
+          "status": "Missing",
+          "count": 1,
+          "semanticHash": "e2fcc2771a8cb6d3f898bb4f8189934a00b560a3a459cc8f0d48fb666aa5be1d",
+          "sourceCounterpartyId": "22222222-2222-2222-2222-222222222222",
+          "data": {
+            "name": "00073",
+            "moment": "2026-09-20 12:00:00.000",
+            "sum": 100,
+            "positions": [
+              {
+                "quantity": 1,
+                "price": 100
+              }
+            ]
+          },
+          "differences": [
+            {
+              "path": "/positions",
+              "before": [
+                {
+                  "quantity": 1,
+                  "price": 100
+                }
+              ],
+              "after": [
+                {
+                  "quantity": 2,
+                  "price": 100
+                }
+              ]
+            },
+            {
+              "path": "/sum",
+              "before": 100,
+              "after": 200
+            }
+          ],
+          "note": "Difference against the sole unexpected semantic variant; diagnostic candidate, not an identity match."
+        },
+        {
+          "status": "Unexpected",
+          "count": 1,
+          "semanticHash": "09f8419cee4abab840505362fdb9e140728ed7c5b0d9798744978bc59cd8aec1",
+          "sourceCounterpartyId": "11111111-1111-1111-1111-111111111111",
+          "data": {
+            "name": "00073",
+            "moment": "2026-09-20 12:00:00.000",
+            "sum": 200,
+            "positions": [
+              {
+                "quantity": 2,
+                "price": 100
+              }
+            ]
+          },
+          "differences": [
+            {
+              "path": "/",
+              "after": {
+                "name": "00073",
+                "moment": "2026-09-20 12:00:00.000",
+                "sum": 200,
+                "positions": [
+                  {
+                    "quantity": 2,
+                    "price": 100
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "passed": false
+    },
+    {
+      "entityType": "purchasereturn",
+      "transferMode": "Recreate",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [],
+      "passed": true
+    },
+    {
+      "entityType": "retailsalesreturn",
+      "transferMode": "Recreate",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [],
+      "passed": true
+    },
+    {
+      "entityType": "factureout",
+      "transferMode": "Unsupported",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [
+        {
+          "status": "Unsupported",
+          "count": 1,
+          "differences": [],
+          "note": "UNSUPPORTED DOCUMENT TYPE: factureout"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "entityType": "facturein",
+      "transferMode": "Unsupported",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [
+        {
+          "status": "Unsupported",
+          "count": 1,
+          "differences": [],
+          "note": "UNSUPPORTED DOCUMENT TYPE: facturein"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "entityType": "retireorder",
+      "transferMode": "Unsupported",
+      "before": 0,
+      "afterMain": 0,
+      "documents": [
+        {
+          "status": "Unsupported",
+          "count": 1,
+          "differences": [],
+          "note": "UNSUPPORTED DOCUMENT TYPE: retireorder"
+        }
+      ],
+      "passed": false
+    }
+  ],
+  "afterCaptureCompleted": true,
+  "passed": false,
+  "exitCode": 1,
+  "totalBefore": 2,
+  "totals": {
+    "Matched": 1,
+    "Missing": 1,
+    "Changed": 0,
+    "Unexpected": 1,
+    "StillOnDuplicate": 0,
+    "Unsupported": 3,
+    "FetchError": 0
+  }
+}

@@ -566,7 +566,7 @@ public sealed class InternalDocumentChangeControllerTests
         }
         return new InternalDocumentsController(
             new NoopDiscovery(), service, new NoopAgentAndContractService(),
-            new TestMergeVerificationSnapshotService(), configuration)
+            configuration)
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };

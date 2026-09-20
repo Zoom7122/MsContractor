@@ -1,0 +1,7 @@
+**/bin/
+**/obj/
+**/TestResults/
+snapshots/
+.env
+.env.*
+!.env.example

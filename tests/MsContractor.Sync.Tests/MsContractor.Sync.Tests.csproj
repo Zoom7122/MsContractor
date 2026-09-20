@@ -23,6 +23,5 @@
     <ProjectReference Include="../../src/Services/CatalogSyncService/MsContractor.CatalogSyncService.csproj" />
     <ProjectReference Include="../../src/Services/MoySkladEgressService/MsContractor.MoySkladEgressService.csproj" />
     <ProjectReference Include="../../src/Services/DuplicatesMergeService/MsContractor.DuplicatesMergeService.csproj" />
-    <ProjectReference Include="../../tools/MergeVerifier/MergeVerifier.csproj" />
   </ItemGroup>
 </Project>

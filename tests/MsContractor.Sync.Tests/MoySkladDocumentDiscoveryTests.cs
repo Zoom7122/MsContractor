@@ -952,7 +952,7 @@ public sealed class InternalDocumentsControllerTests
 
         return new InternalDocumentsController(
             service, new NoopDocumentChangeService(), new NoopAgentAndContractService(),
-            new TestMergeVerificationSnapshotService(), configuration)
+            configuration)
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };

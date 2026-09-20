@@ -1,0 +1,224 @@
+MERGE VERIFICATION REPORT
+=========================
+
+customerorder [PutAgent]
+Before: 1   After main: 1
+Matched              1
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+demand [PutAgent]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+purchaseorder [PutAgent]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+supply [PutAgent]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+paymentin [PutAgent]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+paymentout [PutAgent]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+cashin [PutAgent]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+cashout [PutAgent]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+retaildemand [PutAgent]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+invoiceout [PutAgent]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+invoicein [PutAgent]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+counterpartyadjustment [PutAgent]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+commissionreportin [PutAgent]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+commissionreportout [PutAgent]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+salesreturn [Recreate]
+Before: 1   After main: 1
+Matched              0
+Missing              1
+Changed              0
+Unexpected           1
+StillOnDuplicate     0
+Unsupported          0
+  Missing x1 00073
+    Difference against the sole unexpected semantic variant; diagnostic candidate, not an identity match.
+    diff: /positions (values in report.json)
+    diff: /sum (values in report.json)
+  Unexpected x1 00073
+    diff: / (values in report.json)
+FAIL
+
+purchasereturn [Recreate]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+retailsalesreturn [Recreate]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          0
+PASS
+
+factureout [Unsupported]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          1
+  Unsupported x1 
+    UNSUPPORTED DOCUMENT TYPE: factureout
+FAIL
+
+facturein [Unsupported]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          1
+  Unsupported x1 
+    UNSUPPORTED DOCUMENT TYPE: facturein
+FAIL
+
+retireorder [Unsupported]
+Before: 0   After main: 0
+Matched              0
+Missing              0
+Changed              0
+Unexpected           0
+StillOnDuplicate     0
+Unsupported          1
+  Unsupported x1 
+    UNSUPPORTED DOCUMENT TYPE: retireorder
+FAIL
+
+TOTAL BEFORE: 2
+Matched              1
+Missing              1
+Changed              0
+Unexpected           1
+StillOnDuplicate     0
+Unsupported          3
+FetchError           0
+RESULT: FAILED

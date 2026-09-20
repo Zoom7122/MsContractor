@@ -43,27 +43,6 @@ public sealed record MoySkladDocumentDiscoveryResponse(
     IReadOnlyList<MoySkladDocumentReference> Documents,
     IReadOnlyList<MoySkladDocumentTypeCount> Counts);
 
-// This contract is deliberately read-only and exists for local merge diagnostics.
-// Authentication material is never part of the request or response.
-public sealed record MoySkladMergeVerificationSnapshotRequest(
-    IReadOnlyList<Guid>? CounterpartyIds);
-
-public sealed record MoySkladMergeVerificationSnapshotResponse(
-    IReadOnlyList<MoySkladMergeVerificationCounterparty> Counterparties,
-    IReadOnlyList<MoySkladMergeVerificationDocument> Documents,
-    IReadOnlyList<string> DocumentTypes);
-
-public sealed record MoySkladMergeVerificationCounterparty(
-    Guid CounterpartyId,
-    string RawJson);
-
-public sealed record MoySkladMergeVerificationDocument(
-    string DocumentType,
-    Guid DocumentId,
-    Guid CounterpartyId,
-    string RawJson,
-    IReadOnlyList<string> PositionRawJson);
-
 public sealed record MoySkladDocumentChangeCounterpartyRequest(
     Guid MainCounterpartyId,
     IReadOnlyList<MoySkladDocumentChangeItem>? Documents);

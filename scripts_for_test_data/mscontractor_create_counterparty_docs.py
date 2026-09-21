@@ -57,10 +57,13 @@ DEFAULT_DOCUMENTS_PER_TYPE = 1
 
 # Значения MS_COUNTERPARTY_COUNT, MS_DOCUMENTS_PER_TYPE, MS_COUNTERPARTY_NAME,
 # MS_COUNTERPARTY_PHONE,
-# MS_WRITE_REPORT_JSON, MS_DOCUMENT_TYPES и MS_DOCUMENT_TYPES_OPTIONAL задаются
-# в окружении.
+# MS_WRITE_REPORT_JSON, MS_DOCUMENT_TYPES, MS_DOCUMENT_TYPES_OPTIONAL,
+# MS_SALESRETURN_DOCUMENTS и MS_PURCHASERETURN_DOCUMENTS задаются в окружении.
 # Типы документов можно передать через MS_DOCUMENT_TYPES, через запятую или пробел:
 # MS_DOCUMENT_TYPES=customerorder,demand,invoiceout
+# Для сценариев возврата связанные документы задаются отдельно:
+# MS_SALESRETURN_DOCUMENTS=factureout,paymentout,cashout,loss,facturein
+# MS_PURCHASERETURN_DOCUMENTS=facturein,factureout,paymentin,cashin
 # Аргументы --docs, --stats и --all имеют более высокий приоритет.
 
 BASE_URL = os.getenv("MS_BASE_URL", "https://api.moysklad.ru/api/remap/1.2").rstrip("/")
@@ -103,6 +106,7 @@ ALL_DOCUMENT_TYPES = {
     "counterpartyadjustment",
     "facturein",
     "factureout",
+    "loss",
     "commissionreportin",
     "commissionreportout",
     "retaildemand",
@@ -119,6 +123,7 @@ PRODUCT_DOCUMENT_TYPES = {
     "purchaseorder",
     "salesreturn",
     "purchasereturn",
+    "loss",
     "retaildemand",
     "retailsalesreturn",
 }
@@ -126,6 +131,7 @@ PRODUCT_DOCUMENT_TYPES = {
 STORE_DOCUMENT_TYPES = {
     "demand",
     "supply",
+    "loss",
     "salesreturn",
     "purchasereturn",
     "retaildemand",
@@ -156,9 +162,20 @@ DEPENDENT_DOCUMENT_TYPES = {
     "retireorder",
 }
 
-# Зависимые документы создаются от реального документа-основания. Добавляем его
-# автоматически, чтобы `--docs salesreturn` не завершался пропуском из-за
-# отсутствующего demand.
+# Документы, которые можно создать в сценарии возврата. Связи между ними
+# настраиваются через MS_SALESRETURN_DOCUMENTS и MS_PURCHASERETURN_DOCUMENTS.
+RETURN_DOCUMENT_TARGETS = {
+    "salesreturn": {"facturein", "factureout", "paymentout", "cashout", "loss"},
+    "purchasereturn": {"facturein", "factureout", "paymentin", "cashin"},
+}
+RETURN_DOCUMENT_ENV = {
+    "salesreturn": "MS_SALESRETURN_DOCUMENTS",
+    "purchasereturn": "MS_PURCHASERETURN_DOCUMENTS",
+}
+
+# Фактические документы-основания для самих возвратов добавляются
+# автоматически, чтобы `--docs salesreturn` и `--docs purchasereturn` не
+# завершались пропуском из-за отсутствующего demand/supply.
 DOCUMENT_DEPENDENCIES = {
     "salesreturn": {"demand"},
     "purchasereturn": {"supply"},
@@ -169,9 +186,15 @@ DOCUMENT_DEPENDENCIES = {
 
 DOCUMENT_CREATION_ORDER = (
     "customerorder", "demand", "purchaseorder", "supply", "paymentin",
-    "paymentout", "cashin", "cashout", "retaildemand", "invoiceout",
+    "paymentout", "cashin", "cashout", "loss", "retaildemand", "invoiceout",
     "invoicein", "counterpartyadjustment", "commissionreportin",
     "commissionreportout", "salesreturn", "purchasereturn", "retailsalesreturn",
+    "factureout", "facturein", "retireorder",
+)
+
+DEPENDENT_DOCUMENT_CREATION_ORDER = (
+    "salesreturn", "purchasereturn", "retailsalesreturn",
+    "paymentin", "paymentout", "cashin", "cashout", "loss",
     "factureout", "facturein", "retireorder",
 )
 
@@ -196,6 +219,7 @@ DOCUMENT_TITLES = {
     "counterpartyadjustment": "Корректировка взаиморасчётов",
     "facturein": "Полученный счёт-фактура",
     "factureout": "Выданный счёт-фактура",
+    "loss": "Списание",
     "commissionreportin": "Полученный отчёт комиссионера",
     "commissionreportout": "Выданный отчёт комиссионера",
     "retaildemand": "Розничная продажа",
@@ -312,6 +336,48 @@ def write_report_json() -> bool:
     )
 
 
+def parse_document_type_list(raw_value: str, variable_name: str) -> Set[str]:
+    document_types = {
+        document_type.lower()
+        for document_type in raw_value.replace(",", " ").split()
+    }
+    unknown_types = document_types - ALL_DOCUMENT_TYPES
+    if unknown_types:
+        raise ValueError(
+            f"{variable_name} содержит неподдерживаемые типы: "
+            f"{', '.join(sorted(unknown_types))}"
+        )
+    return document_types
+
+
+def return_document_mapping() -> Dict[str, Set[str]]:
+    """Return configured documents to create for each return type."""
+    mapping: Dict[str, Set[str]] = {}
+
+    for return_type, variable_name in RETURN_DOCUMENT_ENV.items():
+        raw_value = os.getenv(variable_name)
+        if raw_value is None or not raw_value.strip():
+            continue
+
+        document_types = parse_document_type_list(raw_value, variable_name)
+        unsupported = document_types - RETURN_DOCUMENT_TARGETS[return_type]
+        if unsupported:
+            raise ValueError(
+                f"{variable_name} содержит документы, которые нельзя создать "
+                f"для {return_type}: {', '.join(sorted(unsupported))}"
+            )
+        mapping[return_type] = document_types
+
+    salesreturn_documents = mapping.get("salesreturn", set())
+    if "facturein" in salesreturn_documents and "paymentout" not in salesreturn_documents:
+        raise ValueError(
+            "MS_SALESRETURN_DOCUMENTS: facturein требует paymentout, "
+            "поскольку MoySklad не создает facturein на основании salesreturn"
+        )
+
+    return mapping
+
+
 def selected_document_types(args: argparse.Namespace) -> Set[str]:
     if args.all:
         return expand_document_dependencies(set(ALL_DOCUMENT_TYPES))
@@ -325,16 +391,7 @@ def selected_document_types(args: argparse.Namespace) -> Set[str]:
         if not raw_types.strip():
             return set()
 
-        document_types = {
-            document_type.lower()
-            for document_type in raw_types.replace(",", " ").split()
-        }
-        unknown_types = document_types - ALL_DOCUMENT_TYPES
-        if unknown_types:
-            raise ValueError(
-                "MS_DOCUMENT_TYPES содержит неподдерживаемые типы: "
-                f"{', '.join(sorted(unknown_types))}"
-            )
+        document_types = parse_document_type_list(raw_types, "MS_DOCUMENT_TYPES")
         if not document_types:
             raise ValueError("MS_DOCUMENT_TYPES не должен быть пустым")
     else:
@@ -342,16 +399,9 @@ def selected_document_types(args: argparse.Namespace) -> Set[str]:
 
     optional_types = os.getenv("MS_DOCUMENT_TYPES_OPTIONAL")
     if optional_types:
-        optional_document_types = {
-            document_type.lower()
-            for document_type in optional_types.replace(",", " ").split()
-        }
-        unknown_types = optional_document_types - ALL_DOCUMENT_TYPES
-        if unknown_types:
-            raise ValueError(
-                "MS_DOCUMENT_TYPES_OPTIONAL содержит неподдерживаемые типы: "
-                f"{', '.join(sorted(unknown_types))}"
-            )
+        optional_document_types = parse_document_type_list(
+            optional_types, "MS_DOCUMENT_TYPES_OPTIONAL"
+        )
         document_types.update(optional_document_types)
 
     return expand_document_dependencies(document_types)
@@ -359,9 +409,69 @@ def selected_document_types(args: argparse.Namespace) -> Set[str]:
 
 def expand_document_dependencies(document_types: Set[str]) -> Set[str]:
     expanded = set(document_types)
-    for document_type in document_types:
-        expanded.update(DOCUMENT_DEPENDENCIES.get(document_type, set()))
+    configured_returns = return_document_mapping()
+
+    changed = True
+    while changed:
+        changed = False
+        for document_type in tuple(expanded):
+            dependencies = DOCUMENT_DEPENDENCIES.get(document_type, set())
+            active_return_types = {
+                return_type
+                for return_type in configured_returns
+                if return_type in expanded
+            }
+            configured_target = any(
+                document_type in configured_returns[return_type]
+                for return_type in active_return_types
+            )
+            if configured_target and document_type in {"facturein", "factureout"}:
+                dependencies = set()
+
+            for dependency in dependencies:
+                if dependency not in expanded:
+                    expanded.add(dependency)
+                    changed = True
+
+            for return_type in active_return_types:
+                for target in configured_returns[return_type]:
+                    if target not in expanded:
+                        expanded.add(target)
+                        changed = True
     return expanded
+
+
+def dependent_document_types(selected: Set[str]) -> Set[str]:
+    configured_returns = return_document_mapping()
+    dependent = set(DEPENDENT_DOCUMENT_TYPES)
+    for return_type, document_types in configured_returns.items():
+        if return_type in selected:
+            dependent.update(document_types)
+    return dependent
+
+
+def dependent_document_jobs(
+    selected: Set[str],
+) -> list[Tuple[str, Optional[str]]]:
+    """Return (document type, return scenario) jobs in API-safe order."""
+    configured_returns = return_document_mapping()
+    jobs: list[Tuple[str, Optional[str]]] = []
+
+    for document_type in DEPENDENT_DOCUMENT_CREATION_ORDER:
+        if document_type not in selected:
+            continue
+
+        configured_return_types = [
+            return_type
+            for return_type, document_types in configured_returns.items()
+            if return_type in selected and document_type in document_types
+        ]
+        if configured_return_types:
+            jobs.extend((document_type, return_type) for return_type in configured_return_types)
+        elif document_type in DEPENDENT_DOCUMENT_TYPES:
+            jobs.append((document_type, None))
+
+    return jobs
 
 
 def print_document_types() -> None:
@@ -651,6 +761,24 @@ def product_doc(
     return payload
 
 
+def loss_doc(
+    run_id: str,
+    org: Dict[str, Any],
+    store: Dict[str, Any],
+    product: Dict[str, Any],
+    applicable: bool,
+) -> Dict[str, Any]:
+    """Build a write-off payload without unsupported counterparty fields."""
+    return {
+        "moment": now_moment(),
+        "applicable": applicable,
+        "organization": meta(org),
+        "store": meta(store),
+        "description": f"MSContractor test document. run={run_id}, type=loss",
+        "positions": [position(product, quantity=1, price=27000)],
+    }
+
+
 def money_doc(
     run_id: str,
     doc_type: str,
@@ -799,6 +927,23 @@ def retailsalesreturn_doc(source: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def financial_document_doc(
+    document_type: str,
+    source: Dict[str, Any],
+    expense_item: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build a payment/cash document from an operation source."""
+    template = api(
+        "PUT",
+        f"/entity/{document_type}/new",
+        {"operations": [meta(source)]},
+    )
+    payload = clean_read_only_fields(template, is_root=True)
+    if expense_item and document_type in EXPENSE_ITEM_DOCUMENT_TYPES:
+        payload["expenseItem"] = meta(expense_item)
+    return payload
+
+
 def facture_template_payload(document_type: str, source_type: str, source: Dict[str, Any]) -> Dict[str, Any]:
     source_fields = {
         "factureout": {
@@ -821,7 +966,7 @@ def choose_facture_source(
 ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
     priorities = {
         "factureout": ("demand", "paymentin", "cashin", "purchasereturn"),
-        "facturein": ("supply", "paymentout"),
+        "facturein": ("paymentout", "supply"),
     }
     for source_type in priorities[document_type]:
         source = created.get(source_type)
@@ -838,13 +983,55 @@ def choose_facture_source_at_index(
     """Choose the source for a repeated facture by its zero-based sequence."""
     priorities = {
         "factureout": ("demand", "paymentin", "cashin", "purchasereturn"),
-        "facturein": ("supply", "paymentout"),
+        "facturein": ("paymentout", "supply"),
     }
     for source_type in priorities[document_type]:
         sources = created.get(source_type, [])
         if document_number < len(sources) and sources[document_number] is not None:
             return source_type, sources[document_number]
     return None, None
+
+
+def created_document_at_index(
+    created: Dict[str, list[Optional[Dict[str, Any]]]],
+    document_type: str,
+    document_number: int,
+) -> Optional[Dict[str, Any]]:
+    documents = created.get(document_type, [])
+    if document_number >= len(documents):
+        return None
+    return documents[document_number]
+
+
+def choose_configured_return_source(
+    document_type: str,
+    return_type: str,
+    created: Dict[str, list[Optional[Dict[str, Any]]]],
+    document_number: int,
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """Choose the API-supported source for a return scenario target."""
+    source_types = {
+        "salesreturn": {
+            "facturein": "paymentout",
+            "factureout": "demand",
+            "paymentout": "salesreturn",
+            "cashout": "salesreturn",
+            "loss": None,
+        },
+        "purchasereturn": {
+            "facturein": "supply",
+            "factureout": "purchasereturn",
+            "paymentin": "purchasereturn",
+            "cashin": "purchasereturn",
+        },
+    }
+
+    source_type = source_types[return_type][document_type]
+    if source_type is None:
+        return None, None
+    return source_type, created_document_at_index(
+        created, source_type, document_number
+    )
 
 
 def facture_doc(document_type: str, source_type: str, source: Dict[str, Any]) -> Dict[str, Any]:
@@ -937,6 +1124,7 @@ def build_documents(
         ),
         "salesreturn": lambda: p("salesreturn", 1, 20000, need_store=True),
         "purchasereturn": lambda: p("purchasereturn", 1, 21000, need_store=True),
+        "loss": lambda: loss_doc(run_id, org, store, product, applicable),
         "counterpartyadjustment": lambda: simple_sum_doc(
             run_id, "counterpartyadjustment", org, cp, applicable, 22000
         ),
@@ -1032,7 +1220,7 @@ def verify_dependent_document(
         raise ValueError(f"МС вернул другой тип документа: {document.get('meta', {}).get('type')}")
     if not document.get("id"):
         raise ValueError("МС не вернул id созданного документа")
-    if not same_entity(document.get("agent", {}), cp):
+    if document_type != "loss" and not same_entity(document.get("agent", {}), cp):
         raise ValueError("контрагент созданного документа не совпадает с тестовым КА")
 
     if source_type and source:
@@ -1042,7 +1230,8 @@ def verify_dependent_document(
             "paymentin": ("payments",),
             "paymentout": ("payments",),
             "cashin": ("cashIns",),
-            "purchasereturn": ("returns",),
+            "purchasereturn": ("returns", "operations"),
+            "salesreturn": ("operations",),
         }
         related = False
         for relation_field in relation_fields.get(source_type, ()):
@@ -1306,8 +1495,14 @@ def main() -> int:
 
     print("\nСоздаю КА и документы...")
 
+    configured_dependent_types = dependent_document_types(selected)
+    dependent_jobs = dependent_document_jobs(selected)
+    primary_selected = selected - configured_dependent_types
+    total_document_types = len(primary_selected) + len(dependent_jobs)
     total_documents = (
-        len(selected) * documents_to_create_per_type * counterparties_to_create
+        total_document_types
+        * documents_to_create_per_type
+        * counterparties_to_create
     )
     document_index = 0
     for counterparty_index in range(1, counterparties_to_create + 1):
@@ -1337,7 +1532,6 @@ def main() -> int:
             commission_contract = create_commission_contract(cp_run_id, org, cp)
             print(f"Комиссионный договор: {commission_contract.get('name')}")
 
-        primary_selected = selected - DEPENDENT_DOCUMENT_TYPES
         documents = build_documents(
             primary_selected,
             cp_run_id,
@@ -1385,10 +1579,7 @@ def main() -> int:
                 created_by_type.setdefault(doc_type, []).append(None)
                 add_failed_document(report, cp, doc_type, payload, result)
 
-        for doc_type in DOCUMENT_CREATION_ORDER:
-            if doc_type not in selected or doc_type not in DEPENDENT_DOCUMENT_TYPES:
-                continue
-
+        for doc_type, return_type in dependent_jobs:
             for document_number in range(documents_to_create_per_type):
                 document_index += 1
                 print(
@@ -1400,7 +1591,34 @@ def main() -> int:
                 payload: Optional[Dict[str, Any]] = None
 
                 try:
-                    if doc_type == "salesreturn":
+                    configured_source_type = None
+                    configured_source = None
+                    if return_type:
+                        configured_source_type, configured_source = choose_configured_return_source(
+                            doc_type, return_type, created_by_type, document_number
+                        )
+                    if doc_type == "loss":
+                        if store is None or product is None:
+                            raise LookupError("для списания не найдены склад или товар")
+                        payload = loss_doc(run_id, org, store, product, applicable)
+                        source_type, source = None, None
+                    elif configured_source_type:
+                        source_type, source = configured_source_type, configured_source
+                        if not source:
+                            raise LookupError(
+                                f"не создано основание {source_type} для этого номера"
+                            )
+                        if doc_type in {"paymentin", "paymentout", "cashin", "cashout"}:
+                            payload = financial_document_doc(
+                                doc_type, source, expense_item
+                            )
+                        elif doc_type in {"factureout", "facturein"}:
+                            payload = facture_doc(doc_type, source_type, source)
+                        else:
+                            raise LookupError(
+                                f"неизвестная связь {source_type} для {doc_type}"
+                            )
+                    elif doc_type == "salesreturn":
                         source_type, source = "demand", (
                             created_by_type.get("demand", [])[document_number]
                             if document_number < len(created_by_type.get("demand", []))
@@ -1454,23 +1672,28 @@ def main() -> int:
                         doc_type, payload, cp, source_type, source
                     )
                     print(f"  OK: id={result.get('id')} name={result.get('name')}")
+                    created_by_type.setdefault(doc_type, []).append(result)
                     add_created_document(report, cp, doc_type, result)
                 except LookupError as exc:
                     print(f"  SKIPPED: {exc}")
+                    created_by_type.setdefault(doc_type, []).append(None)
                     add_skipped_document(report, doc_type, str(exc), cp)
                 except ApiError as exc:
                     if doc_type == "retireorder":
                         print("  SKIPPED: создание запрещено настройками МС")
+                        created_by_type.setdefault(doc_type, []).append(None)
                         add_skipped_document(report, doc_type, exc.body, cp)
                         continue
                     error = error_data("POST", f"/entity/{doc_type}", exc)
                     print(f"  FAILED: status={error.get('status')}")
                     print_error_details(error)
+                    created_by_type.setdefault(doc_type, []).append(None)
                     add_failed_document(report, cp, doc_type, payload, error)
                 except Exception as exc:
                     error = error_data("POST", f"/entity/{doc_type}", exc)
                     print(f"  FAILED: status={error.get('status')}")
                     print_error_details(error)
+                    created_by_type.setdefault(doc_type, []).append(None)
                     add_failed_document(report, cp, doc_type, payload, error)
 
     return finish_run(report, should_write_report)

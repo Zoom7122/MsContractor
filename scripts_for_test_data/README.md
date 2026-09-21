@@ -25,6 +25,19 @@ MS_DOCUMENTS_PER_TYPE=1000
 скрипт также добавляет `demand`, поэтому на один КА будет создано по 1000 `demand` и
 `salesreturn`.
 
+Документы, создаваемые в сценариях возвратов, задаются отдельно в `.env.test_data`:
+
+```dotenv
+MS_DOCUMENT_TYPES=salesreturn,purchasereturn
+MS_SALESRETURN_DOCUMENTS=factureout,paymentout,cashout,loss
+MS_PURCHASERETURN_DOCUMENTS=facturein,factureout,paymentin,cashin
+```
+
+Один тип можно указать в обоих списках — тогда он создаётся в обоих сценариях.
+`facturein` для `purchasereturn` создаётся на связанный `supply`, а для `salesreturn`
+допускается только через `paymentout`, поскольку прямой связи `facturein` с возвратом
+покупателя в API МойСклад нет.
+
 ## Удаление данных
 
 `mscontractor_delete_all_data.py` удаляет **все записи перечисленных ниже типов

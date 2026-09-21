@@ -73,6 +73,17 @@ class DependentDocumentPayloadTests(unittest.TestCase):
         self.assertEqual([1, 2, 3], [item["number"] for item in documents])
         self.assertEqual(["customerorder"] * 3, [item["type"] for item in documents])
 
+    def test_loss_payload_uses_organization_store_and_positions_without_agent(self) -> None:
+        organization = entity("organization", "org")
+        store = entity("store", "store")
+        product = entity("product", "product")
+        payload = ms_docs.loss_doc("run-1", organization, store, product, True)
+
+        self.assertEqual(payload["organization"], ms_docs.meta(organization))
+        self.assertEqual(payload["store"], ms_docs.meta(store))
+        self.assertNotIn("agent", payload)
+        self.assertEqual(payload["positions"][0]["assortment"], ms_docs.meta(product))
+
     def test_get_first_price_type_uses_company_settings_endpoint(self) -> None:
         price_type = entity("pricetype", "price-type-id")
 
@@ -89,7 +100,11 @@ class DependentDocumentPayloadTests(unittest.TestCase):
             stats=False,
         )
 
-        selected = ms_docs.selected_document_types(args)
+        with patch.dict(
+            ms_docs.os.environ,
+            {"MS_SALESRETURN_DOCUMENTS": "", "MS_PURCHASERETURN_DOCUMENTS": ""},
+        ):
+            selected = ms_docs.selected_document_types(args)
 
         self.assertEqual(
             {
@@ -98,6 +113,80 @@ class DependentDocumentPayloadTests(unittest.TestCase):
             },
             selected,
         )
+
+    def test_return_mapping_adds_configured_documents_and_sources(self) -> None:
+        args = argparse.Namespace(
+            all=False, docs=["salesreturn", "purchasereturn"], stats=False
+        )
+
+        with patch.dict(
+            ms_docs.os.environ,
+            {
+                "MS_SALESRETURN_DOCUMENTS": "factureout,paymentout,cashout,loss",
+                "MS_PURCHASERETURN_DOCUMENTS": "facturein,factureout,paymentin,cashin",
+            },
+        ):
+            selected = ms_docs.selected_document_types(args)
+
+        self.assertEqual(
+            {
+                "salesreturn", "purchasereturn", "demand", "supply",
+                "facturein", "factureout", "paymentout", "cashout", "loss",
+                "paymentin", "cashin",
+            },
+            selected,
+        )
+
+    def test_configured_financial_document_uses_return_operations(self) -> None:
+        purchasereturn = source("purchasereturn", "return-id")
+        template = {
+            "meta": {"href": "https://example.test/paymentin/new"},
+            "agent": purchasereturn["agent"],
+            "operations": [ms_docs.meta(purchasereturn)],
+        }
+
+        with patch.object(ms_docs, "api", return_value=template) as api_mock:
+            payload = ms_docs.financial_document_doc("paymentin", purchasereturn)
+
+        api_mock.assert_called_once_with(
+            "PUT",
+            "/entity/paymentin/new",
+            {"operations": [ms_docs.meta(purchasereturn)]},
+        )
+        self.assertEqual(payload["operations"], [ms_docs.meta(purchasereturn)])
+
+    def test_return_mapping_can_create_same_type_in_both_scenarios(self) -> None:
+        with patch.dict(
+            ms_docs.os.environ,
+            {
+                "MS_SALESRETURN_DOCUMENTS": "factureout,paymentout",
+                "MS_PURCHASERETURN_DOCUMENTS": "factureout,paymentin",
+            },
+        ):
+            jobs = ms_docs.dependent_document_jobs({
+                "salesreturn", "purchasereturn", "demand", "supply",
+                "factureout", "paymentout", "paymentin",
+            })
+
+        self.assertEqual(
+            jobs.count(("factureout", "salesreturn")), 1
+        )
+        self.assertEqual(
+            jobs.count(("factureout", "purchasereturn")), 1
+        )
+
+    def test_configured_return_source_uses_created_return_document(self) -> None:
+        purchasereturn = source("purchasereturn", "return-id")
+
+        source_type, selected = ms_docs.choose_configured_return_source(
+            "paymentin",
+            "purchasereturn",
+            {"purchasereturn": [purchasereturn]},
+            0,
+        )
+
+        self.assertEqual(source_type, "purchasereturn")
+        self.assertEqual(selected["id"], "return-id")
 
     def test_salesreturn_uses_demand_positions_without_read_only_fields(self) -> None:
         demand = source("demand", "demand-id")
@@ -139,7 +228,11 @@ class DependentDocumentPayloadTests(unittest.TestCase):
         self.assertEqual(selected["id"], "demand-id")
 
         source_type, selected = ms_docs.choose_facture_source(
-            "facturein", {"paymentout": source("paymentout", "payment-out-id")}
+            "facturein",
+            {
+                "supply": source("supply", "supply-id"),
+                "paymentout": source("paymentout", "payment-out-id"),
+            },
         )
         self.assertEqual(source_type, "paymentout")
         self.assertEqual(selected["id"], "payment-out-id")
@@ -159,6 +252,14 @@ class DependentDocumentPayloadTests(unittest.TestCase):
         self.assertNotIn("id", payload)
         self.assertNotIn("id", payload["positions"]["rows"][0])
         self.assertEqual(payload["demands"], [ms_docs.meta(demand)])
+
+    def test_facturein_uses_paymentout_relation(self) -> None:
+        paymentout = source("paymentout", "payment-out-id")
+
+        payload = ms_docs.facture_template_payload("facturein", "paymentout", paymentout)
+
+        self.assertEqual(payload["payments"], [ms_docs.meta(paymentout)])
+        self.assertNotIn("cashOuts", payload)
 
     def test_dependent_document_verification_expands_positions(self) -> None:
         demand = source("demand", "demand-id")

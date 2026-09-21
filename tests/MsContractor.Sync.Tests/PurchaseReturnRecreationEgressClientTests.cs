@@ -9,7 +9,7 @@ namespace MsContractor.Sync.Tests;
 public sealed class PurchaseReturnRecreationEgressClientTests
 {
     [Fact]
-    public async Task RecreateAsync_SendsPurchaseReturnsEndpointAndAccepts202WithoutBody()
+    public async Task RecreateAsync_SendsPurchaseReturnsEndpointAndReadsResponse()
     {
         var accountId = Guid.NewGuid();
         var mainCounterpartyId = Guid.NewGuid();
@@ -40,14 +40,18 @@ public sealed class PurchaseReturnRecreationEgressClientTests
                 var body = await request.Content!.ReadFromJsonAsync<PurchaseReturnRecreationRequest>();
                 Assert.Equal(mainCounterpartyId, body!.MainCounterpartyId);
                 Assert.Equal(purchaseReturnIds, body.PurchaseReturnIds);
-                return new HttpResponseMessage(HttpStatusCode.Accepted);
+                return new HttpResponseMessage(HttpStatusCode.Accepted)
+                {
+                    Content = JsonContent.Create(new PurchaseReturnRecreationResponse(
+                        [purchaseReturnIds[0]], [purchaseReturnIds[1]]))
+                };
             }))
             {
                 BaseAddress = new Uri("http://egress.test/")
             },
             configuration);
 
-        await client.RecreateAsync(
+        var response = await client.RecreateAsync(
             accountId,
             mainCounterpartyId,
             purchaseReturnIds,
@@ -56,6 +60,9 @@ public sealed class PurchaseReturnRecreationEgressClientTests
             userId,
             correlationId,
             CancellationToken.None);
+
+        Assert.Equal([purchaseReturnIds[0]], response.TransferredDocumentIds);
+        Assert.Equal([purchaseReturnIds[1]], response.SkippedDocumentIds);
     }
 
     private sealed class CallbackHandler(

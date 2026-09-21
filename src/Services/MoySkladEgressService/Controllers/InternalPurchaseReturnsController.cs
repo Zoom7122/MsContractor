@@ -22,7 +22,7 @@ public sealed class InternalPurchaseReturnsController : ControllerBase
     }
 
     [HttpPost("recreate")]
-    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType<PurchaseReturnRecreationResponse>(StatusCodes.Status202Accepted)]
     [ProducesResponseType<InternalErrorResponse>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<InternalErrorResponse>(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> RecreateAsync(
@@ -55,12 +55,23 @@ public sealed class InternalPurchaseReturnsController : ControllerBase
 
         try
         {
-            await _orchestrator.ExecuteAsync(
+            var result = await _orchestrator.ExecuteAsync(
                 accountId,
                 request.MainCounterpartyId,
                 request.PurchaseReturnIds,
                 cancellationToken);
-            return Accepted();
+            var response = new PurchaseReturnRecreationResponse(
+                result.Documents
+                    .Where(document => document.NewDocumentId is not null)
+                    .Select(document => document.SourceDocumentId)
+                    .Distinct()
+                    .ToArray(),
+                result.Documents
+                    .Where(document => document.NewDocumentId is null)
+                    .Select(document => document.SourceDocumentId)
+                    .Distinct()
+                    .ToArray());
+            return Accepted(response);
         }
         catch (EgressException exception)
         {

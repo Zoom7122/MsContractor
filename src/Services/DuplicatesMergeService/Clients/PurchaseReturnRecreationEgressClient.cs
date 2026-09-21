@@ -6,7 +6,7 @@ namespace MsContractor.DuplicatesMergeService.Clients;
 
 public interface IPurchaseReturnRecreationEgressClient
 {
-    Task RecreateAsync(
+    Task<PurchaseReturnRecreationResponse> RecreateAsync(
         Guid accountId,
         Guid mainCounterpartyId,
         IReadOnlyList<Guid> purchaseReturnIds,
@@ -21,7 +21,7 @@ public sealed class PurchaseReturnRecreationEgressClient(
     HttpClient httpClient,
     IConfiguration configuration) : IPurchaseReturnRecreationEgressClient
 {
-    public async Task RecreateAsync(
+    public async Task<PurchaseReturnRecreationResponse> RecreateAsync(
         Guid accountId,
         Guid mainCounterpartyId,
         IReadOnlyList<Guid> purchaseReturnIds,
@@ -75,23 +75,39 @@ public sealed class PurchaseReturnRecreationEgressClient(
 
         using (response)
         {
-            if (response.IsSuccessStatusCode)
-                return;
+            if (!response.IsSuccessStatusCode)
+            {
+                InternalErrorResponse? error = null;
+                try
+                {
+                    error = await response.Content.ReadFromJsonAsync<InternalErrorResponse>(cancellationToken);
+                }
+                catch (Exception exception) when (exception is System.Text.Json.JsonException or NotSupportedException)
+                {
+                    // Use a stable fallback for an untrusted Egress response.
+                }
 
-            InternalErrorResponse? error = null;
+                throw new MergeEgressException(
+                    error?.Code ?? "EGRESS_UNAVAILABLE",
+                    error?.Message ?? "MoySklad Egress Service returned an error.",
+                    (int)response.StatusCode);
+            }
+
             try
             {
-                error = await response.Content.ReadFromJsonAsync<InternalErrorResponse>(cancellationToken);
+                return await response.Content.ReadFromJsonAsync<PurchaseReturnRecreationResponse>(cancellationToken)
+                    ?? throw new MergeEgressException(
+                        "EGRESS_INVALID_RESPONSE",
+                        "MoySklad Egress Service returned an empty purchasereturn recreation response.",
+                        502);
             }
-            catch (Exception exception) when (exception is System.Text.Json.JsonException or NotSupportedException)
+            catch (System.Text.Json.JsonException)
             {
-                // Use a stable fallback for an untrusted Egress response.
+                throw new MergeEgressException(
+                    "EGRESS_INVALID_RESPONSE",
+                    "MoySklad Egress Service returned an invalid purchasereturn recreation response.",
+                    502);
             }
-
-            throw new MergeEgressException(
-                error?.Code ?? "EGRESS_UNAVAILABLE",
-                error?.Message ?? "MoySklad Egress Service returned an error.",
-                (int)response.StatusCode);
         }
     }
 }

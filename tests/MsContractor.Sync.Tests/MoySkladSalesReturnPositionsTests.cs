@@ -115,6 +115,35 @@ public sealed class MoySkladSalesReturnPositionsTests
         Assert.Equal("{\"version\":2}", saved.RawJson);
     }
 
+    [Fact]
+    public async Task Repository_GetRequiredAsync_AllowsSalesReturnWithoutRawPositions()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<EgressDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var dbContext = new EgressDbContext(options);
+        await dbContext.Database.EnsureCreatedAsync();
+        var repository = new SalesReturnPositionRawDataRepository(dbContext);
+        var accountId = Guid.NewGuid();
+        var salesReturnId = Guid.NewGuid();
+        dbContext.SalesReturnRawData.Add(new SalesReturnRawData
+        {
+            AccountId = accountId,
+            DocumentId = salesReturnId,
+            RawJson = "{\"id\":\"document\"}"
+        });
+        await dbContext.SaveChangesAsync();
+
+        var result = await repository.GetRequiredAsync(
+            accountId, [salesReturnId], CancellationToken.None);
+
+        var positions = Assert.Single(result);
+        Assert.Equal(salesReturnId, positions.Key);
+        Assert.Empty(positions.Value);
+    }
+
     private static MoySkladSalesReturnPositionsGateway CreateGateway(
         Func<HttpRequestMessage, HttpResponseMessage> callback)
     {

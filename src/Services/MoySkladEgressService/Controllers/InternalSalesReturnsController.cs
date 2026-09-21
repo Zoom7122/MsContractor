@@ -11,11 +11,11 @@ namespace MsContractor.MoySkladEgressService.Controllers;
 [Route("internal/accounts/{accountId:guid}/documents/salesreturn")]
 public sealed class InternalSalesReturnsController : ControllerBase
 {
-    private readonly ISalesReturnRecreationService _recreationService;
+    private readonly ISalesReturnRecreationOrchestrator _recreationService;
     private readonly IConfiguration _configuration;
 
     public InternalSalesReturnsController(
-        ISalesReturnRecreationService recreationService,
+        ISalesReturnRecreationOrchestrator recreationService,
         IConfiguration configuration)
     {
         _recreationService = recreationService;

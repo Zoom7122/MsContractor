@@ -90,6 +90,14 @@ builder.Services.AddHttpClient<IMoySkladSalesReturnGateway, MoySkladSalesReturnG
 {
     AutomaticDecompression = DecompressionMethods.GZip
 });
+builder.Services.AddHttpClient<IMoySkladSalesReturnRelationsGateway, MoySkladSalesReturnRelationsGateway>(client =>
+{
+    client.BaseAddress = egressOptions.JsonApiBaseUrl;
+    client.Timeout = TimeSpan.FromSeconds(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.GZip
+});
 builder.Services.AddHttpClient<IMoySkladSalesReturnPositionsGateway, MoySkladSalesReturnPositionsGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
@@ -136,10 +144,12 @@ builder.Services.AddScoped<IMoySkladDocumentAgentAndContractService, MoySkladDoc
 builder.Services.AddScoped<ISalesReturnRawDataRepository, SalesReturnRawDataRepository>();
 builder.Services.AddScoped<ISalesReturnPositionRawDataRepository, SalesReturnPositionRawDataRepository>();
 builder.Services.AddScoped<ISalesReturnRecreationOperationRepository, SalesReturnRecreationOperationRepository>();
+builder.Services.AddScoped<ISalesReturnRelationsRepository, SalesReturnRelationsRepository>();
 builder.Services.AddScoped<IMoySkladSalesReturnServiceGetData, MoySkladSalesReturnServiceGetData>();
 builder.Services.AddScoped<IMoySkladSalesReturnPositionsService, MoySkladSalesReturnPositionsService>();
 builder.Services.AddScoped<SalesReturnRecreationPayloadBuilder>();
-builder.Services.AddScoped<ISalesReturnRecreationService, SalesReturnRecreationService>();
+builder.Services.AddScoped<ISalesReturnRelationsService, SalesReturnRelationsService>();
+builder.Services.AddScoped<ISalesReturnRecreationOrchestrator, SalesReturnRecreationOrchestrator>();
 builder.Services.AddScoped<PurchaseReturnCreateMapper>();
 builder.Services.AddScoped<IPurchaseReturnPreparationRepository, PurchaseReturnPreparationRepository>();
 builder.Services.AddScoped<IPurchaseReturnPreparationService, PurchaseReturnPreparationService>();

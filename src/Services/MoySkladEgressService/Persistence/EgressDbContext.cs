@@ -18,6 +18,14 @@ public sealed class EgressDbContext : DbContext
 
     public DbSet<SalesReturnRecreationItem> SalesReturnRecreationItems => Set<SalesReturnRecreationItem>();
 
+    public DbSet<SalesReturnRelationsSnapshotRecord> SalesReturnRelationsSnapshots => Set<SalesReturnRelationsSnapshotRecord>();
+
+    public DbSet<PaymentOutRelationSnapshotRecord> PaymentOutRelationSnapshots => Set<PaymentOutRelationSnapshotRecord>();
+
+    public DbSet<CashOutRelationSnapshotRecord> CashOutRelationSnapshots => Set<CashOutRelationSnapshotRecord>();
+
+    public DbSet<LossRelationSnapshotRecord> LossRelationSnapshots => Set<LossRelationSnapshotRecord>();
+
     public DbSet<PurchaseReturnRawData> PurchaseReturnRawData => Set<PurchaseReturnRawData>();
 
     public DbSet<PurchaseReturnPositionRawData> PurchaseReturnPositionRawData => Set<PurchaseReturnPositionRawData>();
@@ -66,6 +74,93 @@ public sealed class EgressDbContext : DbContext
             .HasForeignKey(item => new { item.AccountId, item.SourceDocumentId })
             .HasPrincipalKey(item => new { item.AccountId, item.DocumentId })
             .OnDelete(DeleteBehavior.Restrict);
+
+        var relationsSnapshot = modelBuilder.Entity<SalesReturnRelationsSnapshotRecord>();
+        relationsSnapshot.ToTable("salesreturn_relation_snapshots");
+        relationsSnapshot.HasKey(item => new
+        {
+            item.AccountId,
+            item.OperationId,
+            item.SourceSalesReturnId
+        });
+        relationsSnapshot.HasIndex(item => new { item.AccountId, item.OperationId });
+        relationsSnapshot.HasOne<SalesReturnRecreationItem>()
+            .WithMany()
+            .HasForeignKey(item => new
+            {
+                item.AccountId,
+                item.OperationId,
+                item.SourceSalesReturnId
+            })
+            .HasPrincipalKey(item => new
+            {
+                item.AccountId,
+                item.OperationId,
+                item.SourceDocumentId
+            })
+            .OnDelete(DeleteBehavior.Cascade);
+
+        var paymentOutSnapshot = modelBuilder.Entity<PaymentOutRelationSnapshotRecord>();
+        paymentOutSnapshot.ToTable("salesreturn_paymentout_relations");
+        paymentOutSnapshot.HasKey(item => new
+        {
+            item.AccountId,
+            item.OperationId,
+            item.SourceSalesReturnId,
+            item.DocumentId
+        });
+        paymentOutSnapshot.Property(item => item.OperationsBeforeJson).HasColumnType("jsonb");
+        paymentOutSnapshot.Property(item => item.LinkedSum).HasColumnType("numeric");
+        paymentOutSnapshot.HasOne<SalesReturnRelationsSnapshotRecord>()
+            .WithMany(item => item.PaymentOuts)
+            .HasForeignKey(item => new
+            {
+                item.AccountId,
+                item.OperationId,
+                item.SourceSalesReturnId
+            })
+            .OnDelete(DeleteBehavior.Cascade);
+
+        var cashOutSnapshot = modelBuilder.Entity<CashOutRelationSnapshotRecord>();
+        cashOutSnapshot.ToTable("salesreturn_cashout_relations");
+        cashOutSnapshot.HasKey(item => new
+        {
+            item.AccountId,
+            item.OperationId,
+            item.SourceSalesReturnId,
+            item.DocumentId
+        });
+        cashOutSnapshot.Property(item => item.OperationsBeforeJson).HasColumnType("jsonb");
+        cashOutSnapshot.Property(item => item.LinkedSum).HasColumnType("numeric");
+        cashOutSnapshot.HasOne<SalesReturnRelationsSnapshotRecord>()
+            .WithMany(item => item.CashOuts)
+            .HasForeignKey(item => new
+            {
+                item.AccountId,
+                item.OperationId,
+                item.SourceSalesReturnId
+            })
+            .OnDelete(DeleteBehavior.Cascade);
+
+        var lossSnapshot = modelBuilder.Entity<LossRelationSnapshotRecord>();
+        lossSnapshot.ToTable("salesreturn_loss_relations");
+        lossSnapshot.HasKey(item => new
+        {
+            item.AccountId,
+            item.OperationId,
+            item.SourceSalesReturnId,
+            item.DocumentId
+        });
+        lossSnapshot.Property(item => item.SalesReturnBeforeJson).HasColumnType("jsonb");
+        lossSnapshot.HasOne<SalesReturnRelationsSnapshotRecord>()
+            .WithMany(item => item.Losses)
+            .HasForeignKey(item => new
+            {
+                item.AccountId,
+                item.OperationId,
+                item.SourceSalesReturnId
+            })
+            .OnDelete(DeleteBehavior.Cascade);
 
         var purchaseReturnRawData = modelBuilder.Entity<PurchaseReturnRawData>();
         purchaseReturnRawData.ToTable("purchasereturn_raw_data");

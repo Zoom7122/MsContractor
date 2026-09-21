@@ -88,30 +88,44 @@ public sealed class PurchaseReturnPreparationService : IPurchaseReturnPreparatio
         }
 
         var supplyByDocument = new Dictionary<Guid, Guid>();
+        var invalidSupplyDocuments = new HashSet<Guid>();
         foreach (var item in documents)
         {
             if (!positionsByDocument.ContainsKey(item.Key))
                 continue;
 
-            if (!TryReadSupplyId(item.Value, out var supplyId))
+            if (!TryReadOptionalSupplyId(item.Value, out var supplyId))
             {
+                invalidSupplyDocuments.Add(item.Key);
                 skipped.Add(new PurchaseReturnSkippedDocument(
                     item.Key, "purchasereturn has no valid supply reference."));
                 continue;
             }
 
-            supplyByDocument[item.Key] = supplyId;
+            if (supplyId is Guid value)
+                supplyByDocument[item.Key] = value;
         }
 
         var supplyIds = supplyByDocument.Values.Distinct().ToArray();
-        var supplies = await _supplies.GetAsync(
-            accountId, Guid.Empty, correlationId, supplyIds, cancellationToken);
+        var supplies = supplyIds.Length == 0
+            ? new Dictionary<Guid, MoySkladSupplyReference>()
+            : await _supplies.GetAsync(
+                accountId, Guid.Empty, correlationId, supplyIds, cancellationToken);
         var ready = new List<Guid>();
 
         foreach (var purchaseReturnId in purchaseReturnIds)
         {
-            if (!supplyByDocument.TryGetValue(purchaseReturnId, out var supplyId))
+            if (!positionsByDocument.ContainsKey(purchaseReturnId))
                 continue;
+
+            if (invalidSupplyDocuments.Contains(purchaseReturnId))
+                continue;
+
+            if (!supplyByDocument.TryGetValue(purchaseReturnId, out var supplyId))
+            {
+                ready.Add(purchaseReturnId);
+                continue;
+            }
 
             if (!supplies.TryGetValue(supplyId, out var supply))
             {
@@ -186,14 +200,17 @@ public sealed class PurchaseReturnPreparationService : IPurchaseReturnPreparatio
         return positions;
     }
 
-    private static bool TryReadSupplyId(string rawJson, out Guid supplyId)
+    private static bool TryReadOptionalSupplyId(string rawJson, out Guid? supplyId)
     {
-        supplyId = Guid.Empty;
+        supplyId = null;
         try
         {
             using var document = JsonDocument.Parse(rawJson);
             if (!document.RootElement.TryGetProperty("supply", out var supply) ||
-                supply.ValueKind != JsonValueKind.Object ||
+                supply.ValueKind == JsonValueKind.Null)
+                return true;
+
+            if (supply.ValueKind != JsonValueKind.Object ||
                 !supply.TryGetProperty("meta", out var meta) ||
                 meta.ValueKind != JsonValueKind.Object ||
                 !meta.TryGetProperty("href", out var href) ||
@@ -203,11 +220,15 @@ public sealed class PurchaseReturnPreparationService : IPurchaseReturnPreparatio
 
             var segments = uri.AbsolutePath
                 .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            return segments.Length >= 3 &&
-                   string.Equals(segments[^3], "entity", StringComparison.Ordinal) &&
-                   string.Equals(segments[^2], "supply", StringComparison.Ordinal) &&
-                   Guid.TryParse(segments[^1], out supplyId) &&
-                   supplyId != Guid.Empty;
+            if (segments.Length < 3 ||
+                !string.Equals(segments[^3], "entity", StringComparison.Ordinal) ||
+                !string.Equals(segments[^2], "supply", StringComparison.Ordinal) ||
+                !Guid.TryParse(segments[^1], out var parsedSupplyId) ||
+                parsedSupplyId == Guid.Empty)
+                return false;
+
+            supplyId = parsedSupplyId;
+            return true;
         }
         catch (JsonException)
         {

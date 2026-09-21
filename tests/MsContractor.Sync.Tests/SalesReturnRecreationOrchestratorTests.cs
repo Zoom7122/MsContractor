@@ -7,7 +7,7 @@ using MsContractor.MoySkladEgressService.Services.Documents.Salesreturn;
 
 namespace MsContractor.Sync.Tests;
 
-public sealed class SalesReturnRecreationServiceTests
+public sealed class SalesReturnRecreationOrchestratorTests
 {
     [Fact]
     public async Task RecreateAsync_DeletesAllBatchesBeforeCreatingNewBatches()
@@ -97,14 +97,56 @@ public sealed class SalesReturnRecreationServiceTests
     }
 
     [Fact]
-    public async Task RecreateAsync_DoesNotCallGatewayWhenSavedPositionsAreMissing()
+    public async Task RecreateAsync_AllowsSalesReturnWithoutSavedPositions()
     {
         var sourceId = Guid.NewGuid();
         var gateway = new RecordingGateway([]);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => Service(
+        var result = await Service(
             new Dictionary<Guid, string> { [sourceId] = SourceDocument(sourceId) },
-            new Dictionary<Guid, IReadOnlyDictionary<Guid, string>>(),
+            new Dictionary<Guid, IReadOnlyDictionary<Guid, string>>
+            {
+                [sourceId] = new Dictionary<Guid, string>()
+            },
+            new RecordingOperationsRepository(),
+            gateway).RecreateAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
+
+        Assert.Equal("Completed", Assert.Single(result.Documents).Status);
+        Assert.Equal(["delete:1", "create:1"], gateway.Writes);
+        var payload = JsonNode.Parse(Assert.Single(gateway.NewPayloads))!.AsObject();
+        Assert.Empty(payload["positions"]!.AsArray());
+    }
+
+    [Fact]
+    public async Task RecreateAsync_AllowsSalesReturnWithoutDemand()
+    {
+        var sourceId = Guid.NewGuid();
+        var source = JsonNode.Parse(SourceDocument(sourceId))!.AsObject();
+        source.Remove("demand");
+        var gateway = new RecordingGateway([]);
+
+        var result = await Service(
+            new Dictionary<Guid, string> { [sourceId] = source.ToJsonString() },
+            new Dictionary<Guid, IReadOnlyDictionary<Guid, string>> { [sourceId] = Positions(sourceId) },
+            new RecordingOperationsRepository(),
+            gateway).RecreateAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
+
+        Assert.Equal("Completed", Assert.Single(result.Documents).Status);
+        var payload = JsonNode.Parse(Assert.Single(gateway.NewPayloads))!.AsObject();
+        Assert.Null(payload["demand"]);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_RejectsMalformedDemandWhenPresent()
+    {
+        var sourceId = Guid.NewGuid();
+        var source = JsonNode.Parse(SourceDocument(sourceId))!.AsObject();
+        source["demand"] = "not-a-reference";
+        var gateway = new RecordingGateway([]);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Service(
+            new Dictionary<Guid, string> { [sourceId] = source.ToJsonString() },
+            new Dictionary<Guid, IReadOnlyDictionary<Guid, string>> { [sourceId] = Positions(sourceId) },
             new RecordingOperationsRepository(),
             gateway).RecreateAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None));
 
@@ -128,6 +170,33 @@ public sealed class SalesReturnRecreationServiceTests
             Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
 
         Assert.Equal(["load-documents", "load-positions", "delete:1", "create:1"], events);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_DeletesOnlySalesReturnsWithDetachedRelations()
+    {
+        var skippedId = Guid.NewGuid();
+        var readyId = Guid.NewGuid();
+        var gateway = new RecordingGateway([new MoySkladSalesReturnAgentAccount(Guid.NewGuid(), true)]);
+        var result = await Service(
+            new Dictionary<Guid, string>
+            {
+                [skippedId] = SourceDocument(skippedId),
+                [readyId] = SourceDocument(readyId)
+            },
+            new Dictionary<Guid, IReadOnlyDictionary<Guid, string>>
+            {
+                [skippedId] = Positions(skippedId),
+                [readyId] = Positions(readyId)
+            },
+            new RecordingOperationsRepository(),
+            gateway,
+            relations: new SelectiveRelationsService(skippedId)).RecreateAsync(
+            Guid.NewGuid(), Guid.NewGuid(), [skippedId, readyId], CancellationToken.None);
+
+        Assert.Equal(["delete:1", "create:1"], gateway.Writes);
+        Assert.Equal("Failed", result.Documents.Single(document => document.SourceDocumentId == skippedId).Status);
+        Assert.Equal("Completed", result.Documents.Single(document => document.SourceDocumentId == readyId).Status);
     }
 
     [Fact]
@@ -167,13 +236,14 @@ public sealed class SalesReturnRecreationServiceTests
         Assert.Empty(gateway.Writes);
     }
 
-    private static SalesReturnRecreationService Service(
+    private static SalesReturnRecreationOrchestrator Service(
         IReadOnlyDictionary<Guid, string> documents,
         IReadOnlyDictionary<Guid, IReadOnlyDictionary<Guid, string>> positions,
         RecordingOperationsRepository operations,
         RecordingGateway gateway,
         IMoySkladSalesReturnServiceGetData? documentLoader = null,
-        IMoySkladSalesReturnPositionsService? positionsLoader = null) => new(
+        IMoySkladSalesReturnPositionsService? positionsLoader = null,
+        ISalesReturnRelationsService? relations = null) => new(
         new RawDataRepository(documents),
         new PositionsRepository(positions),
         documentLoader ?? new RecordingDocumentLoader(),
@@ -181,7 +251,8 @@ public sealed class SalesReturnRecreationServiceTests
         operations,
         gateway,
         new SalesReturnRecreationPayloadBuilder(),
-        TimeProvider.System);
+        TimeProvider.System,
+        relations ?? new NoOpRelationsService());
 
     private static string SourceDocument(Guid documentId)
     {
@@ -395,6 +466,72 @@ public sealed class SalesReturnRecreationServiceTests
                 return new MoySkladSalesReturnBatchCreateResult(
                     item.SourceDocumentId, item.SyncId, Guid.NewGuid(), response);
             }).ToArray());
+        }
+    }
+
+    private sealed class SelectiveRelationsService(Guid skippedId) : ISalesReturnRelationsService
+    {
+        public Task PrepareAndDetachAsync(
+            SalesReturnRecreationOperation operation,
+            string correlationId,
+            CancellationToken cancellationToken)
+        {
+            foreach (var item in operation.Items)
+            {
+                if (item.SourceDocumentId == skippedId)
+                {
+                    item.RelationsStatus = "Skipped";
+                    item.Stage = "Skipped";
+                    item.ErrorCode = "RELATIONS_SKIPPED";
+                    item.Error = "relation failed";
+                }
+                else
+                {
+                    item.RelationsStatus = "RelationsDetached";
+                }
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task ReattachAsync(
+            SalesReturnRecreationOperation operation,
+            string correlationId,
+            CancellationToken cancellationToken)
+        {
+            foreach (var item in operation.Items.Where(item => item.Stage == "Created"))
+            {
+                item.RelationsStatus = "RelationsReattached";
+                item.Stage = "Completed";
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class NoOpRelationsService : ISalesReturnRelationsService
+    {
+        public Task PrepareAndDetachAsync(
+            SalesReturnRecreationOperation operation,
+            string correlationId,
+            CancellationToken cancellationToken)
+        {
+            foreach (var item in operation.Items)
+                item.RelationsStatus = "RelationsDetached";
+            return Task.CompletedTask;
+        }
+
+        public Task ReattachAsync(
+            SalesReturnRecreationOperation operation,
+            string correlationId,
+            CancellationToken cancellationToken)
+        {
+            foreach (var item in operation.Items.Where(item => item.Stage == "Created"))
+            {
+                item.RelationsStatus = "RelationsReattached";
+                item.Stage = "Completed";
+            }
+            return Task.CompletedTask;
         }
     }
 }

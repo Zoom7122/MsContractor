@@ -199,6 +199,9 @@ public sealed class PurchaseReturnVerifier : IPurchaseReturnVerifier
 
             if (!newDocument.TryGetPropertyValue(oldProperty.Key, out var actual))
             {
+                if (oldProperty.Key == "supply" && !HasMeaningfulValue(oldProperty.Value))
+                    continue;
+
                 fieldMismatches.Add(new PurchaseReturnFieldMismatch(
                     oldProperty.Key,
                     Canonicalize(oldProperty.Value),

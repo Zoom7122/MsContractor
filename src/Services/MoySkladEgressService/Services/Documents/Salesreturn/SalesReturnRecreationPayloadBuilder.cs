@@ -41,9 +41,8 @@ public sealed class SalesReturnRecreationPayloadBuilder
         _ = RequireReference(source, "agent");
         _ = RequireReference(source, "organization");
         _ = RequireReference(source, "store");
-        _ = RequireReference(source, "demand");
-        if (positions.Count == 0)
-            throw new InvalidOperationException("A salesreturn requires at least one saved position.");
+        if (source.TryGetPropertyValue("demand", out var demand) && demand is not null)
+            _ = RequireReference(source, "demand");
     }
 
     private JsonObject BuildBase(string sourceRawJson, IReadOnlyDictionary<Guid, string> positions, Guid syncId)

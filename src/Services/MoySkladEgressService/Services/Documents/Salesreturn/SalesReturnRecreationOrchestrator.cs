@@ -5,7 +5,7 @@ using MsContractor.MoySkladEgressService.Repositories;
 
 namespace MsContractor.MoySkladEgressService.Services.Documents.Salesreturn;
 
-public interface ISalesReturnRecreationService
+public interface ISalesReturnRecreationOrchestrator
 {
     Task<SalesReturnRecreationResult> RecreateAsync(
         Guid accountId,
@@ -14,7 +14,7 @@ public interface ISalesReturnRecreationService
         CancellationToken cancellationToken);
 }
 
-public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
+public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOrchestrator
 {
     private readonly ISalesReturnRawDataRepository _documents;
     private readonly ISalesReturnPositionRawDataRepository _positions;
@@ -24,8 +24,9 @@ public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
     private readonly IMoySkladSalesReturnGateway _gateway;
     private readonly SalesReturnRecreationPayloadBuilder _payloads;
     private readonly TimeProvider _timeProvider;
+    private readonly ISalesReturnRelationsService _relations;
 
-    public SalesReturnRecreationService(
+    public SalesReturnRecreationOrchestrator(
         ISalesReturnRawDataRepository documents,
         ISalesReturnPositionRawDataRepository positions,
         IMoySkladSalesReturnServiceGetData sourceDataLoader,
@@ -33,7 +34,8 @@ public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
         ISalesReturnRecreationOperationRepository operations,
         IMoySkladSalesReturnGateway gateway,
         SalesReturnRecreationPayloadBuilder payloads,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        ISalesReturnRelationsService relations)
     {
         _documents = documents;
         _positions = positions;
@@ -43,6 +45,7 @@ public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
         _gateway = gateway;
         _payloads = payloads;
         _timeProvider = timeProvider;
+        _relations = relations;
     }
 
     public async Task<SalesReturnRecreationResult> RecreateAsync(
@@ -96,8 +99,10 @@ public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
         }
 
         await _operations.CreateAsync(operation, cancellationToken);
+        await _relations.PrepareAndDetachAsync(operation, correlationId, cancellationToken);
         await DeleteSourcesAsync(operation, correlationId, cancellationToken);
         await CreateNewDocumentsAsync(operation, correlationId, cancellationToken);
+        await _relations.ReattachAsync(operation, correlationId, cancellationToken);
 
         operation.Status = operation.Items.All(item => item.Stage == "Completed")
             ? "Completed"
@@ -131,7 +136,10 @@ public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
         string correlationId,
         CancellationToken cancellationToken)
     {
-        foreach (var chunk in operation.Items.Chunk(BatchSize))
+        var deletableItems = operation.Items
+            .Where(item => item.Stage == "Prepared" && item.RelationsStatus == "RelationsDetached")
+            .ToArray();
+        foreach (var chunk in deletableItems.Chunk(BatchSize))
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
@@ -189,7 +197,7 @@ public sealed class SalesReturnRecreationService : ISalesReturnRecreationService
                     }
                     else
                     {
-                        item.Stage = "Completed";
+                        item.Stage = "Created";
                         item.ErrorCode = null;
                         item.Error = null;
                     }

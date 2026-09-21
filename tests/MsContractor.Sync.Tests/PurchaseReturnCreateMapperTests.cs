@@ -77,15 +77,39 @@ public sealed class PurchaseReturnCreateMapperTests
     }
 
     [Fact]
-    public void BuildPayload_RequiresOrganizationStoreSupplyAndPositions()
+    public void BuildPayload_RequiresOrganizationStoreAndPositions()
     {
         var mapper = new PurchaseReturnCreateMapper(Options.Create(new EgressOptions()));
         var exception = Assert.Throws<InvalidOperationException>(() => mapper.BuildPayload(
-            "{\"organization\":{},\"store\":{},\"supply\":{}}",
+            "{\"organization\":{},\"store\":{}}",
             new Dictionary<Guid, string>(),
             Guid.NewGuid()));
 
         Assert.NotEmpty(exception.Message);
+    }
+
+    [Fact]
+    public void BuildPayload_OmitsMissingSupply()
+    {
+        var mapper = new PurchaseReturnCreateMapper(Options.Create(new EgressOptions
+        {
+            JsonApiBaseUrl = new Uri("https://api.example.test/api/remap/1.2/")
+        }));
+
+        var payload = JsonNode.Parse(mapper.BuildPayload(
+            $$"""
+            {
+              "organization": { "meta": { "href": "https://old/entity/organization/{{Guid.NewGuid():D}}", "type": "organization" } },
+              "store": { "meta": { "href": "https://old/entity/store/{{Guid.NewGuid():D}}", "type": "store" } }
+            }
+            """,
+            new Dictionary<Guid, string>
+            {
+                [Guid.NewGuid()] = "{\"assortment\":{\"meta\":{\"href\":\"https://old/entity/product/00000000-0000-0000-0000-000000000001\",\"type\":\"product\"}}}"
+            },
+            Guid.NewGuid()));
+
+        Assert.Null(payload!["supply"]);
     }
 
     [Fact]

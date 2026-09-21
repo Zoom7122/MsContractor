@@ -87,7 +87,7 @@ public sealed class InternalSalesReturnsControllerTests
         };
     }
 
-    private sealed class CapturingRecreationService : ISalesReturnRecreationService
+    private sealed class CapturingRecreationService : ISalesReturnRecreationOrchestrator
     {
         public Guid? AccountId { get; private set; }
         public Guid? MainAgentId { get; private set; }

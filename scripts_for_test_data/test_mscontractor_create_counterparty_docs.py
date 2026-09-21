@@ -82,7 +82,20 @@ class DependentDocumentPayloadTests(unittest.TestCase):
         self.assertEqual(payload["organization"], ms_docs.meta(organization))
         self.assertEqual(payload["store"], ms_docs.meta(store))
         self.assertNotIn("agent", payload)
+        self.assertNotIn("salesReturn", payload)
         self.assertEqual(payload["positions"][0]["assortment"], ms_docs.meta(product))
+
+    def test_loss_payload_links_to_salesreturn(self) -> None:
+        organization = entity("organization", "org")
+        store = entity("store", "store")
+        product = entity("product", "product")
+        sales_return = entity("salesreturn", "return-id")
+
+        payload = ms_docs.loss_doc(
+            "run-1", organization, store, product, True, sales_return=sales_return
+        )
+
+        self.assertEqual(payload["salesReturn"], ms_docs.meta(sales_return))
 
     def test_get_first_price_type_uses_company_settings_endpoint(self) -> None:
         price_type = entity("pricetype", "price-type-id")

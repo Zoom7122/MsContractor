@@ -35,6 +35,8 @@ public sealed class SalesReturnRecreationItem
 
     public string Stage { get; set; } = string.Empty;
 
+    public string RelationsStatus { get; set; } = "Pending";
+
     public string? ErrorCode { get; set; }
 
     public string? Error { get; set; }

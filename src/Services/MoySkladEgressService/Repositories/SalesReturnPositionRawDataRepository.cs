@@ -37,14 +37,14 @@ public sealed class SalesReturnPositionRawDataRepository : ISalesReturnPositionR
             .AsNoTracking()
             .Where(item => item.AccountId == accountId && ids.Contains(item.SalesReturnId))
             .ToListAsync(cancellationToken);
-        var result = rows
-            .GroupBy(item => item.SalesReturnId)
-            .ToDictionary(
-                group => group.Key,
-                group => (IReadOnlyDictionary<Guid, string>)group.ToDictionary(item => item.PositionId, item => item.RawJson));
+        var result = ids.ToDictionary(
+            salesReturnId => salesReturnId,
+            _ => (IReadOnlyDictionary<Guid, string>)new Dictionary<Guid, string>());
 
-        if (result.Count != ids.Length || result.Values.Any(positions => positions.Count == 0))
-            throw new InvalidOperationException("Raw positions are missing for one or more salesreturn documents.");
+        foreach (var group in rows.GroupBy(item => item.SalesReturnId))
+        {
+            result[group.Key] = group.ToDictionary(item => item.PositionId, item => item.RawJson);
+        }
 
         return result;
     }

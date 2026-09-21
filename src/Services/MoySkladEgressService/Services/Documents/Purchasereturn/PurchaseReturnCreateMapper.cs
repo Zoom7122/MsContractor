@@ -62,6 +62,18 @@ public sealed class PurchaseReturnCreateMapper
             if (ExcludedFields.Contains(property.Key) || !AllowedDocumentFields.Contains(property.Key))
                 continue;
 
+            if (property.Key == "supply")
+            {
+                if (property.Value is null)
+                    continue;
+                if (property.Value is not JsonObject supplyReference ||
+                    supplyReference["meta"] is not JsonObject)
+                    throw new InvalidOperationException("Saved purchasereturn contains an invalid supply reference.");
+
+                payload[property.Key] = CleanReference(supplyReference);
+                continue;
+            }
+
             if (property.Value is JsonObject reference && reference["meta"] is JsonObject)
                 payload[property.Key] = CleanReference(reference);
             else if (property.Key == "rate" && property.Value is JsonObject rate)
@@ -96,7 +108,6 @@ public sealed class PurchaseReturnCreateMapper
 
         RequireReference(payload, "organization");
         RequireReference(payload, "store");
-        RequireReference(payload, "supply");
         if (positions.Count == 0)
             throw new InvalidOperationException("A purchasereturn requires at least one saved position.");
 

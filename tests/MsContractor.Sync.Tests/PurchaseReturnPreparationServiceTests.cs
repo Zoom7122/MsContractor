@@ -87,6 +87,33 @@ public sealed class PurchaseReturnPreparationServiceTests
     }
 
     [Fact]
+    public async Task PrepareAsync_AllowsDocumentWithoutSupply()
+    {
+        var purchaseReturnId = Guid.NewGuid();
+        var events = new List<string>();
+        var repository = new RecordingRepository(events);
+        var supplies = new RecordingSupplyGateway(new Dictionary<Guid, MoySkladSupplyReference>(), events);
+        var service = new PurchaseReturnPreparationService(
+            new RecordingPurchaseReturnGateway(
+                new Dictionary<Guid, string> { [purchaseReturnId] = DocumentWithoutSupply() }, events),
+            new RecordingPositionsGateway(new Dictionary<Guid, MoySkladPurchaseReturnPositionsPage>
+            {
+                [purchaseReturnId] = Page(purchaseReturnId)
+            }),
+            supplies,
+            repository);
+
+        var result = await service.PrepareAsync(
+            Guid.NewGuid(), Guid.NewGuid(), [purchaseReturnId], CancellationToken.None);
+
+        Assert.Equal([purchaseReturnId], result.ReadyForRecreationIds);
+        Assert.Empty(result.Skipped);
+        Assert.Empty(supplies.RequestedSupplyIds);
+        Assert.DoesNotContain("supplies", events);
+        Assert.Equal([purchaseReturnId], repository.SavedPositionDocumentIds);
+    }
+
+    [Fact]
     public async Task Repository_ReplacePositions_ReplacesRowsAndPreservesAccountScope()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -136,6 +163,12 @@ public sealed class PurchaseReturnPreparationServiceTests
                     href = $"https://api.moysklad.ru/api/remap/1.2/entity/supply/{supplyId:D}"
                 }
             }
+        });
+
+    private static string DocumentWithoutSupply() =>
+        JsonSerializer.Serialize(new
+        {
+            id = Guid.NewGuid()
         });
 
     private static MoySkladPurchaseReturnPositionsPage Page(Guid documentId)

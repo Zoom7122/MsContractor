@@ -767,9 +767,10 @@ def loss_doc(
     store: Dict[str, Any],
     product: Dict[str, Any],
     applicable: bool,
+    sales_return: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Build a write-off payload without unsupported counterparty fields."""
-    return {
+    """Build a write-off payload, optionally linked to a sales return."""
+    payload = {
         "moment": now_moment(),
         "applicable": applicable,
         "organization": meta(org),
@@ -777,6 +778,9 @@ def loss_doc(
         "description": f"MSContractor test document. run={run_id}, type=loss",
         "positions": [position(product, quantity=1, price=27000)],
     }
+    if sales_return:
+        payload["salesReturn"] = meta(sales_return)
+    return payload
 
 
 def money_doc(
@@ -1016,7 +1020,7 @@ def choose_configured_return_source(
             "factureout": "demand",
             "paymentout": "salesreturn",
             "cashout": "salesreturn",
-            "loss": None,
+            "loss": "salesreturn",
         },
         "purchasereturn": {
             "facturein": "supply",
@@ -1231,7 +1235,7 @@ def verify_dependent_document(
             "paymentout": ("payments",),
             "cashin": ("cashIns",),
             "purchasereturn": ("returns", "operations"),
-            "salesreturn": ("operations",),
+            "salesreturn": ("operations", "salesReturn"),
         }
         related = False
         for relation_field in relation_fields.get(source_type, ()):
@@ -1600,8 +1604,20 @@ def main() -> int:
                     if doc_type == "loss":
                         if store is None or product is None:
                             raise LookupError("для списания не найдены склад или товар")
-                        payload = loss_doc(run_id, org, store, product, applicable)
-                        source_type, source = None, None
+                        if return_type:
+                            source_type, source = configured_source_type, configured_source
+                            if source_type != "salesreturn" or not source:
+                                raise LookupError(
+                                    "не создан возврат покупателя для списания"
+                                )
+                        payload = loss_doc(
+                            run_id,
+                            org,
+                            store,
+                            product,
+                            applicable,
+                            sales_return=source,
+                        )
                     elif configured_source_type:
                         source_type, source = configured_source_type, configured_source
                         if not source:

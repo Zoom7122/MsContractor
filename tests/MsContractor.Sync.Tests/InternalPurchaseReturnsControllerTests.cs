@@ -25,10 +25,38 @@ public sealed class InternalPurchaseReturnsControllerTests
             CancellationToken.None);
 
         var accepted = Assert.IsType<AcceptedResult>(result);
-        Assert.Null(accepted.Value);
+        var body = Assert.IsType<PurchaseReturnRecreationResponse>(accepted.Value);
+        Assert.Empty(body.TransferredDocumentIds);
+        Assert.Empty(body.SkippedDocumentIds);
         Assert.Equal(accountId, orchestrator.AccountId);
         Assert.Equal(mainCounterpartyId, orchestrator.MainCounterpartyId);
         Assert.Equal(documentIds, orchestrator.DocumentIds);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_ReturnsTransferredAndSkippedSourceDocumentIds()
+    {
+        var transferredId = Guid.NewGuid();
+        var skippedId = Guid.NewGuid();
+        var serviceResult = new PurchaseReturnVerificationResult(
+        [
+            new PurchaseReturnDocumentVerificationResult(
+                transferredId, Guid.NewGuid(), "Verified", [], [], []),
+            new PurchaseReturnDocumentVerificationResult(
+                skippedId, null, "Skipped", [], [], [], "PURCHASERETURN_SKIPPED", "not ready")
+        ]);
+        var orchestrator = new CapturingOrchestrator { Result = serviceResult };
+        var controller = Controller(orchestrator, authorized: true);
+
+        var result = await controller.RecreateAsync(
+            Guid.NewGuid(),
+            new PurchaseReturnRecreationRequest(Guid.NewGuid(), [transferredId, skippedId]),
+            CancellationToken.None);
+
+        var response = Assert.IsType<AcceptedResult>(result);
+        var body = Assert.IsType<PurchaseReturnRecreationResponse>(response.Value);
+        Assert.Equal([transferredId], body.TransferredDocumentIds);
+        Assert.Equal([skippedId], body.SkippedDocumentIds);
     }
 
     [Fact]
@@ -106,6 +134,7 @@ public sealed class InternalPurchaseReturnsControllerTests
         public Guid? AccountId { get; private set; }
         public Guid? MainCounterpartyId { get; private set; }
         public IReadOnlyList<Guid>? DocumentIds { get; private set; }
+        public PurchaseReturnVerificationResult? Result { get; init; }
 
         public Task<PurchaseReturnVerificationResult> ExecuteAsync(
             Guid accountId,
@@ -116,7 +145,7 @@ public sealed class InternalPurchaseReturnsControllerTests
             AccountId = accountId;
             MainCounterpartyId = mainCounterpartyId;
             DocumentIds = purchaseReturnIds;
-            return Task.FromResult(new PurchaseReturnVerificationResult([]));
+            return Task.FromResult(Result ?? new PurchaseReturnVerificationResult([]));
         }
     }
 }

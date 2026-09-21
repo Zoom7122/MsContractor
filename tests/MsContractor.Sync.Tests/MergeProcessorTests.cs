@@ -633,7 +633,7 @@ public sealed class MergeProcessorTests
         public List<string> CallOrder { get; } = [];
         public Exception? Exception { get; set; }
 
-        public Task SendAsync(
+        public Task<PurchaseReturnRecreationResponse> SendAsync(
             Guid accountId,
             Guid mainCounterpartyId,
             string documentType,
@@ -646,7 +646,9 @@ public sealed class MergeProcessorTests
         {
             Calls.Add((mainCounterpartyId, documentType, documentIds.ToArray()));
             CallOrder.Add("purchasereturn");
-            return Exception is null ? Task.CompletedTask : Task.FromException(Exception);
+            return Exception is null
+                ? Task.FromResult(new PurchaseReturnRecreationResponse(documentIds, []))
+                : Task.FromException<PurchaseReturnRecreationResponse>(Exception);
         }
     }
 

@@ -180,6 +180,10 @@ namespace MsContractor.MoySkladEgressService.Persistence.Migrations
                     .IsRequired()
                     .HasColumnType("text");
 
+                b.Property<string>("RelationsStatus")
+                    .IsRequired()
+                    .HasColumnType("text");
+
                 b.Property<Guid?>("TargetAgentAccountId")
                     .HasColumnType("uuid");
 
@@ -203,6 +207,182 @@ namespace MsContractor.MoySkladEgressService.Persistence.Migrations
                     .IsRequired();
 
                 b.ToTable("salesreturn_recreation_items", "egress");
+            });
+
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.SalesReturnRelationsSnapshotRecord", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("Error")
+                    .HasColumnType("text");
+
+                b.Property<string>("ErrorCode")
+                    .HasColumnType("text");
+
+                b.Property<Guid>("OperationId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("SourceSalesReturnId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("Status")
+                    .IsRequired()
+                    .HasColumnType("text");
+
+                b.HasKey("AccountId", "OperationId", "SourceSalesReturnId");
+
+                b.HasIndex("AccountId", "OperationId");
+
+                b.HasOne("MsContractor.MoySkladEgressService.Models.SalesReturnRecreationItem", null)
+                    .WithMany()
+                    .HasForeignKey("AccountId", "OperationId", "SourceSalesReturnId")
+                    .HasPrincipalKey("AccountId", "OperationId", "SourceDocumentId")
+                    .OnDelete(DeleteBehavior.Cascade)
+                    .IsRequired();
+
+                b.ToTable("salesreturn_relation_snapshots", "egress");
+            });
+
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.PaymentOutRelationSnapshotRecord", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("DocumentId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("DetachStatus")
+                    .IsRequired()
+                    .HasColumnType("text");
+
+                b.Property<string>("Error")
+                    .HasColumnType("text");
+
+                b.Property<string>("ErrorCode")
+                    .HasColumnType("text");
+
+                b.Property<decimal>("LinkedSum")
+                    .HasColumnType("numeric");
+
+                b.Property<Guid>("OperationId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("OperationsBeforeJson")
+                    .IsRequired()
+                    .HasColumnType("jsonb");
+
+                b.Property<string>("ReattachStatus")
+                    .IsRequired()
+                    .HasColumnType("text");
+
+                b.Property<Guid>("SourceSalesReturnId")
+                    .HasColumnType("uuid");
+
+                b.HasKey("AccountId", "OperationId", "SourceSalesReturnId", "DocumentId");
+
+                b.HasOne("MsContractor.MoySkladEgressService.Models.SalesReturnRelationsSnapshotRecord", null)
+                    .WithMany("PaymentOuts")
+                    .HasForeignKey("AccountId", "OperationId", "SourceSalesReturnId")
+                    .OnDelete(DeleteBehavior.Cascade)
+                    .IsRequired();
+
+                b.ToTable("salesreturn_paymentout_relations", "egress");
+            });
+
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.CashOutRelationSnapshotRecord", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("DocumentId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("DetachStatus")
+                    .IsRequired()
+                    .HasColumnType("text");
+
+                b.Property<string>("Error")
+                    .HasColumnType("text");
+
+                b.Property<string>("ErrorCode")
+                    .HasColumnType("text");
+
+                b.Property<decimal>("LinkedSum")
+                    .HasColumnType("numeric");
+
+                b.Property<Guid>("OperationId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("OperationsBeforeJson")
+                    .IsRequired()
+                    .HasColumnType("jsonb");
+
+                b.Property<string>("ReattachStatus")
+                    .IsRequired()
+                    .HasColumnType("text");
+
+                b.Property<Guid>("SourceSalesReturnId")
+                    .HasColumnType("uuid");
+
+                b.HasKey("AccountId", "OperationId", "SourceSalesReturnId", "DocumentId");
+
+                b.HasOne("MsContractor.MoySkladEgressService.Models.SalesReturnRelationsSnapshotRecord", null)
+                    .WithMany("CashOuts")
+                    .HasForeignKey("AccountId", "OperationId", "SourceSalesReturnId")
+                    .OnDelete(DeleteBehavior.Cascade)
+                    .IsRequired();
+
+                b.ToTable("salesreturn_cashout_relations", "egress");
+            });
+
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.LossRelationSnapshotRecord", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("DocumentId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("DetachStatus")
+                    .IsRequired()
+                    .HasColumnType("text");
+
+                b.Property<string>("Error")
+                    .HasColumnType("text");
+
+                b.Property<string>("ErrorCode")
+                    .HasColumnType("text");
+
+                b.Property<Guid>("OperationId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("ReattachStatus")
+                    .IsRequired()
+                    .HasColumnType("text");
+
+                b.Property<string>("SalesReturnBeforeJson")
+                    .HasColumnType("jsonb");
+
+                b.Property<Guid>("SourceSalesReturnId")
+                    .HasColumnType("uuid");
+
+                b.HasKey("AccountId", "OperationId", "SourceSalesReturnId", "DocumentId");
+
+                b.HasOne("MsContractor.MoySkladEgressService.Models.SalesReturnRelationsSnapshotRecord", null)
+                    .WithMany("Losses")
+                    .HasForeignKey("AccountId", "OperationId", "SourceSalesReturnId")
+                    .OnDelete(DeleteBehavior.Cascade)
+                    .IsRequired();
+
+                b.ToTable("salesreturn_loss_relations", "egress");
+            });
+
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.SalesReturnRelationsSnapshotRecord", b =>
+            {
+                b.Navigation("CashOuts");
+                b.Navigation("Losses");
+                b.Navigation("PaymentOuts");
             });
 
 #pragma warning restore 612, 618

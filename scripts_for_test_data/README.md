@@ -34,8 +34,12 @@ MS_PURCHASERETURN_DOCUMENTS=facturein,factureout,paymentin,cashin
 ```
 
 Один тип можно указать в обоих списках — тогда он создаётся в обоих сценариях.
-`facturein` для `purchasereturn` создаётся на связанный `supply`, а для `salesreturn`
-допускается только через `paymentout`, поскольку прямой связи `facturein` с возвратом
+Для `purchasereturn` настройка `facturein` создаёт два документа: существующий
+`facturein` на связанную `supply` и ещё один `facturein`, привязанный к самому
+`purchasereturn`. Для второго документа скрипт использует связанную `supply` как
+обязательное API-основание, затем устанавливает этот `facturein` в поле
+`purchasereturn.factureIn`. Для `salesreturn` допускается
+только связь через `paymentout`, поскольку прямой связи `facturein` с возвратом
 покупателя в API МойСклад нет.
 
 ## Удаление данных

@@ -70,6 +70,122 @@ namespace MsContractor.MoySkladEgressService.Persistence.Migrations
                 b.ToTable("purchasereturn_positions_raw_data", "egress");
             });
 
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.PurchaseReturnFactureOutRawData", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("DocumentId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("PurchaseReturnId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("RawJson")
+                    .IsRequired()
+                    .HasColumnType("jsonb");
+
+                b.HasKey("AccountId", "PurchaseReturnId", "DocumentId");
+
+                b.HasIndex("AccountId", "PurchaseReturnId");
+
+                b.HasOne("MsContractor.MoySkladEgressService.Models.PurchaseReturnRawData", null)
+                    .WithMany()
+                    .HasForeignKey("AccountId", "PurchaseReturnId")
+                    .HasPrincipalKey("AccountId", "DocumentId")
+                    .OnDelete(DeleteBehavior.Cascade)
+                    .IsRequired();
+
+                b.ToTable("purchasereturn_factureout_raw_data", "egress");
+            });
+
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.PurchaseReturnFactureInRawData", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("DocumentId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("PurchaseReturnId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("RawJson")
+                    .IsRequired()
+                    .HasColumnType("jsonb");
+
+                b.HasKey("AccountId", "PurchaseReturnId", "DocumentId");
+
+                b.HasIndex("AccountId", "PurchaseReturnId");
+
+                b.HasOne("MsContractor.MoySkladEgressService.Models.PurchaseReturnRawData", null)
+                    .WithMany()
+                    .HasForeignKey("AccountId", "PurchaseReturnId")
+                    .HasPrincipalKey("AccountId", "DocumentId")
+                    .OnDelete(DeleteBehavior.Cascade)
+                    .IsRequired();
+
+                b.ToTable("purchasereturn_facturein_raw_data", "egress");
+            });
+
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.PurchaseReturnPaymentInRawData", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("DocumentId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("PurchaseReturnId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("RawJson")
+                    .IsRequired()
+                    .HasColumnType("jsonb");
+
+                b.HasKey("AccountId", "PurchaseReturnId", "DocumentId");
+
+                b.HasIndex("AccountId", "PurchaseReturnId");
+
+                b.HasOne("MsContractor.MoySkladEgressService.Models.PurchaseReturnRawData", null)
+                    .WithMany()
+                    .HasForeignKey("AccountId", "PurchaseReturnId")
+                    .HasPrincipalKey("AccountId", "DocumentId")
+                    .OnDelete(DeleteBehavior.Cascade)
+                    .IsRequired();
+
+                b.ToTable("purchasereturn_paymentin_raw_data", "egress");
+            });
+
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.PurchaseReturnCashInRawData", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("DocumentId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("PurchaseReturnId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("RawJson")
+                    .IsRequired()
+                    .HasColumnType("jsonb");
+
+                b.HasKey("AccountId", "PurchaseReturnId", "DocumentId");
+
+                b.HasIndex("AccountId", "PurchaseReturnId");
+
+                b.HasOne("MsContractor.MoySkladEgressService.Models.PurchaseReturnRawData", null)
+                    .WithMany()
+                    .HasForeignKey("AccountId", "PurchaseReturnId")
+                    .HasPrincipalKey("AccountId", "DocumentId")
+                    .OnDelete(DeleteBehavior.Cascade)
+                    .IsRequired();
+
+                b.ToTable("purchasereturn_cashin_raw_data", "egress");
+            });
+
             modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.SalesReturnRawData", b =>
             {
                 b.Property<Guid>("AccountId")

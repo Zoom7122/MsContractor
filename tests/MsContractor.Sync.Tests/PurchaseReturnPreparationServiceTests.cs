@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json;
 using MsContractor.MoySkladEgressService.Gateways.Documents.Purchasereturn;
 using MsContractor.MoySkladEgressService.Models;
@@ -44,7 +45,8 @@ public sealed class PurchaseReturnPreparationServiceTests
             new RecordingPurchaseReturnGateway(documents, events),
             positions,
             supplies,
-            repository);
+            repository,
+            NullLogger<PurchaseReturnPreparationService>.Instance);
 
         var result = await service.PrepareAsync(
             accountId,
@@ -75,7 +77,8 @@ public sealed class PurchaseReturnPreparationServiceTests
                 [purchaseReturnId] = new(0, 1000, 0, new Dictionary<Guid, string>())
             }),
             new RecordingSupplyGateway(new Dictionary<Guid, MoySkladSupplyReference>(), []),
-            repository);
+            repository,
+            NullLogger<PurchaseReturnPreparationService>.Instance);
 
         var result = await service.PrepareAsync(
             Guid.NewGuid(), Guid.NewGuid(), [purchaseReturnId], CancellationToken.None);
@@ -101,7 +104,8 @@ public sealed class PurchaseReturnPreparationServiceTests
                 [purchaseReturnId] = Page(purchaseReturnId)
             }),
             supplies,
-            repository);
+            repository,
+            NullLogger<PurchaseReturnPreparationService>.Instance);
 
         var result = await service.PrepareAsync(
             Guid.NewGuid(), Guid.NewGuid(), [purchaseReturnId], CancellationToken.None);
@@ -152,6 +156,88 @@ public sealed class PurchaseReturnPreparationServiceTests
         Assert.Equal("{\"version\":2}", saved.RawJson);
     }
 
+    [Fact]
+    public async Task Repository_UpsertDocuments_SavesAllSupportedRelatedRawData()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<EgressDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var dbContext = new EgressDbContext(options);
+        await dbContext.Database.EnsureCreatedAsync();
+        var repository = new PurchaseReturnPreparationRepository(dbContext);
+        var accountId = Guid.NewGuid();
+        var purchaseReturnId = Guid.NewGuid();
+        var factureOutId = Guid.NewGuid();
+        var secondFactureOutId = Guid.NewGuid();
+        var factureInId = Guid.NewGuid();
+        var paymentInId = Guid.NewGuid();
+        var secondPaymentInId = Guid.NewGuid();
+        var cashInId = Guid.NewGuid();
+        var rawJson = JsonSerializer.Serialize(new
+        {
+            id = purchaseReturnId,
+            factureOut = new[]
+            {
+                Relation("factureout", factureOutId),
+                Relation("factureout", secondFactureOutId)
+            },
+            factureIn = Relation("facturein", factureInId),
+            payments = new[]
+            {
+                Relation("paymentin", paymentInId, 0m),
+                Relation("paymentin", secondPaymentInId, 100m),
+                Relation("cashin", cashInId, 70000m)
+            }
+        });
+
+        await repository.UpsertDocumentsAsync(
+            accountId,
+            new Dictionary<Guid, string> { [purchaseReturnId] = rawJson },
+            CancellationToken.None);
+
+        var factureOutRows = await dbContext.PurchaseReturnFactureOutRawData
+            .Where(item => item.AccountId == accountId && item.PurchaseReturnId == purchaseReturnId)
+            .ToListAsync();
+        var factureInRows = await dbContext.PurchaseReturnFactureInRawData
+            .Where(item => item.AccountId == accountId && item.PurchaseReturnId == purchaseReturnId)
+            .ToListAsync();
+        var paymentInRows = await dbContext.PurchaseReturnPaymentInRawData
+            .Where(item => item.AccountId == accountId && item.PurchaseReturnId == purchaseReturnId)
+            .ToListAsync();
+        var cashInRows = await dbContext.PurchaseReturnCashInRawData
+            .Where(item => item.AccountId == accountId && item.PurchaseReturnId == purchaseReturnId)
+            .ToListAsync();
+
+        Assert.Equal(
+            new[] { factureOutId, secondFactureOutId }.OrderBy(id => id),
+            factureOutRows.Select(item => item.DocumentId).OrderBy(id => id));
+        Assert.Equal([factureInId], factureInRows.Select(item => item.DocumentId));
+        Assert.Equal(
+            new[] { paymentInId, secondPaymentInId }.OrderBy(id => id),
+            paymentInRows.Select(item => item.DocumentId).OrderBy(id => id));
+        Assert.Equal([cashInId], cashInRows.Select(item => item.DocumentId));
+        Assert.Equal(
+            JsonSerializer.Serialize(Relation("paymentin", paymentInId, 0m)),
+            paymentInRows.Single(item => item.DocumentId == paymentInId).RawJson);
+        Assert.Equal(accountId, cashInRows[0].AccountId);
+        Assert.Equal(purchaseReturnId, cashInRows[0].PurchaseReturnId);
+
+        await repository.UpsertDocumentsAsync(
+            accountId,
+            new Dictionary<Guid, string>
+            {
+                [purchaseReturnId] = JsonSerializer.Serialize(new { id = purchaseReturnId })
+            },
+            CancellationToken.None);
+
+        Assert.Empty(await dbContext.PurchaseReturnFactureOutRawData.ToListAsync());
+        Assert.Empty(await dbContext.PurchaseReturnFactureInRawData.ToListAsync());
+        Assert.Empty(await dbContext.PurchaseReturnPaymentInRawData.ToListAsync());
+        Assert.Empty(await dbContext.PurchaseReturnCashInRawData.ToListAsync());
+    }
+
     private static string Document(Guid supplyId) =>
         JsonSerializer.Serialize(new
         {
@@ -170,6 +256,21 @@ public sealed class PurchaseReturnPreparationServiceTests
         {
             id = Guid.NewGuid()
         });
+
+    private static Dictionary<string, object> Relation(string type, Guid id, decimal? linkedSum = null)
+    {
+        var relation = new Dictionary<string, object>
+        {
+            ["meta"] = new Dictionary<string, string>
+            {
+                ["href"] = $"https://api.moysklad.ru/api/remap/1.2/entity/{type}/{id:D}",
+                ["type"] = type
+            }
+        };
+        if (linkedSum is decimal value)
+            relation["linkedSum"] = value;
+        return relation;
+    }
 
     private static MoySkladPurchaseReturnPositionsPage Page(Guid documentId)
     {

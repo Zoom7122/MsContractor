@@ -1,8 +1,8 @@
 @MsContractor_MoySkladEgressService_HostAddress = http://localhost:8082
 @internalApiKey = HLgIyekmoPVyJUFAVv6U5XUsmxcQM8XwpmJvxS9EKSU=
 @accountId = b3d34ec3-243f-11f1-0a80-0b21000042b5
-@mainCounterpartyId = 85448313-b5e9-11f1-0a80-0117005cabcd
-@purchaseReturnId = 3b682216-b5e7-11f1-0a80-0eac00f6ac0f
+@mainCounterpartyId = 982d53cc-b69f-11f1-0a80-03fb001fd85a
+@purchaseReturnId = e39b511e-b69c-11f1-0a80-03fc00393ffe
 
 ### Prepare purchasereturn documents for recreation.
 POST {{MsContractor_MoySkladEgressService_HostAddress}}/internal/accounts/{{accountId}}/documents/purchasereturn/recreate

@@ -172,6 +172,7 @@ RETURN_DOCUMENT_ENV = {
     "salesreturn": "MS_SALESRETURN_DOCUMENTS",
     "purchasereturn": "MS_PURCHASERETURN_DOCUMENTS",
 }
+PURCHASE_RETURN_FACTUREIN_JOB = "purchasereturn_facturein"
 
 # Фактические документы-основания для самих возвратов добавляются
 # автоматически, чтобы `--docs salesreturn` и `--docs purchasereturn` не
@@ -467,7 +468,16 @@ def dependent_document_jobs(
             if return_type in selected and document_type in document_types
         ]
         if configured_return_types:
-            jobs.extend((document_type, return_type) for return_type in configured_return_types)
+            for return_type in configured_return_types:
+                jobs.append((document_type, return_type))
+                if (
+                    document_type == "facturein"
+                    and return_type == "purchasereturn"
+                ):
+                    # The facturein template supports supply/paymentout only.
+                    # Keep the existing supply facturein and create one more
+                    # facturein which is attached to purchasereturn explicitly.
+                    jobs.append((document_type, PURCHASE_RETURN_FACTUREIN_JOB))
         elif document_type in DEPENDENT_DOCUMENT_TYPES:
             jobs.append((document_type, None))
 
@@ -853,6 +863,20 @@ def facturein_doc(
     return payload
 
 
+def purchasereturn_facturein_doc(
+    run_id: str,
+    purchasereturn: Dict[str, Any],
+    supply: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build a supply-based facturein which will also be attached to a return."""
+    payload = facture_doc("facturein", "supply", supply)
+    payload["incomingNumber"] = f"PR-IN-{run_id}"
+    purchase_return_sum = purchasereturn.get("sum")
+    if isinstance(purchase_return_sum, (int, float)):
+        payload["sum"] = purchase_return_sum
+    return payload
+
+
 def factureout_doc(
     run_id: str,
     org: Dict[str, Any],
@@ -1027,6 +1051,9 @@ def choose_configured_return_source(
             "factureout": "purchasereturn",
             "paymentin": "purchasereturn",
             "cashin": "purchasereturn",
+        },
+        PURCHASE_RETURN_FACTUREIN_JOB: {
+            "facturein": "purchasereturn",
         },
     }
 
@@ -1272,6 +1299,31 @@ def create_and_verify_dependent_document(
     document = load_document_positions(document_type, document)
     verify_dependent_document(document_type, document, cp, source_type, source)
     return document
+
+
+def create_and_verify_purchasereturn_facturein(
+    payload: Dict[str, Any],
+    cp: Dict[str, Any],
+    purchasereturn: Dict[str, Any],
+    supply: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Create a facturein and attach it to the purchasereturn."""
+    created = create_entity("facturein", payload)
+    facturein = api("GET", f"/entity/facturein/{created['id']}")
+    verify_dependent_document("facturein", facturein, cp, "supply", supply)
+
+    api(
+        "PUT",
+        f"/entity/purchasereturn/{purchasereturn['id']}",
+        {"factureIn": meta(facturein)},
+    )
+    updated_return = api(
+        "GET",
+        f"/entity/purchasereturn/{purchasereturn['id']}?expand=factureIn",
+    )
+    if not same_entity(updated_return.get("factureIn", {}), facturein):
+        raise ValueError("facturein не привязан к возврату поставщику")
+    return facturein
 
 
 def error_data(method: str, path: str, exc: Exception) -> Dict[str, Any]:
@@ -1601,7 +1653,25 @@ def main() -> int:
                         configured_source_type, configured_source = choose_configured_return_source(
                             doc_type, return_type, created_by_type, document_number
                         )
-                    if doc_type == "loss":
+                    if return_type == PURCHASE_RETURN_FACTUREIN_JOB:
+                        source_type, source = configured_source_type, configured_source
+                        if not source:
+                            raise LookupError(
+                                "не создан возврат поставщику для этого номера"
+                            )
+                        supply = created_document_at_index(
+                            created_by_type, "supply", document_number
+                        )
+                        if not supply:
+                            raise LookupError(
+                                "не создана приёмка supply для этого номера"
+                            )
+                        payload = purchasereturn_facturein_doc(
+                            run_id,
+                            source,
+                            supply,
+                        )
+                    elif doc_type == "loss":
                         if store is None or product is None:
                             raise LookupError("для списания не найдены склад или товар")
                         if return_type:
@@ -1684,9 +1754,17 @@ def main() -> int:
                         if reason:
                             raise LookupError(reason)
 
-                    result = create_and_verify_dependent_document(
-                        doc_type, payload, cp, source_type, source
-                    )
+                    if return_type == PURCHASE_RETURN_FACTUREIN_JOB:
+                        result = create_and_verify_purchasereturn_facturein(
+                            payload,
+                            cp,
+                            source,
+                            supply,
+                        )
+                    else:
+                        result = create_and_verify_dependent_document(
+                            doc_type, payload, cp, source_type, source
+                        )
                     print(f"  OK: id={result.get('id')} name={result.get('name')}")
                     created_by_type.setdefault(doc_type, []).append(result)
                     add_created_document(report, cp, doc_type, result)

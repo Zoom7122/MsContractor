@@ -188,12 +188,117 @@ class DependentDocumentPayloadTests(unittest.TestCase):
             jobs.count(("factureout", "purchasereturn")), 1
         )
 
+    def test_purchasereturn_facturein_creates_supply_and_return_jobs(self) -> None:
+        with patch.dict(
+            ms_docs.os.environ,
+            {
+                "MS_SALESRETURN_DOCUMENTS": "",
+                "MS_PURCHASERETURN_DOCUMENTS": "facturein",
+            },
+        ):
+            jobs = ms_docs.dependent_document_jobs({
+                "purchasereturn", "supply", "facturein",
+            })
+
+        self.assertEqual(jobs.count(("facturein", "purchasereturn")), 1)
+        self.assertEqual(
+            jobs.count(("facturein", ms_docs.PURCHASE_RETURN_FACTUREIN_JOB)),
+            1,
+        )
+
+    def test_purchasereturn_facturein_is_attached_after_creation(self) -> None:
+        purchasereturn = source("purchasereturn", "return-id")
+        supply = source("supply", "supply-id")
+        created_facturein = entity("facturein", "facturein-id")
+        fetched_facturein = source("facturein", "facturein-id")
+        fetched_facturein["supplies"] = [ms_docs.meta(supply)]
+        updated_purchasereturn = dict(purchasereturn)
+        updated_purchasereturn["factureIn"] = ms_docs.meta(fetched_facturein)
+
+        with patch.object(
+            ms_docs,
+            "create_entity",
+            return_value=created_facturein,
+        ), patch.object(
+            ms_docs,
+            "api",
+            side_effect=[
+                fetched_facturein,
+                updated_purchasereturn,
+                updated_purchasereturn,
+            ],
+        ) as api_mock:
+            result = ms_docs.create_and_verify_purchasereturn_facturein(
+                {"incomingNumber": "PR-IN-run-1"},
+                purchasereturn["agent"],
+                purchasereturn,
+                supply,
+            )
+
+        self.assertEqual(result["id"], "facturein-id")
+        self.assertEqual(
+            api_mock.call_args_list[0].args,
+            ("GET", "/entity/facturein/facturein-id"),
+        )
+        self.assertEqual(
+            api_mock.call_args_list[1].args,
+            (
+                "PUT",
+                "/entity/purchasereturn/return-id",
+                {"factureIn": ms_docs.meta(fetched_facturein)},
+            ),
+        )
+        self.assertEqual(
+            api_mock.call_args_list[2].args,
+            (
+                "GET",
+                "/entity/purchasereturn/return-id?expand=factureIn",
+            ),
+        )
+
+    def test_purchasereturn_facturein_uses_supply_as_creation_basis(self) -> None:
+        purchasereturn = source("purchasereturn", "return-id")
+        purchasereturn["sum"] = 70000
+        supply = source("supply", "supply-id")
+        template = {
+            "meta": {"href": "https://example.test/facturein/new"},
+            "agent": supply["agent"],
+            "supplies": [ms_docs.meta(supply)],
+        }
+
+        with patch.object(ms_docs, "api", return_value=template) as api_mock:
+            payload = ms_docs.purchasereturn_facturein_doc(
+                "run-1", purchasereturn, supply
+            )
+
+        api_mock.assert_called_once_with(
+            "PUT",
+            "/entity/facturein/new",
+            {"supplies": [ms_docs.meta(supply)]},
+        )
+        self.assertEqual(payload["supplies"], [ms_docs.meta(supply)])
+        self.assertEqual(payload["sum"], 70000)
+        self.assertEqual(payload["incomingNumber"], "PR-IN-run-1")
+
     def test_configured_return_source_uses_created_return_document(self) -> None:
         purchasereturn = source("purchasereturn", "return-id")
 
         source_type, selected = ms_docs.choose_configured_return_source(
             "paymentin",
             "purchasereturn",
+            {"purchasereturn": [purchasereturn]},
+            0,
+        )
+
+        self.assertEqual(source_type, "purchasereturn")
+        self.assertEqual(selected["id"], "return-id")
+
+    def test_purchasereturn_facturein_job_uses_created_return_document(self) -> None:
+        purchasereturn = source("purchasereturn", "return-id")
+
+        source_type, selected = ms_docs.choose_configured_return_source(
+            "facturein",
+            ms_docs.PURCHASE_RETURN_FACTUREIN_JOB,
             {"purchasereturn": [purchasereturn]},
             0,
         )

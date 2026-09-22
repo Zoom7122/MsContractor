@@ -30,6 +30,14 @@ public sealed class EgressDbContext : DbContext
 
     public DbSet<PurchaseReturnPositionRawData> PurchaseReturnPositionRawData => Set<PurchaseReturnPositionRawData>();
 
+    public DbSet<PurchaseReturnFactureOutRawData> PurchaseReturnFactureOutRawData => Set<PurchaseReturnFactureOutRawData>();
+
+    public DbSet<PurchaseReturnFactureInRawData> PurchaseReturnFactureInRawData => Set<PurchaseReturnFactureInRawData>();
+
+    public DbSet<PurchaseReturnPaymentInRawData> PurchaseReturnPaymentInRawData => Set<PurchaseReturnPaymentInRawData>();
+
+    public DbSet<PurchaseReturnCashInRawData> PurchaseReturnCashInRawData => Set<PurchaseReturnCashInRawData>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("egress");
@@ -180,6 +188,36 @@ public sealed class EgressDbContext : DbContext
         purchaseReturnPositionRawData.HasOne<PurchaseReturnRawData>()
             .WithMany()
             .HasForeignKey(item => new { item.AccountId, item.PurchaseReturnId })
+            .HasPrincipalKey(item => new { item.AccountId, item.DocumentId })
+            .OnDelete(DeleteBehavior.Cascade);
+
+        ConfigurePurchaseReturnRelatedRawData<PurchaseReturnFactureOutRawData>(
+            modelBuilder,
+            "purchasereturn_factureout_raw_data");
+        ConfigurePurchaseReturnRelatedRawData<PurchaseReturnFactureInRawData>(
+            modelBuilder,
+            "purchasereturn_facturein_raw_data");
+        ConfigurePurchaseReturnRelatedRawData<PurchaseReturnPaymentInRawData>(
+            modelBuilder,
+            "purchasereturn_paymentin_raw_data");
+        ConfigurePurchaseReturnRelatedRawData<PurchaseReturnCashInRawData>(
+            modelBuilder,
+            "purchasereturn_cashin_raw_data");
+    }
+
+    private static void ConfigurePurchaseReturnRelatedRawData<TEntity>(
+        ModelBuilder modelBuilder,
+        string tableName)
+        where TEntity : class
+    {
+        var entity = modelBuilder.Entity<TEntity>();
+        entity.ToTable(tableName);
+        entity.HasKey("AccountId", "PurchaseReturnId", "DocumentId");
+        entity.Property<string>("RawJson").HasColumnType("jsonb");
+        entity.HasIndex("AccountId", "PurchaseReturnId");
+        entity.HasOne<PurchaseReturnRawData>()
+            .WithMany()
+            .HasForeignKey("AccountId", "PurchaseReturnId")
             .HasPrincipalKey(item => new { item.AccountId, item.DocumentId })
             .OnDelete(DeleteBehavior.Cascade);
     }

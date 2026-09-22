@@ -21,17 +21,20 @@ public sealed class PurchaseReturnPreparationService : IPurchaseReturnPreparatio
     private readonly IMoySkladPurchaseReturnPositionsGateway _positions;
     private readonly IMoySkladSupplyGateway _supplies;
     private readonly IPurchaseReturnPreparationRepository _repository;
+    private readonly ILogger<PurchaseReturnPreparationService> _logger;
 
     public PurchaseReturnPreparationService(
         IMoySkladPurchaseReturnGateway purchaseReturns,
         IMoySkladPurchaseReturnPositionsGateway positions,
         IMoySkladSupplyGateway supplies,
-        IPurchaseReturnPreparationRepository repository)
+        IPurchaseReturnPreparationRepository repository,
+        ILogger<PurchaseReturnPreparationService> logger)
     {
         _purchaseReturns = purchaseReturns;
         _positions = positions;
         _supplies = supplies;
         _repository = repository;
+        _logger = logger;
     }
 
     public async Task<PurchaseReturnPreparationResult> PrepareAsync(
@@ -45,6 +48,22 @@ public sealed class PurchaseReturnPreparationService : IPurchaseReturnPreparatio
         var skipped = new List<PurchaseReturnSkippedDocument>();
         var documents = await _purchaseReturns.GetAsync(
             accountId, Guid.Empty, correlationId, purchaseReturnIds, cancellationToken);
+
+        _logger.LogInformation(
+            "purchasereturn documents received: account_id={AccountId}, requested_count={RequestedCount}, returned_count={ReturnedCount}, document_ids={DocumentIds}",
+            accountId,
+            purchaseReturnIds.Count,
+            documents.Count,
+            string.Join(',', documents.Keys.OrderBy(id => id).Select(id => id.ToString("D"))));
+
+        foreach (var document in documents.OrderBy(item => item.Key))
+        {
+            _logger.LogDebug(
+                "purchasereturn document raw JSON received: account_id={AccountId}, document_id={DocumentId}, raw_json={RawJson}",
+                accountId,
+                document.Key,
+                document.Value);
+        }
 
         foreach (var purchaseReturnId in purchaseReturnIds)
         {

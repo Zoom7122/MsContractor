@@ -58,7 +58,8 @@ public sealed record MoySkladSalesReturnBatchCreateResult(
     Guid? DocumentId,
     string? RawJson,
     string? ErrorCode = null,
-    string? Error = null);
+    string? Error = null,
+    Guid? ReturnedSyncId = null);
 
 public sealed class MoySkladSalesReturnGateway : IMoySkladSalesReturnGateway
 {
@@ -386,11 +387,15 @@ public sealed class MoySkladSalesReturnGateway : IMoySkladSalesReturnGateway
             for (var index = 0; index < requested.Count; index++)
             {
                 var item = requested[index];
-                var matching = responseRows
-                    .Where(row => TryReadGuidProperty(row, "syncId") == item.SyncId)
-                    .ToArray();
-                var row = matching.Length == 1 ? matching[0] : responseRows[index];
+                var row = responseRows[index];
                 var error = TryReadError(row);
+                var returnedSyncId = TryReadOptionalGuidProperty(row, "syncId", out var syncIdWasReturned);
+                if (syncIdWasReturned && returnedSyncId is null && error is null)
+                {
+                    error = (
+                        "SALESRETURN_CREATE_RESPONSE_INVALID",
+                        "MoySklad returned an invalid syncId for the salesreturn batch item.");
+                }
                 var documentId = TryReadGuidProperty(row, "id");
                 if (error is null && (documentId is null || documentId == Guid.Empty))
                     error = ("SALESRETURN_CREATE_RESPONSE_INVALID", "MoySklad did not return a valid document id.");
@@ -400,7 +405,8 @@ public sealed class MoySkladSalesReturnGateway : IMoySkladSalesReturnGateway
                     documentId,
                     error is null ? row.GetRawText() : null,
                     error?.Code,
-                    error?.Message));
+                    error?.Message,
+                    returnedSyncId));
             }
             return results;
         }
@@ -444,6 +450,15 @@ public sealed class MoySkladSalesReturnGateway : IMoySkladSalesReturnGateway
         value.ValueKind == JsonValueKind.String && Guid.TryParse(value.GetString(), out var id)
             ? id
             : null;
+
+    private static Guid? TryReadOptionalGuidProperty(
+        JsonElement row,
+        string name,
+        out bool wasReturned)
+    {
+        wasReturned = row.ValueKind == JsonValueKind.Object && row.TryGetProperty(name, out _);
+        return wasReturned ? TryReadGuidProperty(row, name) : null;
+    }
 
     private static (string Code, string Message)? TryReadError(JsonElement row)
     {

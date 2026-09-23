@@ -57,7 +57,22 @@ public sealed record PurchaseReturnRecreationRequest(
 
 public sealed record PurchaseReturnRecreationResponse(
     IReadOnlyList<Guid> TransferredDocumentIds,
-    IReadOnlyList<Guid> SkippedDocumentIds);
+    IReadOnlyList<Guid> SkippedDocumentIds,
+    IReadOnlyList<PurchaseReturnSkippedDocumentResponse>? SkippedDocuments = null,
+    IReadOnlyList<PurchaseReturnCreatedWithErrorResponse>? CreatedWithErrors = null);
+
+public sealed record PurchaseReturnSkippedDocumentResponse(
+    Guid DocumentId,
+    string Status,
+    string? ErrorCode,
+    string? Error);
+
+public sealed record PurchaseReturnCreatedWithErrorResponse(
+    Guid SourceDocumentId,
+    Guid NewDocumentId,
+    string Status,
+    string? ErrorCode,
+    string? Error);
 
 public sealed record SalesReturnRecreationResponse(
     Guid OperationId,

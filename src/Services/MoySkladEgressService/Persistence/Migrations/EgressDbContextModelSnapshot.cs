@@ -139,9 +139,15 @@ namespace MsContractor.MoySkladEgressService.Persistence.Migrations
                 b.Property<Guid>("PurchaseReturnId")
                     .HasColumnType("uuid");
 
+                b.Property<string>("OperationsBeforeJson")
+                    .HasColumnType("jsonb");
+
                 b.Property<string>("RawJson")
                     .IsRequired()
                     .HasColumnType("jsonb");
+
+                b.Property<decimal?>("LinkedSum")
+                    .HasColumnType("numeric");
 
                 b.HasKey("AccountId", "PurchaseReturnId", "DocumentId");
 
@@ -168,9 +174,15 @@ namespace MsContractor.MoySkladEgressService.Persistence.Migrations
                 b.Property<Guid>("PurchaseReturnId")
                     .HasColumnType("uuid");
 
+                b.Property<string>("OperationsBeforeJson")
+                    .HasColumnType("jsonb");
+
                 b.Property<string>("RawJson")
                     .IsRequired()
                     .HasColumnType("jsonb");
+
+                b.Property<decimal?>("LinkedSum")
+                    .HasColumnType("numeric");
 
                 b.HasKey("AccountId", "PurchaseReturnId", "DocumentId");
 

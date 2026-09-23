@@ -57,6 +57,79 @@ public sealed class InternalPurchaseReturnsControllerTests
         var body = Assert.IsType<PurchaseReturnRecreationResponse>(response.Value);
         Assert.Equal([transferredId], body.TransferredDocumentIds);
         Assert.Equal([skippedId], body.SkippedDocumentIds);
+        var skipped = Assert.Single(body.SkippedDocuments!);
+        Assert.Equal(skippedId, skipped.DocumentId);
+        Assert.Equal("Skipped", skipped.Status);
+        Assert.Equal("PURCHASERETURN_SKIPPED", skipped.ErrorCode);
+        Assert.Equal("not ready", skipped.Error);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_ReturnsCreatedWithErrorsSeparatelyFromTransferredDocuments()
+    {
+        var transferredId = Guid.NewGuid();
+        var failedSourceId = Guid.NewGuid();
+        var failedNewId = Guid.NewGuid();
+        var serviceResult = new PurchaseReturnVerificationResult(
+        [
+            new PurchaseReturnDocumentVerificationResult(
+                transferredId, Guid.NewGuid(), "Verified", [], [], []),
+            new PurchaseReturnDocumentVerificationResult(
+                failedSourceId,
+                failedNewId,
+                "CreatedWithError",
+                [],
+                [],
+                [],
+                "PURCHASERETURN_PAYMENT_RELATIONS_REATTACH_FAILED",
+                "Could not reattach cashin 00000000-0000-0000-0000-000000000001.")
+        ]);
+        var orchestrator = new CapturingOrchestrator { Result = serviceResult };
+        var controller = Controller(orchestrator, authorized: true);
+
+        var result = await controller.RecreateAsync(
+            Guid.NewGuid(),
+            new PurchaseReturnRecreationRequest(Guid.NewGuid(), [transferredId, failedSourceId]),
+            CancellationToken.None);
+
+        var response = Assert.IsType<AcceptedResult>(result);
+        var body = Assert.IsType<PurchaseReturnRecreationResponse>(response.Value);
+        Assert.Equal([transferredId], body.TransferredDocumentIds);
+        Assert.Empty(body.SkippedDocumentIds);
+        var createdWithError = Assert.Single(body.CreatedWithErrors!);
+        Assert.Equal(failedSourceId, createdWithError.SourceDocumentId);
+        Assert.Equal(failedNewId, createdWithError.NewDocumentId);
+        Assert.Equal("PURCHASERETURN_PAYMENT_RELATIONS_REATTACH_FAILED", createdWithError.ErrorCode);
+        Assert.Contains("cashin", createdWithError.Error);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_DoesNotTreatNeedsManualReviewWarningAsCreatedWithError()
+    {
+        var reviewedId = Guid.NewGuid();
+        var serviceResult = new PurchaseReturnVerificationResult(
+        [
+            new PurchaseReturnDocumentVerificationResult(
+                reviewedId,
+                Guid.NewGuid(),
+                "NeedsManualReview",
+                [],
+                [],
+                ["The old purchasereturn has payments; payment rebinding requires manual review."])
+        ]);
+        var orchestrator = new CapturingOrchestrator { Result = serviceResult };
+        var controller = Controller(orchestrator, authorized: true);
+
+        var result = await controller.RecreateAsync(
+            Guid.NewGuid(),
+            new PurchaseReturnRecreationRequest(Guid.NewGuid(), [reviewedId]),
+            CancellationToken.None);
+
+        var response = Assert.IsType<AcceptedResult>(result);
+        var body = Assert.IsType<PurchaseReturnRecreationResponse>(response.Value);
+        Assert.Equal([reviewedId], body.TransferredDocumentIds);
+        Assert.Empty(body.SkippedDocumentIds);
+        Assert.Empty(body.CreatedWithErrors!);
     }
 
     [Fact]

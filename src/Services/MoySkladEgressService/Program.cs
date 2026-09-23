@@ -114,6 +114,14 @@ builder.Services.AddHttpClient<IMoySkladPurchaseReturnGateway, MoySkladPurchaseR
 {
     AutomaticDecompression = DecompressionMethods.GZip
 });
+builder.Services.AddHttpClient<IMoySkladPurchaseReturnMoneyRelationsGateway, MoySkladPurchaseReturnMoneyRelationsGateway>(client =>
+{
+    client.BaseAddress = egressOptions.JsonApiBaseUrl;
+    client.Timeout = TimeSpan.FromSeconds(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.GZip
+});
 builder.Services.AddHttpClient<IMoySkladPurchaseReturnPositionsGateway, MoySkladPurchaseReturnPositionsGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
@@ -153,6 +161,10 @@ builder.Services.AddScoped<ISalesReturnRecreationOrchestrator, SalesReturnRecrea
 builder.Services.AddScoped<PurchaseReturnCreateMapper>();
 builder.Services.AddScoped<IPurchaseReturnPreparationRepository, PurchaseReturnPreparationRepository>();
 builder.Services.AddScoped<IPurchaseReturnPreparationService, PurchaseReturnPreparationService>();
+builder.Services.AddScoped<IPurchaseReturnFactureRelationsRepository, PurchaseReturnFactureRelationsRepository>();
+builder.Services.AddScoped<IPurchaseReturnMoneyRelationsRepository>(serviceProvider =>
+    (IPurchaseReturnMoneyRelationsRepository)serviceProvider.GetRequiredService<IPurchaseReturnFactureRelationsRepository>());
+builder.Services.AddScoped<IPurchaseReturnFactureRelationsService, PurchaseReturnFactureRelationsService>();
 builder.Services.AddScoped<IPurchaseReturnVerifier, PurchaseReturnVerifier>();
 builder.Services.AddScoped<IPurchaseReturnRecreationOrchestrator, PurchaseReturnRecreationOrchestrator>();
 builder.Services.AddSingleton<IMoySkladRateLimiter, MoySkladRateLimiter>();

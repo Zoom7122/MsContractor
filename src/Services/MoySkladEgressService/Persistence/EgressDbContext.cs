@@ -214,6 +214,12 @@ public sealed class EgressDbContext : DbContext
         entity.ToTable(tableName);
         entity.HasKey("AccountId", "PurchaseReturnId", "DocumentId");
         entity.Property<string>("RawJson").HasColumnType("jsonb");
+        if (typeof(TEntity) == typeof(PurchaseReturnPaymentInRawData) ||
+            typeof(TEntity) == typeof(PurchaseReturnCashInRawData))
+        {
+            entity.Property<string?>("OperationsBeforeJson").HasColumnType("jsonb");
+            entity.Property<decimal?>("LinkedSum").HasColumnType("numeric");
+        }
         entity.HasIndex("AccountId", "PurchaseReturnId");
         entity.HasOne<PurchaseReturnRawData>()
             .WithMany()

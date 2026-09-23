@@ -42,8 +42,14 @@ public sealed class PurchaseReturnRecreationEgressClientTests
                 Assert.Equal(purchaseReturnIds, body.PurchaseReturnIds);
                 return new HttpResponseMessage(HttpStatusCode.Accepted)
                 {
-                    Content = JsonContent.Create(new PurchaseReturnRecreationResponse(
-                        [purchaseReturnIds[0]], [purchaseReturnIds[1]]))
+                Content = JsonContent.Create(new PurchaseReturnRecreationResponse(
+                        [purchaseReturnIds[0]],
+                        [purchaseReturnIds[1]],
+                        [new PurchaseReturnSkippedDocumentResponse(
+                            purchaseReturnIds[1],
+                            "Skipped",
+                            "PURCHASERETURN_SKIPPED",
+                            "not ready")]))
                 };
             }))
             {
@@ -63,6 +69,10 @@ public sealed class PurchaseReturnRecreationEgressClientTests
 
         Assert.Equal([purchaseReturnIds[0]], response.TransferredDocumentIds);
         Assert.Equal([purchaseReturnIds[1]], response.SkippedDocumentIds);
+        var skipped = Assert.Single(response.SkippedDocuments!);
+        Assert.Equal(purchaseReturnIds[1], skipped.DocumentId);
+        Assert.Equal("PURCHASERETURN_SKIPPED", skipped.ErrorCode);
+        Assert.Equal("not ready", skipped.Error);
     }
 
     private sealed class CallbackHandler(

@@ -102,7 +102,8 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
         await _relations.PrepareAndDetachAsync(operation, correlationId, cancellationToken);
         await DeleteSourcesAsync(operation, correlationId, cancellationToken);
         await CreateNewDocumentsAsync(operation, correlationId, cancellationToken);
-        await _relations.ReattachAsync(operation, correlationId, cancellationToken);
+        if (operation.Items.Any(item => item.Stage == "Created"))
+            await _relations.ReattachAsync(operation, correlationId, cancellationToken);
 
         operation.Status = operation.Items.All(item => item.Stage == "Completed")
             ? "Completed"
@@ -169,34 +170,71 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
         string correlationId,
         CancellationToken cancellationToken)
     {
+        var oldToNewSalesReturnIds = new Dictionary<Guid, Guid>();
         foreach (var chunk in operation.Items.Where(item => item.Stage == "Deleted").Chunk(BatchSize))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var prepared = chunk
+                .Select((item, index) => new PreparedBatchItem(
+                    index,
+                    item.SourceDocumentId,
+                    item.NewSyncId,
+                    item.NewPayloadJson))
+                .ToArray();
             try
             {
                 var results = await _gateway.CreateBatchAsync(
                     operation.AccountId,
                     correlationId,
-                    chunk.Select(item => new MoySkladSalesReturnBatchCreateItem(
-                        item.SourceDocumentId, item.NewSyncId, item.NewPayloadJson)).ToArray(),
+                    prepared.Select(item => new MoySkladSalesReturnBatchCreateItem(
+                        item.SourceSalesReturnId,
+                        item.SyncId,
+                        item.Payload)).ToArray(),
                     cancellationToken);
-                foreach (var item in chunk)
+
+                if (results.Count != prepared.Length)
                 {
-                    var result = results.Single(result => result.SourceDocumentId == item.SourceDocumentId);
-                    item.NewDocumentId = result.DocumentId;
-                    if (result.ErrorCode is not null)
+                    foreach (var item in chunk)
                     {
-                        Fail(item, "SALESRETURN_NEW_CREATE_FAILED", result.Error ?? result.ErrorCode);
+                        item.NewDocumentId = null;
+                        Fail(item, "SALESRETURN_NEW_CREATE_RESPONSE_INVALID",
+                            "MoySklad returned a different number of salesreturn batch items than requested.");
                         item.Stage = "Failed";
                     }
-                    else if (result.DocumentId is null)
+                }
+                else
+                {
+                    for (var index = 0; index < prepared.Length; index++)
                     {
-                        Fail(item, "SALESRETURN_NEW_CREATE_FAILED",
-                            result.Error ?? "MoySklad did not return the created salesreturn id.");
-                        item.Stage = "Failed";
-                    }
-                    else
-                    {
+                        var preparedItem = prepared[index];
+                        var item = chunk[index];
+                        var result = results[index];
+                        item.NewDocumentId = null;
+
+                        if (result.ErrorCode is not null)
+                        {
+                            Fail(item, "SALESRETURN_NEW_CREATE_FAILED", result.Error ?? result.ErrorCode);
+                            item.Stage = "Failed";
+                            continue;
+                        }
+
+                        if (result.DocumentId is null || result.DocumentId == Guid.Empty)
+                        {
+                            Fail(item, "SALESRETURN_NEW_CREATE_RESPONSE_INVALID",
+                                "MoySklad did not return a valid created salesreturn id.");
+                            item.Stage = "Failed";
+                            continue;
+                        }
+
+                        if (result.ReturnedSyncId is not null && result.ReturnedSyncId != preparedItem.SyncId)
+                        {
+                            Fail(item, "SALESRETURN_NEW_CREATE_SYNC_ID_MISMATCH",
+                                $"MoySklad returned syncId {result.ReturnedSyncId:D}, expected {preparedItem.SyncId:D}.");
+                            item.Stage = "Failed";
+                            continue;
+                        }
+
+                        oldToNewSalesReturnIds[preparedItem.SourceSalesReturnId] = result.DocumentId.Value;
                         item.Stage = "Created";
                         item.ErrorCode = null;
                         item.Error = null;
@@ -211,9 +249,21 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
                     item.Stage = "Failed";
                 }
             }
+
+            foreach (var item in chunk)
+            {
+                if (oldToNewSalesReturnIds.TryGetValue(item.SourceDocumentId, out var newDocumentId))
+                    item.NewDocumentId = newDocumentId;
+            }
             await _operations.SaveAsync(operation, cancellationToken);
         }
     }
+
+    private sealed record PreparedBatchItem(
+        int BatchIndex,
+        Guid SourceSalesReturnId,
+        Guid SyncId,
+        string Payload);
 
     private static Guid? SelectAgentAccount(IReadOnlyList<MoySkladSalesReturnAgentAccount> accounts)
     {

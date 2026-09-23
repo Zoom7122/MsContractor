@@ -53,7 +53,8 @@ public sealed class PurchaseReturnVerifierTests
         Assert.Equal("NeedsManualReview", document.Status);
         Assert.Empty(document.FieldMismatches);
         Assert.Empty(document.PositionMismatches);
-        Assert.Equal(2, document.Warnings.Count);
+        Assert.Single(document.Warnings);
+        Assert.Contains("files", Assert.Single(document.Warnings));
         Assert.True(repository.DocumentsRead);
         Assert.True(repository.PositionsRead);
         Assert.True(gateway.DocumentsRead);

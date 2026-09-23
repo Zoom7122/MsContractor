@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using MsContractor.BuildingBlocks.Security;
 using MsContractor.Contracts.Internal;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
+using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Services.Documents.Purchasereturn;
 
 namespace MsContractor.MoySkladEgressService.Controllers;
@@ -62,7 +63,7 @@ public sealed class InternalPurchaseReturnsController : ControllerBase
                 cancellationToken);
             var response = new PurchaseReturnRecreationResponse(
                 result.Documents
-                    .Where(document => document.NewDocumentId is not null)
+                    .Where(IsSuccessfullyCreated)
                     .Select(document => document.SourceDocumentId)
                     .Distinct()
                     .ToArray(),
@@ -70,6 +71,23 @@ public sealed class InternalPurchaseReturnsController : ControllerBase
                     .Where(document => document.NewDocumentId is null)
                     .Select(document => document.SourceDocumentId)
                     .Distinct()
+                    .ToArray(),
+                result.Documents
+                    .Where(document => document.NewDocumentId is null)
+                    .Select(document => new PurchaseReturnSkippedDocumentResponse(
+                        document.SourceDocumentId,
+                        document.Status,
+                        document.ErrorCode,
+                        document.Error))
+                    .ToArray(),
+                result.Documents
+                    .Where(document => document.NewDocumentId is not null && !IsSuccessfullyCreated(document))
+                    .Select(document => new PurchaseReturnCreatedWithErrorResponse(
+                        document.SourceDocumentId,
+                        document.NewDocumentId!.Value,
+                        document.Status,
+                        document.ErrorCode,
+                        document.Error))
                     .ToArray());
             return Accepted(response);
         }
@@ -86,6 +104,10 @@ public sealed class InternalPurchaseReturnsController : ControllerBase
                 exception.Message));
         }
     }
+
+    private static bool IsSuccessfullyCreated(PurchaseReturnDocumentVerificationResult document) =>
+        document.NewDocumentId is not null &&
+        document.Status is "Verified" or "NeedsManualReview";
 
     private const int MaxDocumentCount = 100_000;
 }

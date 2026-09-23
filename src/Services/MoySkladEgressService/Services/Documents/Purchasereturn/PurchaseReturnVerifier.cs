@@ -120,6 +120,16 @@ public sealed class PurchaseReturnVerifier : IPurchaseReturnVerifier
 
             try
             {
+                var oldDocument = ParseObject(oldRaw);
+                if (HasMeaningfulValue(oldDocument["payments"]))
+                {
+                    _logger.LogInformation(
+                        "Old purchasereturn contains payments; automatic payment relation rebinding was processed: account_id={AccountId}, source_id={SourceId}, new_id={NewId}",
+                        accountId,
+                        input.SourceDocumentId,
+                        input.NewDocumentId);
+                }
+
                 var newPositionRows = await LoadPositionsAsync(
                     accountId, input.NewDocumentId, cancellationToken);
                 results.Add(VerifyDocument(
@@ -244,8 +254,6 @@ public sealed class PurchaseReturnVerifier : IPurchaseReturnVerifier
             fieldMismatches.Add(new PurchaseReturnFieldMismatch(
                 "syncId", input.SyncId.ToString("D"), syncId));
 
-        if (HasMeaningfulValue(oldDocument["payments"]))
-            warnings.Add("The old purchasereturn has payments; payment rebinding requires manual review.");
         if (HasMeaningfulValue(oldDocument["files"]))
             warnings.Add("The old purchasereturn has files; file copying requires manual review.");
 

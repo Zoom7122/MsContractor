@@ -133,6 +133,38 @@ public sealed class MoySkladSalesReturnTests
     }
 
     [Fact]
+    public async Task Gateway_CreateBatchAsync_PreservesResponseOrderAndExposesReturnedSyncIds()
+    {
+        var firstSourceId = Guid.NewGuid();
+        var secondSourceId = Guid.NewGuid();
+        var firstSyncId = Guid.NewGuid();
+        var secondSyncId = Guid.NewGuid();
+        var firstCreatedId = Guid.NewGuid();
+        var secondCreatedId = Guid.NewGuid();
+        var gateway = CreateGateway(_ => Response(HttpStatusCode.OK, JsonSerializer.Serialize(new[]
+        {
+            new { id = secondCreatedId, syncId = secondSyncId },
+            new { id = firstCreatedId, syncId = firstSyncId }
+        })));
+
+        var result = await gateway.CreateBatchAsync(
+            Guid.NewGuid(),
+            "correlation-id",
+            [
+                new MoySkladSalesReturnBatchCreateItem(firstSourceId, firstSyncId, "{}"),
+                new MoySkladSalesReturnBatchCreateItem(secondSourceId, secondSyncId, "{}")
+            ],
+            CancellationToken.None);
+
+        Assert.Equal(firstSourceId, result[0].SourceDocumentId);
+        Assert.Equal(secondCreatedId, result[0].DocumentId);
+        Assert.Equal(secondSyncId, result[0].ReturnedSyncId);
+        Assert.Equal(secondSourceId, result[1].SourceDocumentId);
+        Assert.Equal(firstCreatedId, result[1].DocumentId);
+        Assert.Equal(firstSyncId, result[1].ReturnedSyncId);
+    }
+
+    [Fact]
     public async Task Service_LoadAsync_SplitsIdsIntoThousandItemBatches()
     {
         var ids = Enumerable.Range(0, 1001).Select(_ => Guid.NewGuid()).ToArray();

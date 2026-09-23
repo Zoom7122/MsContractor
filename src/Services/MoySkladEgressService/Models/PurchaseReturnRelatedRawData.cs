@@ -31,6 +31,10 @@ public sealed class PurchaseReturnPaymentInRawData
     public Guid DocumentId { get; set; }
 
     public string RawJson { get; set; } = string.Empty;
+
+    public string? OperationsBeforeJson { get; set; }
+
+    public decimal? LinkedSum { get; set; }
 }
 
 public sealed class PurchaseReturnCashInRawData
@@ -42,4 +46,8 @@ public sealed class PurchaseReturnCashInRawData
     public Guid DocumentId { get; set; }
 
     public string RawJson { get; set; } = string.Empty;
+
+    public string? OperationsBeforeJson { get; set; }
+
+    public decimal? LinkedSum { get; set; }
 }

@@ -20,6 +20,7 @@ public interface IPurchaseReturnRecreationOrchestrator
 public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecreationOrchestrator
 {
     private readonly IPurchaseReturnPreparationService _preparationService;
+    private readonly IPurchaseReturnFactureRelationsService _factureRelationsService;
     private readonly IPurchaseReturnPreparationRepository _repository;
     private readonly IMoySkladPurchaseReturnGateway _gateway;
     private readonly IPurchaseReturnVerifier _verifier;
@@ -29,6 +30,7 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
 
     public PurchaseReturnRecreationOrchestrator(
         IPurchaseReturnPreparationService preparationService,
+        IPurchaseReturnFactureRelationsService factureRelationsService,
         IPurchaseReturnPreparationRepository repository,
         IMoySkladPurchaseReturnGateway gateway,
         IPurchaseReturnVerifier verifier,
@@ -37,6 +39,7 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
         ILogger<PurchaseReturnRecreationOrchestrator> logger)
     {
         _preparationService = preparationService;
+        _factureRelationsService = factureRelationsService;
         _repository = repository;
         _gateway = gateway;
         _verifier = verifier;
@@ -69,15 +72,29 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
         if (preparation.ReadyForRecreationIds.Count == 0)
             return new PurchaseReturnVerificationResult(results);
 
+        var relations = await _factureRelationsService.CheckAsync(
+            accountId,
+            preparation.ReadyForRecreationIds,
+            cancellationToken);
+        results.AddRange(relations.Failed.Select(item => Failed(
+            item.PurchaseReturnId,
+            item.Status,
+            item.ErrorCode ?? "PURCHASERETURN_FACTURE_RELATIONS_FAILED",
+            item.Error ?? "Facture relations could not be detached.")));
+
+        var readyForRecreationIds = relations.ReadyForRecreationIds;
+        if (readyForRecreationIds.Count == 0)
+            return new PurchaseReturnVerificationResult(results);
+
         var documents = await _repository.GetRequiredDocumentsAsync(
-            accountId, preparation.ReadyForRecreationIds, cancellationToken);
+            accountId, readyForRecreationIds, cancellationToken);
         var positions = await _repository.GetRequiredPositionsAsync(
-            accountId, preparation.ReadyForRecreationIds, cancellationToken);
+            accountId, readyForRecreationIds, cancellationToken);
 
         var recreationReferences = await ResolveReferencesAsync(
             accountId, mainCounterpartyId, documents.Values, cancellationToken);
-        var prepared = new List<PreparedPurchaseReturn>(preparation.ReadyForRecreationIds.Count);
-        foreach (var purchaseReturnId in preparation.ReadyForRecreationIds)
+        var prepared = new List<PreparedPurchaseReturn>(readyForRecreationIds.Count);
+        foreach (var purchaseReturnId in readyForRecreationIds)
         {
             try
             {
@@ -110,10 +127,12 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
             }
         }
 
+        var createdDocuments = new List<PurchaseReturnVerificationInput>();
         foreach (var batch in prepared.Chunk(MoySkladPurchaseReturnGateway.BatchSize))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var batchItems = batch.ToArray();
+
             var deleteResult = await DeleteWithRetryAsync(
                 accountId,
                 batchItems.Select(item => item.SourceDocumentId).ToArray(),
@@ -144,15 +163,72 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
                 "CreateFailed",
                 item.ErrorCode,
                 item.Error)));
-            if (createResult.Created.Count == 0)
-                continue;
+            createdDocuments.AddRange(createResult.Created);
+        }
 
+        if (createdDocuments.Count == 0)
+            return new PurchaseReturnVerificationResult(results);
+
+        var oldToNewPurchaseReturnIds = createdDocuments
+            .GroupBy(item => item.SourceDocumentId)
+            .ToDictionary(group => group.Key, group => group.Last().NewDocumentId);
+        PurchaseReturnRelationsReattachResult reattachResult;
+        try
+        {
+            reattachResult = await _factureRelationsService.ReattachAsync(
+                accountId,
+                readyForRecreationIds,
+                oldToNewPurchaseReturnIds,
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or JsonException or EgressException)
+        {
+            _logger.LogError(
+                exception,
+                "purchasereturn relation reattach failed: account_id={AccountId}, document_count={DocumentCount}",
+                accountId,
+                oldToNewPurchaseReturnIds.Count);
+            reattachResult = new PurchaseReturnRelationsReattachResult(
+                createdDocuments.Select(item => new PurchaseReturnRelationsReattachItem(
+                    item.SourceDocumentId,
+                    item.NewDocumentId,
+                    "Failed",
+                    "PURCHASERETURN_PAYMENT_RELATIONS_REATTACH_FAILED",
+                    exception.Message)).ToArray());
+        }
+
+        var reattachBySourceId = reattachResult.Documents
+            .GroupBy(item => item.PurchaseReturnId)
+            .ToDictionary(group => group.Key, group => group.Last());
+        foreach (var item in createdDocuments)
+        {
+            if (!reattachBySourceId.TryGetValue(item.SourceDocumentId, out var relation) ||
+                !relation.IsSuccessful)
+            {
+                results.Add(Failed(
+                    item.SourceDocumentId,
+                    "CreatedWithError",
+                    relation?.ErrorCode ?? "PURCHASERETURN_PAYMENT_RELATIONS_REATTACH_FAILED",
+                    relation?.Error ?? "The purchasereturn was created but related payment documents could not be reattached.",
+                    item.NewDocumentId));
+            }
+        }
+
+        var documentsForVerification = createdDocuments
+            .Where(item => reattachBySourceId.TryGetValue(item.SourceDocumentId, out var relation) && relation.IsSuccessful)
+            .ToArray();
+        foreach (var verificationBatch in documentsForVerification.Chunk(MoySkladPurchaseReturnGateway.BatchSize))
+        {
             try
             {
                 var verification = await _verifier.VerifyAsync(
                     accountId,
                     mainCounterpartyId,
-                    createResult.Created,
+                    verificationBatch,
                     cancellationToken);
                 results.AddRange(verification.Documents);
                 foreach (var document in verification.Documents.Where(item => item.Status != "Verified"))
@@ -174,11 +250,12 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
             catch (Exception exception) when (exception is InvalidOperationException or JsonException or EgressException)
             {
                 _logger.LogError(exception, "purchasereturn verification batch failed: account_id={AccountId}", accountId);
-                results.AddRange(createResult.Created.Select(item => Failed(
+                results.AddRange(verificationBatch.Select(item => Failed(
                     item.SourceDocumentId,
                     "VerificationFailed",
                     "PURCHASERETURN_VERIFICATION_FAILED",
-                    exception.Message)));
+                    exception.Message,
+                    item.NewDocumentId)));
             }
         }
 
@@ -437,7 +514,8 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
         Guid sourceId,
         string status,
         string code,
-        string message) => new(sourceId, null, status, [], [], [], code, message);
+        string message,
+        Guid? newDocumentId = null) => new(sourceId, newDocumentId, status, [], [], [], code, message);
 
     private sealed record PreparedPurchaseReturn(
         Guid SourceDocumentId,

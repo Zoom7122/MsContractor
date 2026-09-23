@@ -53,6 +53,102 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_ReattachesAfterCreateAndBeforeVerification()
+    {
+        var sourceId = Guid.NewGuid();
+        var events = new List<string>();
+        var gateway = new RecordingGateway(events)
+        {
+            DeleteResults = ids => ids.Select(id => new MoySkladPurchaseReturnBatchDeleteResult(id, true)).ToArray(),
+            CreateResults = items => items.Select(item => new MoySkladPurchaseReturnBatchCreateResult(
+                item.SourceDocumentId, Guid.NewGuid(), item.PayloadJson)).ToArray()
+        };
+        var verifier = new RecordingVerifier(events);
+        var orchestrator = CreateOrchestrator(
+            new PreparationStub([sourceId]),
+            RepositoryFor(sourceId),
+            gateway,
+            verifier: verifier,
+            factureRelations: new RecordingFactureRelationsService(events));
+
+        await orchestrator.ExecuteAsync(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            [sourceId],
+            CancellationToken.None);
+
+        Assert.Equal(["delete", "create", "reattach", "verify"], events);
+        Assert.Equal([sourceId], verifier.VerifiedIds);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ReturnsCreatedWithErrorAndSkipsVerificationWhenReattachFails()
+    {
+        var sourceId = Guid.NewGuid();
+        var newId = Guid.NewGuid();
+        var events = new List<string>();
+        var gateway = new RecordingGateway(events)
+        {
+            DeleteResults = ids => ids.Select(id => new MoySkladPurchaseReturnBatchDeleteResult(id, true)).ToArray(),
+            CreateResults = items => items.Select(item => new MoySkladPurchaseReturnBatchCreateResult(
+                item.SourceDocumentId, newId, item.PayloadJson)).ToArray()
+        };
+        var verifier = new RecordingVerifier(events);
+        var orchestrator = CreateOrchestrator(
+            new PreparationStub([sourceId]),
+            RepositoryFor(sourceId),
+            gateway,
+            verifier: verifier,
+            factureRelations: new FailingReattachFactureRelationsService());
+
+        var result = await orchestrator.ExecuteAsync(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            [sourceId],
+            CancellationToken.None);
+
+        var document = Assert.Single(result.Documents);
+        Assert.Equal(newId, document.NewDocumentId);
+        Assert.Equal("CreatedWithError", document.Status);
+        Assert.Equal("PURCHASERETURN_PAYMENT_RELATIONS_REATTACH_FAILED", document.ErrorCode);
+        Assert.Empty(verifier.VerifiedIds);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DoesNotLoadOrCreatePayloadForFactureRelationFailures()
+    {
+        var readyId = Guid.NewGuid();
+        var failedId = Guid.NewGuid();
+        var gateway = new RecordingGateway([])
+        {
+            DeleteResults = ids => ids.Select(id => new MoySkladPurchaseReturnBatchDeleteResult(id, true)).ToArray(),
+            CreateResults = items => items.Select(item => new MoySkladPurchaseReturnBatchCreateResult(
+                item.SourceDocumentId,
+                Guid.NewGuid(),
+                item.PayloadJson)).ToArray()
+        };
+        var orchestrator = CreateOrchestrator(
+            new PreparationStub([readyId, failedId]),
+            RepositoryFor(readyId, failedId),
+            gateway,
+            factureRelations: new FilteringFactureRelationsService(readyId, failedId));
+
+        var result = await orchestrator.ExecuteAsync(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            [readyId, failedId],
+            CancellationToken.None);
+
+        Assert.Single(gateway.DeletedBatches);
+        Assert.Equal([readyId], gateway.DeletedBatches[0]);
+        Assert.Single(gateway.CreatedBatches);
+        Assert.Equal([readyId], gateway.CreatedBatches[0].Select(item => item.SourceDocumentId));
+        var failed = result.Documents.Single(item => item.SourceDocumentId == failedId);
+        Assert.Equal("Failed", failed.Status);
+        Assert.Equal("FACTURE_RELATION_FAILED", failed.ErrorCode);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_RetriesItemLevelCreateErrorsWithoutRetryingSuccessfulItems()
     {
         var firstId = Guid.NewGuid();
@@ -143,9 +239,11 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
         IPurchaseReturnPreparationRepository repository,
         RecordingGateway gateway,
         PurchaseReturnRecreationOptions? options = null,
-        IPurchaseReturnVerifier? verifier = null) =>
+        IPurchaseReturnVerifier? verifier = null,
+        IPurchaseReturnFactureRelationsService? factureRelations = null) =>
         new(
             preparation,
+            factureRelations ?? new NoopFactureRelationsService(),
             repository,
             gateway,
             verifier ?? new NoopVerifier(),
@@ -155,6 +253,111 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
             })),
             options ?? new PurchaseReturnRecreationOptions(1, TimeSpan.Zero),
             NullLogger<PurchaseReturnRecreationOrchestrator>.Instance);
+
+    private sealed class NoopFactureRelationsService : IPurchaseReturnFactureRelationsService
+    {
+        public Task<PurchaseReturnFactureRelationsResult> CheckAsync(
+            Guid accountId,
+            IReadOnlyCollection<Guid> purchaseReturnIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new PurchaseReturnFactureRelationsResult(
+                purchaseReturnIds
+                    .Select(id => new PurchaseReturnFactureRelationResult(id, "NoRelations"))
+                    .ToArray()));
+
+        public Task<PurchaseReturnRelationsReattachResult> ReattachAsync(
+            Guid accountId,
+            IReadOnlyCollection<Guid> detachedPurchaseReturnIds,
+            IReadOnlyDictionary<Guid, Guid> oldToNewPurchaseReturnIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new PurchaseReturnRelationsReattachResult(
+                oldToNewPurchaseReturnIds.Select(item => new PurchaseReturnRelationsReattachItem(
+                    item.Key,
+                    item.Value,
+                    "NoRelations")).ToArray()));
+    }
+
+    private sealed class FilteringFactureRelationsService(Guid readyId, Guid failedId)
+        : IPurchaseReturnFactureRelationsService
+    {
+        public Task<PurchaseReturnFactureRelationsResult> CheckAsync(
+            Guid accountId,
+            IReadOnlyCollection<Guid> purchaseReturnIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new PurchaseReturnFactureRelationsResult(
+                purchaseReturnIds.Select(id => id == readyId
+                    ? new PurchaseReturnFactureRelationResult(id, "Detached")
+                    : new PurchaseReturnFactureRelationResult(
+                        failedId,
+                        "Failed",
+                        "FACTURE_RELATION_FAILED",
+                        "facture relation detach failed.")).ToArray()));
+
+        public Task<PurchaseReturnRelationsReattachResult> ReattachAsync(
+            Guid accountId,
+            IReadOnlyCollection<Guid> detachedPurchaseReturnIds,
+            IReadOnlyDictionary<Guid, Guid> oldToNewPurchaseReturnIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new PurchaseReturnRelationsReattachResult(
+                oldToNewPurchaseReturnIds.Select(item => new PurchaseReturnRelationsReattachItem(
+                    item.Key,
+                    item.Value,
+                    "NoRelations")).ToArray()));
+    }
+
+    private sealed class RecordingFactureRelationsService(List<string> events)
+        : IPurchaseReturnFactureRelationsService
+    {
+        public Task<PurchaseReturnFactureRelationsResult> CheckAsync(
+            Guid accountId,
+            IReadOnlyCollection<Guid> purchaseReturnIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new PurchaseReturnFactureRelationsResult(
+                purchaseReturnIds
+                    .Select(id => new PurchaseReturnFactureRelationResult(id, "NoRelations"))
+                    .ToArray()));
+
+        public Task<PurchaseReturnRelationsReattachResult> ReattachAsync(
+            Guid accountId,
+            IReadOnlyCollection<Guid> detachedPurchaseReturnIds,
+            IReadOnlyDictionary<Guid, Guid> oldToNewPurchaseReturnIds,
+            CancellationToken cancellationToken)
+        {
+            events.Add("reattach");
+            return Task.FromResult(new PurchaseReturnRelationsReattachResult(
+                oldToNewPurchaseReturnIds.Select(item => new PurchaseReturnRelationsReattachItem(
+                    item.Key,
+                    item.Value,
+                    "NoRelations")).ToArray()));
+        }
+    }
+
+    private sealed class FailingReattachFactureRelationsService
+        : IPurchaseReturnFactureRelationsService
+    {
+        public Task<PurchaseReturnFactureRelationsResult> CheckAsync(
+            Guid accountId,
+            IReadOnlyCollection<Guid> purchaseReturnIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new PurchaseReturnFactureRelationsResult(
+                purchaseReturnIds
+                    .Select(id => new PurchaseReturnFactureRelationResult(id, "NoRelations"))
+                    .ToArray()));
+
+        public Task<PurchaseReturnRelationsReattachResult> ReattachAsync(
+            Guid accountId,
+            IReadOnlyCollection<Guid> detachedPurchaseReturnIds,
+            IReadOnlyDictionary<Guid, Guid> oldToNewPurchaseReturnIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new PurchaseReturnRelationsReattachResult(
+                oldToNewPurchaseReturnIds.Select(item => new PurchaseReturnRelationsReattachItem(
+                    item.Key,
+                    item.Value,
+                    "Failed",
+                    "PURCHASERETURN_PAYMENT_RELATIONS_REATTACH_FAILED",
+                    "Could not reattach cashin 00000000-0000-0000-0000-000000000001 for purchasereturn."))
+                    .ToArray()));
+    }
 
     private sealed class NoopVerifier : IPurchaseReturnVerifier
     {

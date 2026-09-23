@@ -97,6 +97,53 @@ public sealed class SalesReturnRecreationOrchestratorTests
     }
 
     [Fact]
+    public async Task RecreateAsync_MapsCreatedIdsByBatchPosition()
+    {
+        var firstId = Guid.NewGuid();
+        var secondId = Guid.NewGuid();
+        var gateway = new RecordingGateway([]) { ReverseCreateResponses = true };
+        var operations = new RecordingOperationsRepository();
+
+        await Service(
+            new Dictionary<Guid, string>
+            {
+                [firstId] = SourceDocument(firstId),
+                [secondId] = SourceDocument(secondId)
+            },
+            new Dictionary<Guid, IReadOnlyDictionary<Guid, string>>
+            {
+                [firstId] = Positions(firstId),
+                [secondId] = Positions(secondId)
+            },
+            operations,
+            gateway).RecreateAsync(Guid.NewGuid(), Guid.NewGuid(), [firstId, secondId], CancellationToken.None);
+
+        Assert.Equal(gateway.CreatedIds[1], operations.Operation!.Items.Single(item => item.SourceDocumentId == firstId).NewDocumentId);
+        Assert.Equal(gateway.CreatedIds[0], operations.Operation.Items.Single(item => item.SourceDocumentId == secondId).NewDocumentId);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_DoesNotReattachWhenReturnedSyncIdDoesNotMatch()
+    {
+        var sourceId = Guid.NewGuid();
+        var gateway = new RecordingGateway([]) { ReturnedSyncIdOverride = Guid.NewGuid() };
+        var relations = new TrackingRelationsService();
+        var operations = new RecordingOperationsRepository();
+
+        var result = await Service(
+            new Dictionary<Guid, string> { [sourceId] = SourceDocument(sourceId) },
+            new Dictionary<Guid, IReadOnlyDictionary<Guid, string>> { [sourceId] = Positions(sourceId) },
+            operations,
+            gateway,
+            relations: relations).RecreateAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
+
+        var document = Assert.Single(result.Documents);
+        Assert.Equal("SALESRETURN_NEW_CREATE_SYNC_ID_MISMATCH", document.ErrorCode);
+        Assert.Null(document.NewDocumentId);
+        Assert.Equal(0, relations.ReattachCalls);
+    }
+
+    [Fact]
     public async Task RecreateAsync_AllowsSalesReturnWithoutSavedPositions()
     {
         var sourceId = Guid.NewGuid();
@@ -419,8 +466,11 @@ public sealed class SalesReturnRecreationOrchestratorTests
 
         public List<string> Writes { get; } = [];
         public List<string> NewPayloads { get; } = [];
+        public List<Guid> CreatedIds { get; } = [];
         public bool ReturnInvalidNewDocument { get; set; }
         public bool ReturnCreateErrorWithoutDocument { get; set; }
+        public bool ReverseCreateResponses { get; set; }
+        public Guid? ReturnedSyncIdOverride { get; set; }
         private int _createCalls;
 
         public Task<IReadOnlyDictionary<Guid, string>> GetAsync(Guid accountId, Guid requestedByUserId,
@@ -448,7 +498,7 @@ public sealed class SalesReturnRecreationOrchestratorTests
             _events?.Add($"create:{documents.Count}");
             if (_createCalls == 1)
                 NewPayloads.AddRange(documents.Select(item => item.PayloadJson));
-            return Task.FromResult<IReadOnlyList<MoySkladSalesReturnBatchCreateResult>>(documents.Select(item =>
+            var results = documents.Select(item =>
             {
                 if (ReturnCreateErrorWithoutDocument && _createCalls == 1)
                 {
@@ -463,9 +513,42 @@ public sealed class SalesReturnRecreationOrchestratorTests
                     json["organization"] = JsonSerializer.SerializeToNode(Reference("organization", Guid.NewGuid()));
                     response = json.ToJsonString();
                 }
+                var createdId = Guid.NewGuid();
+                CreatedIds.Add(createdId);
                 return new MoySkladSalesReturnBatchCreateResult(
-                    item.SourceDocumentId, item.SyncId, Guid.NewGuid(), response);
-            }).ToArray());
+                    item.SourceDocumentId,
+                    item.SyncId,
+                    createdId,
+                    response,
+                    ReturnedSyncId: ReturnedSyncIdOverride);
+            }).ToArray();
+            if (ReverseCreateResponses)
+                results = results.Reverse().ToArray();
+            return Task.FromResult<IReadOnlyList<MoySkladSalesReturnBatchCreateResult>>(results);
+        }
+    }
+
+    private sealed class TrackingRelationsService : ISalesReturnRelationsService
+    {
+        public int ReattachCalls { get; private set; }
+
+        public Task PrepareAndDetachAsync(
+            SalesReturnRecreationOperation operation,
+            string correlationId,
+            CancellationToken cancellationToken)
+        {
+            foreach (var item in operation.Items)
+                item.RelationsStatus = "RelationsDetached";
+            return Task.CompletedTask;
+        }
+
+        public Task ReattachAsync(
+            SalesReturnRecreationOperation operation,
+            string correlationId,
+            CancellationToken cancellationToken)
+        {
+            ReattachCalls++;
+            return Task.CompletedTask;
         }
     }
 

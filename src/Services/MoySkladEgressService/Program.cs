@@ -2,6 +2,7 @@ using MsContractor.MoySkladEgressService.Clients;
 using MsContractor.MoySkladEgressService.Configuration;
 using MsContractor.MoySkladEgressService.Gateways.Counterparties;
 using MsContractor.MoySkladEgressService.Gateways.Documents;
+using MsContractor.MoySkladEgressService.Gateways.Documents.Facturein;
 using MsContractor.MoySkladEgressService.Gateways.Documents.Purchasereturn;
 using MsContractor.MoySkladEgressService.Gateways.Documents.Salesreturn;
 using MsContractor.MoySkladEgressService.HealthChecks;
@@ -11,6 +12,7 @@ using MsContractor.BuildingBlocks.Health;
 using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
 using MsContractor.MoySkladEgressService.Services.Documents;
+using MsContractor.MoySkladEgressService.Services.Documents.Facturein;
 using MsContractor.MoySkladEgressService.Services.Documents.Purchasereturn;
 using MsContractor.MoySkladEgressService.Services.Documents.Salesreturn;
 using MsContractor.MoySkladEgressService.Repositories;
@@ -51,11 +53,13 @@ var agentAndContractOptions = MoySkladDocumentAgentAndContractOptions.Parse(
 var documentDiscoveryOptions = MoySkladDocumentDiscoveryOptions.Parse(
     builder.Configuration["DOCUMENTS_DISCOVERY"]);
 var purchaseReturnRecreationOptions = PurchaseReturnRecreationOptions.Parse(builder.Configuration);
+var factureInRecreationOptions = FactureInRecreationOptions.Parse(builder.Configuration);
 builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(egressOptions));
 builder.Services.AddSingleton(documentChangeOptions);
 builder.Services.AddSingleton(agentAndContractOptions);
 builder.Services.AddSingleton(documentDiscoveryOptions);
 builder.Services.AddSingleton(purchaseReturnRecreationOptions);
+builder.Services.AddSingleton(factureInRecreationOptions);
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     ConnectionMultiplexer.Connect(
         builder.Configuration["Redis:ConnectionString"]
@@ -107,6 +111,14 @@ builder.Services.AddHttpClient<IMoySkladSalesReturnPositionsGateway, MoySkladSal
     AutomaticDecompression = DecompressionMethods.GZip
 });
 builder.Services.AddHttpClient<IMoySkladPurchaseReturnGateway, MoySkladPurchaseReturnGateway>(client =>
+{
+    client.BaseAddress = egressOptions.JsonApiBaseUrl;
+    client.Timeout = TimeSpan.FromSeconds(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.GZip
+});
+builder.Services.AddHttpClient<IMoySkladFactureInGateway, MoySkladFactureInGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
     client.Timeout = TimeSpan.FromSeconds(30);
@@ -167,6 +179,12 @@ builder.Services.AddScoped<IPurchaseReturnMoneyRelationsRepository>(serviceProvi
 builder.Services.AddScoped<IPurchaseReturnFactureRelationsService, PurchaseReturnFactureRelationsService>();
 builder.Services.AddScoped<IPurchaseReturnVerifier, PurchaseReturnVerifier>();
 builder.Services.AddScoped<IPurchaseReturnRecreationOrchestrator, PurchaseReturnRecreationOrchestrator>();
+builder.Services.AddScoped<IFactureInRecreationOrchestrator, FactureInRecreationOrchestrator>();
+builder.Services.AddScoped<IFactureInRawDataRepository, FactureInRawDataRepository>();
+builder.Services.AddScoped<IFactureInRecreationItemRepository, FactureInRecreationItemRepository>();
+builder.Services.AddScoped<IFactureInPreparationService, FactureInPreparationService>();
+builder.Services.AddScoped<IFactureInPayloadBuilder, FactureInPayloadBuilder>();
+builder.Services.AddScoped<IFactureInDocumentTransferService, FactureInDocumentTransferService>();
 builder.Services.AddSingleton<IMoySkladRateLimiter, MoySkladRateLimiter>();
 builder.Services.AddHealthChecks()
     .AddCheck<EgressReadinessHealthCheck>("egress-dependencies", tags: ["ready"]);

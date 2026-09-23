@@ -55,6 +55,10 @@ public sealed record PurchaseReturnRecreationRequest(
     Guid MainCounterpartyId,
     IReadOnlyList<Guid>? PurchaseReturnIds);
 
+public sealed record FactureInRecreationRequest(
+    Guid MainCounterpartyId,
+    IReadOnlyList<Guid>? FactureInIds);
+
 public sealed record PurchaseReturnRecreationResponse(
     IReadOnlyList<Guid> TransferredDocumentIds,
     IReadOnlyList<Guid> SkippedDocumentIds,
@@ -70,6 +74,34 @@ public sealed record PurchaseReturnSkippedDocumentResponse(
 public sealed record PurchaseReturnCreatedWithErrorResponse(
     Guid SourceDocumentId,
     Guid NewDocumentId,
+    string Status,
+    string? ErrorCode,
+    string? Error);
+
+public sealed record FactureInRecreationResponse(
+    IReadOnlyList<Guid> TransferredDocumentIds,
+    IReadOnlyList<Guid> SkippedDocumentIds,
+    IReadOnlyList<FactureInSkippedDocumentResponse>? SkippedDocuments = null,
+    IReadOnlyList<FactureInCreatedWithErrorResponse>? CreatedWithErrors = null,
+    IReadOnlyList<FactureInFailedDocumentResponse>? FailedDocuments = null);
+
+public sealed record FactureInSkippedDocumentResponse(
+    Guid DocumentId,
+    string Status,
+    string? ErrorCode,
+    string? Error);
+
+public sealed record FactureInCreatedWithErrorResponse(
+    Guid SourceDocumentId,
+    Guid NewDocumentId,
+    string Status,
+    string? ErrorCode,
+    string? Error);
+
+public sealed record FactureInFailedDocumentResponse(
+    Guid SourceDocumentId,
+    Guid NewSyncId,
+    Guid? NewDocumentId,
     string Status,
     string? ErrorCode,
     string? Error);

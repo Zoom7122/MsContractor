@@ -122,9 +122,68 @@ class DependentDocumentPayloadTests(unittest.TestCase):
         self.assertEqual(
             {
                 "salesreturn", "purchasereturn", "retailsalesreturn", "factureout", "facturein",
-                "demand", "supply", "retaildemand",
+                "demand", "supply", "retaildemand", "paymentout", "cashout",
             },
             selected,
+        )
+
+    def test_facturein_scenario_jobs_have_required_order(self) -> None:
+        selected = {
+            "supply", "facturein", "purchasereturn", "paymentout", "cashout"
+        }
+
+        jobs = ms_docs.dependent_document_jobs(selected, facturein_scenario=True)
+
+        self.assertEqual(
+            jobs[:5],
+            [
+                ("facturein", ms_docs.FACTUREIN_SUPPLY_JOB),
+                ("purchasereturn", ms_docs.FACTUREIN_PURCHASE_RETURN_JOB),
+                ("paymentout", ms_docs.FACTUREIN_SUPPLY_PAYMENTOUT_JOB),
+                ("cashout", ms_docs.FACTUREIN_SUPPLY_CASHOUT_JOB),
+                ("facturein", ms_docs.FACTUREIN_PAYMENTOUT_JOB),
+            ],
+        )
+        self.assertIn("paymentout", ms_docs.dependent_document_types(selected, True))
+        self.assertIn("cashout", ms_docs.dependent_document_types(selected, True))
+
+    def test_facturein_scenario_uses_one_paymentout_for_supply_and_facturein(self) -> None:
+        created = {
+            "paymentout": [source("paymentout", "paymentout-id")],
+        }
+
+        selected = ms_docs.created_document_at_index(
+            created, "paymentout", 0
+        )
+
+        self.assertEqual(selected["id"], "paymentout-id")
+
+    def test_facturein_scenario_uses_explicit_paymentout_not_paymentin(self) -> None:
+        args = argparse.Namespace(all=False, docs=["facturein"], stats=False)
+
+        selected = ms_docs.selected_document_types(args)
+
+        self.assertIn("paymentout", selected)
+        self.assertNotIn("paymentin", selected)
+        self.assertIn("cashout", selected)
+        self.assertNotIn("factureout", selected)
+
+    def test_facturein_in_ms_document_types_enables_scenario(self) -> None:
+        args = argparse.Namespace(all=False, docs=None, stats=False)
+
+        with patch.dict(
+            ms_docs.os.environ,
+            {
+                "MS_DOCUMENT_TYPES": "facturein",
+                "MS_SALESRETURN_DOCUMENTS": "",
+                "MS_PURCHASERETURN_DOCUMENTS": "",
+            },
+        ):
+            selected = ms_docs.selected_document_types(args)
+
+        self.assertEqual(
+            selected,
+            {"supply", "facturein", "purchasereturn", "paymentout", "cashout"},
         )
 
     def test_return_mapping_adds_configured_documents_and_sources(self) -> None:
@@ -167,6 +226,30 @@ class DependentDocumentPayloadTests(unittest.TestCase):
             {"operations": [ms_docs.meta(purchasereturn)]},
         )
         self.assertEqual(payload["operations"], [ms_docs.meta(purchasereturn)])
+
+    def test_paymentout_on_supply_uses_supply_operations(self) -> None:
+        supply = source("supply", "supply-id")
+        expense_item = entity("expenseitem", "expense-item")
+        template = {
+            "meta": {"href": "https://example.test/paymentout/new"},
+            "agent": supply["agent"],
+            "operations": [ms_docs.meta(supply)],
+        }
+
+        with patch.object(ms_docs, "api", return_value=template) as api_mock:
+            payload = ms_docs.financial_document_doc(
+                "paymentout", supply, expense_item
+            )
+
+        api_mock.assert_called_once_with(
+            "PUT",
+            "/entity/paymentout/new",
+            {
+                "operations": [ms_docs.meta(supply)],
+            },
+        )
+        self.assertEqual(payload["operations"], [ms_docs.meta(supply)])
+        self.assertEqual(payload["expenseItem"], ms_docs.meta(expense_item))
 
     def test_return_mapping_can_create_same_type_in_both_scenarios(self) -> None:
         with patch.dict(
@@ -323,6 +406,14 @@ class DependentDocumentPayloadTests(unittest.TestCase):
         self.assertEqual(payload["supply"], ms_docs.meta(supply))
         self.assertEqual(payload["positions"][0]["quantity"], 1)
 
+    def test_purchasereturn_can_receive_facturein_during_creation(self) -> None:
+        supply = source("supply", "supply-id")
+        facturein = source("facturein", "facturein-id")
+
+        payload = ms_docs.purchasereturn_doc(supply, facturein)
+
+        self.assertEqual(payload["factureIn"], ms_docs.meta(facturein))
+
     def test_retailsalesreturn_uses_retaildemand_and_payment_sums(self) -> None:
         demand = source("retaildemand", "retail-demand-id")
         demand.update({
@@ -379,6 +470,131 @@ class DependentDocumentPayloadTests(unittest.TestCase):
         self.assertEqual(payload["payments"], [ms_docs.meta(paymentout)])
         self.assertNotIn("cashOuts", payload)
 
+    def test_factureout_on_purchasereturn_uses_returns_relation(self) -> None:
+        purchasereturn = source("purchasereturn", "return-id")
+
+        payload = ms_docs.facture_template_payload(
+            "factureout", "purchasereturn", purchasereturn
+        )
+
+        self.assertEqual(payload["returns"], [ms_docs.meta(purchasereturn)])
+        self.assertNotIn("payments", payload)
+
+    def test_cashout_on_supply_uses_supply_operations(self) -> None:
+        supply = source("supply", "supply-id")
+        expense_item = entity("expenseitem", "expense-item")
+
+        template = {
+            "meta": {"href": "https://example.test/cashout/new"},
+            "agent": supply["agent"],
+            "operations": [ms_docs.meta(supply)],
+        }
+        with patch.object(ms_docs, "api", return_value=template) as api_mock:
+            payload = ms_docs.financial_document_doc("cashout", supply, expense_item)
+
+        api_mock.assert_called_once_with(
+            "PUT",
+            "/entity/cashout/new",
+            {"operations": [ms_docs.meta(supply)]},
+        )
+        self.assertEqual(payload["operations"], [ms_docs.meta(supply)])
+        self.assertEqual(payload["expenseItem"], ms_docs.meta(expense_item))
+
+    def test_cashout_can_receive_facturein_during_creation(self) -> None:
+        supply = source("supply", "supply-id")
+        facturein = source("facturein", "facturein-id")
+        template = {
+            "meta": {"href": "https://example.test/cashout/new"},
+            "agent": supply["agent"],
+            "operations": [ms_docs.meta(supply)],
+        }
+
+        with patch.object(ms_docs, "api", return_value=template):
+            payload = ms_docs.financial_document_doc(
+                "cashout", supply, facturein=facturein
+            )
+
+        self.assertEqual(payload["factureIn"], ms_docs.meta(facturein))
+
+    def test_cashout_reuses_existing_supply_facturein(self) -> None:
+        cashout = source("cashout", "cashout-id")
+        facturein = source("facturein", "facturein-id")
+        updated_cashout = dict(cashout)
+        updated_cashout["factureIn"] = ms_docs.meta(facturein)
+
+        with patch.object(
+            ms_docs,
+            "api",
+            side_effect=[None, updated_cashout],
+        ) as api_mock:
+            result = ms_docs.attach_facturein_to_document(
+                "cashout", cashout, facturein
+            )
+
+        self.assertEqual(result["id"], "cashout-id")
+        self.assertEqual(
+            api_mock.call_args_list[0].args,
+            (
+                "PUT",
+                "/entity/cashout/cashout-id",
+                {"factureIn": ms_docs.meta(facturein)},
+            ),
+        )
+        self.assertEqual(
+            api_mock.call_args_list[1].args,
+            ("GET", "/entity/cashout/cashout-id?expand=factureIn"),
+        )
+
+    def test_facturein_scenario_has_only_supply_and_paymentout_creation_bases(self) -> None:
+        jobs = ms_docs.dependent_document_jobs(
+            {"supply", "facturein", "purchasereturn", "paymentout", "cashout"},
+            facturein_scenario=True,
+        )
+
+        self.assertEqual(
+            [job for job in jobs if job[0] == "facturein"],
+            [
+                ("facturein", ms_docs.FACTUREIN_SUPPLY_JOB),
+                ("facturein", ms_docs.FACTUREIN_PAYMENTOUT_JOB),
+            ],
+        )
+
+    def test_facturein_relation_is_verified_for_cashout(self) -> None:
+        cashout = source("cashout", "cashout-id")
+        facturein = source("facturein", "facturein-id")
+        cashout["factureIn"] = ms_docs.meta(facturein)
+
+        ms_docs.verify_dependent_document(
+            "cashout", cashout, cashout["agent"], "facturein", facturein
+        )
+
+    def test_purchasereturn_facturein_relation_is_verified_during_creation(self) -> None:
+        purchasereturn = source("purchasereturn", "return-id")
+        supply = source("supply", "supply-id")
+        facturein = source("facturein", "facturein-id")
+        purchasereturn["positions"] = {"rows": [source("position", "position-id")]}
+        fetched = dict(purchasereturn)
+        fetched["factureIn"] = ms_docs.meta(facturein)
+        fetched["supply"] = ms_docs.meta(supply)
+        created = entity("purchasereturn", "return-id")
+
+        with patch.object(ms_docs, "create_entity", return_value=created), patch.object(
+            ms_docs, "api", return_value=fetched
+        ) as api_mock:
+            result = ms_docs.create_and_verify_dependent_document(
+                "purchasereturn",
+                ms_docs.purchasereturn_doc(purchasereturn, facturein),
+                purchasereturn["agent"],
+                "supply",
+                supply,
+                facturein,
+            )
+
+        self.assertEqual(result["id"], "return-id")
+        api_mock.assert_called_once_with(
+            "GET", "/entity/purchasereturn/return-id?expand=positions,factureIn"
+        )
+
     def test_dependent_document_verification_expands_positions(self) -> None:
         demand = source("demand", "demand-id")
         created = entity("salesreturn", "return-id")
@@ -391,6 +607,23 @@ class DependentDocumentPayloadTests(unittest.TestCase):
             )
 
         self.assertEqual(api_mock.call_args_list[1].args[1], "/entity/salesreturn/return-id?expand=positions")
+
+    def test_financial_dependent_document_does_not_request_positions(self) -> None:
+        created = entity("paymentout", "payment-out-id")
+        fetched = source("paymentout", "payment-out-id")
+        fetched.pop("positions")
+
+        with patch.object(ms_docs, "create_entity", return_value=created), patch.object(
+            ms_docs, "api", return_value=fetched
+        ) as api_mock:
+            result = ms_docs.create_and_verify_dependent_document(
+                "paymentout", {"expenseItem": {}}, fetched["agent"]
+            )
+
+        self.assertEqual(result["id"], "payment-out-id")
+        api_mock.assert_called_once_with(
+            "GET", "/entity/paymentout/payment-out-id"
+        )
 
     def test_retailsalesreturn_is_skipped_when_retaildemand_is_missing(self) -> None:
         created = {}

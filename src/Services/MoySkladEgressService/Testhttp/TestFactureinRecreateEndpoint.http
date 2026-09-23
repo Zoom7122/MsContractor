@@ -1,0 +1,16 @@
+@MsContractor_MoySkladEgressService_HostAddress = http://localhost:8082
+@internalApiKey = HLgIyekmoPVyJUFAVv6U5XUsmxcQM8XwpmJvxS9EKSU=
+@accountId = b3d34ec3-243f-11f1-0a80-0b21000042b5
+@mainCounterpartyId = 615453e8-b762-11f1-0a80-1af9001efbbc
+# Replace with an existing facturein ID from the selected MoySklad account.
+@factureInIds = ["d653e3ef-b754-11f1-0a80-0baf0034e1a6","25e7eb3c-b74f-11f1-0a80-1f3b0018c335","6f252246-b755-11f1-0a80-1879003579fa","8ddb94cc-b762-11f1-0a80-07d1001f2408"]
+
+### Prepare facturein documents for recreation.
+POST {{MsContractor_MoySkladEgressService_HostAddress}}/internal/accounts/{{accountId}}/documents/facturein/recreate
+X-Internal-Api-Key: {{internalApiKey}}
+Content-Type: application/json
+
+{
+  "mainCounterpartyId": "{{mainCounterpartyId}}",
+  "factureInIds": {{factureInIds}}
+}

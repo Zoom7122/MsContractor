@@ -24,6 +24,75 @@ namespace MsContractor.MoySkladEgressService.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.FactureInRawData", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("DocumentId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("RawJson")
+                    .IsRequired()
+                    .HasColumnType("jsonb");
+
+                b.HasKey("AccountId", "DocumentId");
+
+                b.ToTable("facturein_raw_data", "egress");
+            });
+
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.FactureInRecreationItem", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("SourceFactureInId")
+                    .HasColumnType("uuid");
+
+                b.Property<DateTimeOffset>("CreatedAt")
+                    .HasColumnType("timestamp with time zone");
+
+                b.Property<string>("Error")
+                    .HasColumnType("text");
+
+                b.Property<string>("ErrorCode")
+                    .HasColumnType("text");
+
+                b.Property<Guid>("MainCounterpartyId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid?>("NewFactureInId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("NewSyncId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("PayloadJson")
+                    .IsRequired()
+                    .HasColumnType("jsonb");
+
+                b.Property<Guid?>("SourceSyncId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("Stage")
+                    .IsRequired()
+                    .HasColumnType("text");
+
+                b.Property<DateTimeOffset>("UpdatedAt")
+                    .HasColumnType("timestamp with time zone");
+
+                b.HasKey("AccountId", "SourceFactureInId");
+
+                b.HasOne("MsContractor.MoySkladEgressService.Models.FactureInRawData", null)
+                    .WithMany()
+                    .HasForeignKey("AccountId", "SourceFactureInId")
+                    .HasPrincipalKey("AccountId", "DocumentId")
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .IsRequired();
+
+                b.ToTable("facturein_recreation_items", "egress");
+            });
+
             modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.PurchaseReturnRawData", b =>
             {
                 b.Property<Guid>("AccountId")

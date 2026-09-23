@@ -38,6 +38,10 @@ public sealed class EgressDbContext : DbContext
 
     public DbSet<PurchaseReturnCashInRawData> PurchaseReturnCashInRawData => Set<PurchaseReturnCashInRawData>();
 
+    public DbSet<FactureInRawData> FactureInRawData => Set<FactureInRawData>();
+
+    public DbSet<FactureInRecreationItem> FactureInRecreationItems => Set<FactureInRecreationItem>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("egress");
@@ -203,6 +207,21 @@ public sealed class EgressDbContext : DbContext
         ConfigurePurchaseReturnRelatedRawData<PurchaseReturnCashInRawData>(
             modelBuilder,
             "purchasereturn_cashin_raw_data");
+
+        var factureInRawData = modelBuilder.Entity<FactureInRawData>();
+        factureInRawData.ToTable("facturein_raw_data");
+        factureInRawData.HasKey(item => new { item.AccountId, item.DocumentId });
+        factureInRawData.Property(item => item.RawJson).HasColumnType("jsonb");
+
+        var factureInRecreationItem = modelBuilder.Entity<FactureInRecreationItem>();
+        factureInRecreationItem.ToTable("facturein_recreation_items");
+        factureInRecreationItem.HasKey(item => new { item.AccountId, item.SourceFactureInId });
+        factureInRecreationItem.Property(item => item.PayloadJson).HasColumnType("jsonb");
+        factureInRecreationItem.HasOne<FactureInRawData>()
+            .WithMany()
+            .HasForeignKey(item => new { item.AccountId, item.SourceFactureInId })
+            .HasPrincipalKey(item => new { item.AccountId, item.DocumentId })
+            .OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigurePurchaseReturnRelatedRawData<TEntity>(

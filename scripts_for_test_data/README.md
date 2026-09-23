@@ -42,6 +42,29 @@ MS_PURCHASERETURN_DOCUMENTS=facturein,factureout,paymentin,cashin
 только связь через `paymentout`, поскольку прямой связи `facturein` с возвратом
 покупателя в API МойСклад нет.
 
+Если в `MS_DOCUMENT_TYPES` указан `facturein`, скрипт запускает отдельный
+сценарий на каждом КА. Он создаёт документы в таком порядке:
+
+```text
+supply
+ ├── facturein
+ ├── paymentout (через operations)
+ ├── purchasereturn (через supply)
+ └── cashout (через operations)
+
+paymentout     → facturein (через payments)
+purchasereturn → supply.facturein (через purchasereturn.factureIn при создании)
+cashout        → supply.facturein (через cashout.factureIn при создании)
+```
+
+Для `purchasereturn` и `cashout` используется уже созданный на `supply`
+`facturein`, а ссылка передаётся сразу в POST создаваемого документа. Отдельный
+PUT после создания в этом сценарии не используется: МойСклад принимает его без
+ошибки, но не сохраняет связь. Вторую фактуру на тот же `supply` создавать
+нельзя — API возвращает ошибку `35001`. Отдельный `paymentout` не создаётся:
+один платёж создаётся на `supply` и затем используется как основание для своего
+`facturein`.
+
 ## Удаление данных
 
 `mscontractor_delete_all_data.py` удаляет **все записи перечисленных ниже типов

@@ -171,6 +171,27 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.ToTable("inbox_messages", "catalog_sync");
                 });
 
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.MergeCounterpartyLock", b =>
+                {
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CounterpartyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("AcquiredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("MergeJobId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("AccountId", "CounterpartyId");
+
+                    b.HasIndex("MergeJobId", "AccountId");
+
+                    b.ToTable("merge_counterparty_locks", "catalog_sync");
+                });
+
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.MergeJob", b =>
                 {
                     b.Property<Guid>("Id")
@@ -226,6 +247,18 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.HasIndex("AccountId", "Status");
 
                     b.ToTable("merge_jobs", "catalog_sync");
+                });
+
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.MergeCounterpartyLock", b =>
+                {
+                    b.HasOne("MsContractor.CatalogSyncService.Models.MergeJob", "MergeJob")
+                        .WithMany()
+                        .HasForeignKey("MergeJobId", "AccountId")
+                        .HasPrincipalKey("Id", "AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MergeJob");
                 });
 
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.MergeOperation", b =>

@@ -31,7 +31,32 @@ public sealed class MergeCommandValidator(
 
         if (MergeJobStatuses.IsTerminal(job.Status))
         {
-            await repository.SaveInboxAsync(job.AccountId, NewInbox(job.MessageId, timeProvider.GetUtcNow()), cancellationToken);
+            await repository.SaveTerminalAsync(job.AccountId, job, NewInbox(job.MessageId, timeProvider.GetUtcNow()), cancellationToken);
+            return null;
+        }
+
+        var participantIds = command.DuplicateCounterpartyIds.Append(command.MainCounterpartyId).ToArray();
+        if (!await repository.OwnsLocksAsync(job.AccountId, job.Id, participantIds, cancellationToken))
+        {
+            // The job cannot safely resume. Release the locks it still owns while
+            // recording a terminal state, so those counterparties do not remain busy.
+            var now = timeProvider.GetUtcNow();
+            job.Status = MergeJobStatuses.Failed;
+            job.CompletedAt = now;
+            job.UpdatedAt = now;
+            var operation = job.Operations
+                .Where(item => !MergeOperationStatuses.IsTerminal(item.Status))
+                .OrderBy(item => item.Sequence)
+                .FirstOrDefault();
+            if (operation is not null)
+            {
+                operation.Status = MergeOperationStatuses.Failed;
+                operation.ErrorCode = "MERGE_COUNTERPARTY_LOCK_LOST";
+                operation.ErrorMessage = "Merge job no longer owns all counterparty locks.";
+                operation.CompletedAt = now;
+                operation.UpdatedAt = now;
+            }
+            await repository.SaveTerminalAsync(job.AccountId, job, NewInbox(job.MessageId, now), cancellationToken);
             return null;
         }
 

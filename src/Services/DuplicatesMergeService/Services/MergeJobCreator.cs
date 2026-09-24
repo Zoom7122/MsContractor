@@ -106,11 +106,13 @@ public sealed class MergeJobCreator : IMergeJobCreator
             MergeOperationTypes.RecreateSalesReturns, request.MainCounterpartyId, now));
         job.Operations.Add(NewOperation(job, 4,
             MergeOperationTypes.RecreatePurchaseReturns, request.MainCounterpartyId, now));
+        job.Operations.Add(NewOperation(job, 5,
+            MergeOperationTypes.RecreateFactureIns, request.MainCounterpartyId, now));
         for (var index = 0; index < request.DuplicateCounterpartyIds.Count; index++)
         {
             job.Operations.Add(NewOperation(
                 job,
-                index + 5,
+                index + 6,
                 MergeOperationTypes.ArchiveDuplicate,
                 request.DuplicateCounterpartyIds[index],
                 now));
@@ -125,7 +127,7 @@ public sealed class MergeJobCreator : IMergeJobCreator
             Payload = JsonSerializer.Serialize(command, JsonOptions),
             CreatedAt = now
         };
-        await _repository.CreateAsync(accountId, job, outbox, cancellationToken);
+        await _repository.CreateAsync(accountId, job, outbox, ids, now, cancellationToken);
         return new MergeJobAccepted(jobId, MergeJobStatuses.Pending);
     }
 

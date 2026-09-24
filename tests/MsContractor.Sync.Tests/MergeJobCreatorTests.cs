@@ -26,20 +26,85 @@ public sealed class MergeJobCreatorTests
         var job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
         Assert.Equal(accepted.MergeJobId, job.Id);
         Assert.Equal(MergeJobStatuses.Pending, job.Status);
-        Assert.Equal(6, job.Operations.Count);
+        Assert.Equal(7, job.Operations.Count);
         Assert.All(job.Operations, operation => Assert.Equal(MergeOperationStatuses.Pending, operation.Status));
         Assert.Equal(0, job.Operations.Single(item => item.OperationType == MergeOperationTypes.DiscoverDocuments).Sequence);
         Assert.Equal(2, job.Operations.Single(item => item.OperationType == MergeOperationTypes.ChangeDocumentCounterparties).Sequence);
         Assert.Equal(3, job.Operations.Single(item => item.OperationType == MergeOperationTypes.RecreateSalesReturns).Sequence);
         Assert.Equal(4, job.Operations.Single(item => item.OperationType == MergeOperationTypes.RecreatePurchaseReturns).Sequence);
+        Assert.Equal(5, job.Operations.Single(item => item.OperationType == MergeOperationTypes.RecreateFactureIns).Sequence);
         var archive = job.Operations.Single(item => item.OperationType == MergeOperationTypes.ArchiveDuplicate);
         Assert.Equal(fixture.Duplicate.Id, archive.CounterpartyId);
-        Assert.Equal(5, archive.Sequence);
+        Assert.Equal(6, archive.Sequence);
         var outbox = await fixture.Db.OutboxMessages.SingleAsync();
         Assert.Equal(nameof(MergeRequested), outbox.EventType);
         Assert.Equal(fixture.AccountId.ToString("D"), outbox.MessageKey);
         Assert.Equal(job.MessageId, outbox.Id);
         Assert.NotNull(JsonSerializer.Deserialize<MergeRequested>(outbox.Payload, JsonOptions));
+        Assert.Equal(new[] { fixture.Main.Id, fixture.Duplicate.Id }.Order(),
+            (await fixture.Db.MergeCounterpartyLocks.Where(item => item.MergeJobId == job.Id)
+                .Select(item => item.CounterpartyId).ToListAsync()).Order());
+    }
+
+    [Fact]
+    public async Task CreateAsync_RejectsBusyCounterpartyWithoutCreatingAnotherJobOrOutbox()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Creator.CreateAsync(
+            fixture.AccountId, Guid.NewGuid(), Guid.NewGuid(), fixture.Request(), CancellationToken.None);
+        fixture.Db.ChangeTracker.Clear();
+
+        var exception = await Assert.ThrowsAsync<MergeRequestException>(() => fixture.Creator.CreateAsync(
+            fixture.AccountId, Guid.NewGuid(), Guid.NewGuid(), fixture.Request(), CancellationToken.None));
+
+        Assert.Equal(MergeRequestError.CounterpartyBusy, exception.Error);
+        Assert.Equal("COUNTERPARTY_BUSY", exception.Code);
+        Assert.Single(await fixture.Db.MergeJobs.ToListAsync());
+        Assert.Single(await fixture.Db.OutboxMessages.ToListAsync());
+        Assert.Equal(2, await fixture.Db.MergeCounterpartyLocks.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreateAsync_LocksSurviveFullCatalogSnapshotClear()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Creator.CreateAsync(
+            fixture.AccountId, Guid.NewGuid(), Guid.NewGuid(), fixture.Request(), CancellationToken.None);
+
+        await new MsContractor.CatalogSyncService.Repositories.SyncRepository(fixture.Db)
+            .ClearSnapshotAsync(fixture.AccountId, CancellationToken.None);
+
+        Assert.Empty(await fixture.Db.Counterparties.AsNoTracking().ToListAsync());
+        Assert.Equal(2, await fixture.Db.MergeCounterpartyLocks.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreateAsync_AllowsIndependentMergeButRejectsSharedDuplicate()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var third = NewCounterparty(fixture.AccountId, fixture.Main.LastSyncRun, "Third");
+        var fourth = NewCounterparty(fixture.AccountId, fixture.Main.LastSyncRun, "Fourth");
+        fixture.Db.AddRange(third, fourth);
+        await fixture.Db.SaveChangesAsync();
+        await fixture.Creator.CreateAsync(
+            fixture.AccountId, Guid.NewGuid(), Guid.NewGuid(), fixture.Request(), CancellationToken.None);
+        fixture.Db.ChangeTracker.Clear();
+
+        var conflicting = fixture.Request() with
+        {
+            MainCounterpartyId = third.Id,
+            DuplicateCounterpartyIds = [fixture.Duplicate.Id]
+        };
+        var error = await Assert.ThrowsAsync<MergeRequestException>(() => fixture.Creator.CreateAsync(
+            fixture.AccountId, Guid.NewGuid(), Guid.NewGuid(), conflicting, CancellationToken.None));
+        Assert.Equal(MergeRequestError.CounterpartyBusy, error.Error);
+
+        var independent = conflicting with { DuplicateCounterpartyIds = [fourth.Id] };
+        await fixture.Creator.CreateAsync(
+            fixture.AccountId, Guid.NewGuid(), Guid.NewGuid(), independent, CancellationToken.None);
+
+        Assert.Equal(2, await fixture.Db.MergeJobs.CountAsync());
+        Assert.Equal(4, await fixture.Db.MergeCounterpartyLocks.CountAsync());
     }
 
     [Fact]

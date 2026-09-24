@@ -14,6 +14,7 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
     public DbSet<SyncOutboxMessage> OutboxMessages => Set<SyncOutboxMessage>();
     public DbSet<SyncWatermark> SyncWatermarks => Set<SyncWatermark>();
     public DbSet<MergeJob> MergeJobs => Set<MergeJob>();
+    public DbSet<MergeCounterpartyLock> MergeCounterpartyLocks => Set<MergeCounterpartyLock>();
     public DbSet<MergeOperation> MergeOperations => Set<MergeOperation>();
     public DbSet<CounterpartyDocument> CounterpartyDocuments => Set<CounterpartyDocument>();
     public DbSet<DocumentAdditionalCommission> DocumentAdditionalCommissions => Set<DocumentAdditionalCommission>();
@@ -129,6 +130,18 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
             entity.HasIndex(item => new { item.MergeJobId, item.OperationType, item.CounterpartyId }).IsUnique();
             entity.HasOne(item => item.MergeJob)
                 .WithMany(item => item.Operations)
+                .HasForeignKey(item => new { item.MergeJobId, item.AccountId })
+                .HasPrincipalKey(item => new { item.Id, item.AccountId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<MergeCounterpartyLock>(entity =>
+        {
+            entity.ToTable("merge_counterparty_locks");
+            entity.HasKey(item => new { item.AccountId, item.CounterpartyId });
+            entity.HasIndex(item => new { item.MergeJobId, item.AccountId });
+            entity.HasOne(item => item.MergeJob)
+                .WithMany()
                 .HasForeignKey(item => new { item.MergeJobId, item.AccountId })
                 .HasPrincipalKey(item => new { item.Id, item.AccountId })
                 .OnDelete(DeleteBehavior.Cascade);

@@ -73,6 +73,13 @@ builder.Services.AddHttpClient<IPurchaseReturnRecreationEgressClient, PurchaseRe
     client.Timeout = builder.Configuration.GetValue<TimeSpan?>("Merge:DocumentDiscoveryTimeout")
         ?? TimeSpan.FromMinutes(10);
 });
+builder.Services.AddScoped<IFactureInRecreationSender, FactureInRecreationSender>();
+builder.Services.AddHttpClient<IFactureInRecreationEgressClient, FactureInRecreationEgressClient>(client =>
+{
+    client.BaseAddress = new Uri(egressBaseUrl.EndsWith('/') ? egressBaseUrl : $"{egressBaseUrl}/");
+    client.Timeout = builder.Configuration.GetValue<TimeSpan?>("Merge:DocumentDiscoveryTimeout")
+        ?? TimeSpan.FromMinutes(10);
+});
 builder.Services.AddSingleton<IProducer<string, string>>(_ =>
     new ProducerBuilder<string, string>(new ProducerConfig
     {

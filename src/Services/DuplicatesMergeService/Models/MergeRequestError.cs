@@ -4,5 +4,6 @@ public enum MergeRequestError
 {
     Invalid,
     NotFound,
-    MainArchived
+    MainArchived,
+    CounterpartyBusy
 }

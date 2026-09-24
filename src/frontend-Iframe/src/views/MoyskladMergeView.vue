@@ -121,7 +121,9 @@ async function loadPreview() {
     if (requestToken !== previewRequestToken) {
       return
     }
-    error.value = requestError.message || 'Не удалось загрузить предпросмотр объединения'
+    error.value = requestError.response?.data?.code === 'COUNTERPARTY_BUSY'
+      ? 'Один из выбранных контрагентов уже участвует в объединении. Обновите поиск дубликатов.'
+      : requestError.message || 'Не удалось загрузить предпросмотр объединения'
     counterparties.value = []
     primaryCounterpartyId.value = ''
     fieldSelections.value = createEmptyFieldSelections()
@@ -216,7 +218,9 @@ async function handleSubmit() {
       })
     })
   } catch (requestError) {
-    error.value = requestError.message || 'Не удалось добавить объединение в очередь'
+    error.value = requestError.response?.data?.code === 'COUNTERPARTY_BUSY'
+      ? 'Один из выбранных контрагентов уже участвует в объединении. Обновите поиск дубликатов.'
+      : requestError.message || 'Не удалось добавить объединение в очередь'
   } finally {
     submitLoading.value = false
   }

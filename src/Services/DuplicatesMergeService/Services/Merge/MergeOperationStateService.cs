@@ -11,6 +11,7 @@ public interface IMergeOperationStateService
     Task EnsureDocumentChangeOperationAsync(MergeJob job, CancellationToken cancellationToken);
     Task EnsureSalesReturnRecreationOperationAsync(MergeJob job, CancellationToken cancellationToken);
     Task EnsurePurchaseReturnRecreationOperationAsync(MergeJob job, CancellationToken cancellationToken);
+    Task EnsureFactureInRecreationOperationAsync(MergeJob job, CancellationToken cancellationToken);
     Task StartJobAsync(MergeJob job, CancellationToken cancellationToken);
     Task<bool> ExecuteAsync(MergeJob job, MergeOperation operation, Func<CancellationToken, Task> action,
         string retryMessage, CancellationToken cancellationToken);
@@ -77,6 +78,33 @@ public sealed class MergeOperationStateService(
             CounterpartyId = job.MainCounterpartyId, Status = MergeOperationStatuses.Pending,
             CreatedAt = now, UpdatedAt = now
         };
+        await repository.InsertOperationAsync(job.AccountId, job, operation, cancellationToken);
+    }
+
+    public async Task EnsureFactureInRecreationOperationAsync(MergeJob job, CancellationToken cancellationToken)
+    {
+        if (job.Operations.Any(item => item.OperationType == MergeOperationTypes.RecreateFactureIns))
+            return;
+
+        var purchaseReturn = job.Operations
+            .SingleOrDefault(item => item.OperationType == MergeOperationTypes.RecreatePurchaseReturns);
+        var sequence = purchaseReturn is null
+            ? job.Operations.Where(item => item.OperationType != MergeOperationTypes.ArchiveDuplicate)
+                .DefaultIfEmpty().Max(item => item?.Sequence ?? -1) + 1
+            : purchaseReturn.Sequence + 1;
+        var now = timeProvider.GetUtcNow();
+        var operation = new MergeOperation
+        {
+            Id = Guid.NewGuid(), MergeJobId = job.Id, MergeJob = job, AccountId = job.AccountId,
+            Sequence = sequence, OperationType = MergeOperationTypes.RecreateFactureIns,
+            CounterpartyId = job.MainCounterpartyId, Status = MergeOperationStatuses.Pending,
+            CreatedAt = now, UpdatedAt = now
+        };
+        foreach (var archive in job.Operations
+                     .Where(item => item.OperationType == MergeOperationTypes.ArchiveDuplicate && item.Sequence <= sequence)
+                     .OrderBy(item => item.Sequence).ThenBy(item => item.Id).Select((item, index) => (item, index)))
+            archive.item.Sequence = sequence + archive.index + 1;
+
         await repository.InsertOperationAsync(job.AccountId, job, operation, cancellationToken);
     }
 
@@ -151,7 +179,7 @@ public sealed class MergeOperationStateService(
             : MergeJobStatuses.Completed;
         job.CompletedAt = now;
         job.UpdatedAt = now;
-        await repository.SaveInboxAsync(job.AccountId, NewInbox(job.MessageId, now), cancellationToken);
+        await repository.SaveTerminalAsync(job.AccountId, job, NewInbox(job.MessageId, now), cancellationToken);
     }
 
     private async Task MarkRunningAsync(MergeOperation operation, CancellationToken cancellationToken)
@@ -199,7 +227,7 @@ public sealed class MergeOperationStateService(
         job.Status = MergeJobStatuses.Failed;
         job.CompletedAt = now;
         job.UpdatedAt = now;
-        await repository.SaveInboxAsync(job.AccountId, NewInbox(job.MessageId, now), cancellationToken);
+        await repository.SaveTerminalAsync(job.AccountId, job, NewInbox(job.MessageId, now), cancellationToken);
     }
 
     private void Complete(MergeOperation operation)

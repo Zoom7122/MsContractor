@@ -41,6 +41,14 @@ public sealed class MergeSelectionPreviewService : IMergeSelectionPreviewService
                 "One or more counterparties were not found.");
         }
 
+        if (await _repository.HasMergeLocksAsync(accountId, ids, cancellationToken))
+        {
+            throw new MergeSelectionPreviewException(
+                MergeSelectionPreviewError.Busy,
+                "COUNTERPARTY_BUSY",
+                "One or more counterparties are already being merged.");
+        }
+
         var byId = counterparties.ToDictionary(item => item.Id, item => new MergeSelectionCounterpartyDto(
             item.Id, item.Name, item.Description, item.Email, item.Phone, item.Archived, item.UpdatedAt));
         return new MergeSelectionPreviewResponse(ids.Select(id => byId[id]).ToArray());

@@ -35,12 +35,47 @@ public sealed class RepositoryBoundaryTests
         var outbox = Outbox();
         outbox.Payload = null!;
         await Assert.ThrowsAsync<DbUpdateException>(() => fixture.Merge.CreateAsync(
-            fixture.AccountId, job, outbox, CancellationToken.None));
+            fixture.AccountId, job, outbox, [fixture.Counterparty.Id], DateTimeOffset.UtcNow, CancellationToken.None));
 
         fixture.Db.ChangeTracker.Clear();
         Assert.Empty(await fixture.Db.MergeJobs.ToListAsync());
         Assert.Empty(await fixture.Db.MergeOperations.ToListAsync());
         Assert.Empty(await fixture.Db.OutboxMessages.ToListAsync());
+        Assert.Empty(await fixture.Db.MergeCounterpartyLocks.ToListAsync());
+    }
+
+    [Fact]
+    public async Task MergeCompletion_KeepsLocksWhenTerminalSaveFails()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var job = new MergeJob
+        {
+            Id = Guid.NewGuid(),
+            AccountId = fixture.AccountId,
+            MessageId = Guid.NewGuid(),
+            MainCounterpartyId = fixture.Counterparty.Id,
+            Payload = "{}"
+        };
+        await fixture.Merge.CreateAsync(fixture.AccountId, job, Outbox(),
+            [fixture.Counterparty.Id], DateTimeOffset.UtcNow, CancellationToken.None);
+        fixture.Db.InboxMessages.Add(new InboxMessage
+        {
+            MessageId = job.MessageId,
+            ConsumerName = "duplicates-merge-v1"
+        });
+        await fixture.Db.SaveChangesAsync();
+        fixture.Db.ChangeTracker.Clear();
+        var tracked = (await fixture.Merge.FindJobAsync(fixture.AccountId, job.Id, CancellationToken.None))!;
+        tracked.Status = MergeJobStatuses.Completed;
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => fixture.Merge.SaveTerminalAsync(
+            fixture.AccountId, tracked,
+            new InboxMessage { MessageId = job.MessageId, ConsumerName = "duplicates-merge-v1" },
+            CancellationToken.None));
+
+        fixture.Db.ChangeTracker.Clear();
+        Assert.Equal(MergeJobStatuses.Pending, (await fixture.Db.MergeJobs.SingleAsync()).Status);
+        Assert.Single(await fixture.Db.MergeCounterpartyLocks.ToListAsync());
     }
 
     [Fact]

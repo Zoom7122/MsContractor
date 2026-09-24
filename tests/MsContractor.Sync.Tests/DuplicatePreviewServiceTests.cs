@@ -74,6 +74,33 @@ public sealed class DuplicatePreviewServiceTests
         Assert.Equal(System.Text.Json.JsonValueKind.Object, group.Counterparties[0].RawJson.ValueKind);
     }
 
+    [Fact]
+    public async Task FindAsync_ExcludesLockedCounterpartiesBeforeGrouping()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = await CreateContextAsync(connection);
+        var account = Guid.NewGuid();
+        var run = SyncRun(account);
+        var a = Counterparty(account, "A", "same-name", "shared@example.test", null, DateTimeOffset.UtcNow);
+        var b = Counterparty(account, "B", "same-name", null, null, DateTimeOffset.UtcNow);
+        var c = Counterparty(account, "C", "other-name", "shared@example.test", null, DateTimeOffset.UtcNow);
+        foreach (var counterparty in new[] { a, b, c }) counterparty.LastSyncRunId = run.Id;
+        var job = new MergeJob { Id = Guid.NewGuid(), AccountId = account, MessageId = Guid.NewGuid(),
+            MainCounterpartyId = b.Id, Payload = "{}" };
+        db.AddRange(run, a, b, c, job,
+            new MergeCounterpartyLock { AccountId = account, CounterpartyId = b.Id, MergeJob = job,
+                MergeJobId = job.Id, AcquiredAt = DateTimeOffset.UtcNow });
+        await db.SaveChangesAsync();
+
+        var groups = await new DuplicatePreviewService(new CounterpartyRepository(db)).FindAsync(
+            account, [DuplicateMatchField.Name, DuplicateMatchField.Email], CancellationToken.None);
+
+        var group = Assert.Single(groups);
+        Assert.Equal("email", group.MatchedBy);
+        Assert.Equal(new[] { a.Id, c.Id }.Order(), group.Counterparties.Select(item => item.Id).Order());
+    }
+
     private static async Task<CatalogSyncDbContext> CreateContextAsync(SqliteConnection connection)
     {
         var context = new CatalogSyncDbContext(new DbContextOptionsBuilder<CatalogSyncDbContext>().UseSqlite(connection).Options);

@@ -7,6 +7,7 @@ public static class MergeOperationTypes
     public const string ChangeDocumentCounterparties = "change_document_counterparties";
     public const string RecreateSalesReturns = "recreate_salesreturns";
     public const string RecreatePurchaseReturns = "recreate_purchasereturns";
+    public const string RecreateFactureIns = "recreate_factureins";
     public const string ArchiveDuplicate = "archive_duplicate";
 }
 

@@ -50,6 +50,7 @@ public sealed class InternalMergeJobsController : ControllerBase
             {
                 MergeRequestError.NotFound => NotFound(error),
                 MergeRequestError.MainArchived => Conflict(error),
+                MergeRequestError.CounterpartyBusy => Conflict(error),
                 _ => BadRequest(error)
             };
         }

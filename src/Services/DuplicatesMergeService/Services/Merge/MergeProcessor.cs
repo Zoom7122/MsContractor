@@ -21,6 +21,7 @@ public sealed class MergeProcessor(
     IMergeDocumentChangeService documentChange,
     ISalesReturnRecreationSender salesReturnRecreationSender,
     IPurchaseReturnRecreationSender purchaseReturnRecreationSender,
+    IFactureInRecreationSender factureInRecreationSender,
     IDocumentSnapshotRepository documentSnapshots,
     IMergeCounterpartyArchiveService counterpartyArchive,
     ILogger<MergeProcessor> logger) : IMergeProcessor
@@ -42,6 +43,7 @@ public sealed class MergeProcessor(
         await state.EnsureDocumentChangeOperationAsync(job, cancellationToken);
         await state.EnsureSalesReturnRecreationOperationAsync(job, cancellationToken);
         await state.EnsurePurchaseReturnRecreationOperationAsync(job, cancellationToken);
+        await state.EnsureFactureInRecreationOperationAsync(job, cancellationToken);
         await state.StartJobAsync(job, cancellationToken);
 
         var discovery = job.Operations.Single(item => item.OperationType == MergeOperationTypes.DiscoverDocuments);
@@ -90,6 +92,19 @@ public sealed class MergeProcessor(
                     documentSnapshots,
                     token),
                 "Purchasereturn recreation will be retried.", cancellationToken))
+            return;
+
+        var factureInOperation = job.Operations.Single(item =>
+            item.OperationType == MergeOperationTypes.RecreateFactureIns);
+        if (!await state.ExecuteAsync(job, factureInOperation,
+                token => RecreateFactureInsAsync(
+                    job,
+                    factureInOperation,
+                    command.DuplicateCounterpartyIds,
+                    factureInRecreationSender,
+                    documentSnapshots,
+                    token),
+                "Facturein recreation will be retried.", cancellationToken))
             return;
 
         var archiveOperations = job.Operations
@@ -224,5 +239,48 @@ public sealed class MergeProcessor(
             job.RequestedByUserId,
             job.CorrelationId,
             cancellationToken);
+    }
+
+    private static async Task RecreateFactureInsAsync(
+        MergeJob job,
+        MergeOperation operation,
+        IReadOnlyList<Guid> duplicateCounterpartyIds,
+        IFactureInRecreationSender sender,
+        IDocumentSnapshotRepository documentSnapshots,
+        CancellationToken cancellationToken)
+    {
+        var rows = await documentSnapshots.GetForCounterpartiesAsync(
+            job.AccountId, duplicateCounterpartyIds, cancellationToken);
+        var factureIns = rows
+            .Where(item => string.Equals(item.DocumentType, "facturein", StringComparison.Ordinal))
+            .ToArray();
+        if (factureIns.Length == 0)
+            return;
+
+        var sourceIds = factureIns.Select(item => item.DocumentId).ToArray();
+        var response = await sender.SendAsync(
+            job.AccountId,
+            job.MainCounterpartyId,
+            "facturein",
+            sourceIds,
+            job.Id,
+            operation.Id,
+            job.RequestedByUserId,
+            job.CorrelationId,
+            cancellationToken);
+
+        var skipped = response.SkippedDocumentIds.ToHashSet();
+        var failed = response.FailedDocuments?.Select(item => item.SourceDocumentId).ToHashSet() ?? [];
+        var createdWithErrors = response.CreatedWithErrors?.Select(item => item.SourceDocumentId).ToHashSet() ?? [];
+        var transferred = response.TransferredDocumentIds.ToHashSet();
+        if (!transferred.SetEquals(sourceIds) || skipped.Count != 0 || failed.Count != 0 || createdWithErrors.Count != 0)
+        {
+            var failedItem = response.FailedDocuments?.FirstOrDefault();
+            var createdWithError = response.CreatedWithErrors?.FirstOrDefault();
+            throw new MergeEgressException(
+                failedItem?.ErrorCode ?? createdWithError?.ErrorCode ?? "FACTUREIN_RECREATION_INCOMPLETE",
+                failedItem?.Error ?? createdWithError?.Error ?? "Facturein recreation skipped or failed one or more documents.",
+                400);
+        }
     }
 }

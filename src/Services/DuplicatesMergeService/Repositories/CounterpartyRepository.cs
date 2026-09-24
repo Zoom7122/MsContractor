@@ -11,6 +11,7 @@ public interface ICounterpartyRepository
     Task<IReadOnlyList<CounterpartyDisplayItem>> GetDisplayItemsAsync(Guid accountId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
     Task<IReadOnlyList<CounterpartySelectionItem>> GetSelectionAsync(Guid accountId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
     Task<IReadOnlyList<CounterpartyAvailability>> GetAvailabilityAsync(Guid accountId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
+    Task<bool> HasMergeLocksAsync(Guid accountId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
     Task<Counterparty?> FindTrackedAsync(Guid accountId, Guid id, CancellationToken cancellationToken);
 }
 
@@ -27,7 +28,8 @@ public sealed class CounterpartyRepository : ICounterpartyRepository
     public async Task<IReadOnlyList<DuplicateCandidate>> GetCandidatesAsync(Guid accountId, CancellationToken cancellationToken)
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
-        return await _dbContext.Counterparties.AsNoTracking().Where(x => x.AccountId == accountId && !x.Archived)
+        return await _dbContext.Counterparties.AsNoTracking().Where(x => x.AccountId == accountId && !x.Archived &&
+                !_dbContext.MergeCounterpartyLocks.Any(l => l.AccountId == accountId && l.CounterpartyId == x.Id))
             .Select(x => new DuplicateCandidate(x.Id, x.NormalizedName, x.NormalizedEmail, x.NormalizedPhone)).ToListAsync(cancellationToken);
     }
     public async Task<IReadOnlyList<CounterpartyDisplayItem>> GetDisplayItemsAsync(Guid accountId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
@@ -47,6 +49,12 @@ public sealed class CounterpartyRepository : ICounterpartyRepository
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
         return await _dbContext.Counterparties.AsNoTracking().Where(x => x.AccountId == accountId && ids.Contains(x.Id))
             .Select(x => new CounterpartyAvailability(x.Id, x.Archived)).ToListAsync(cancellationToken);
+    }
+    public async Task<bool> HasMergeLocksAsync(Guid accountId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    {
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
+        return await _dbContext.MergeCounterpartyLocks.AsNoTracking()
+            .AnyAsync(x => x.AccountId == accountId && ids.Contains(x.CounterpartyId), cancellationToken);
     }
     public async Task<Counterparty?> FindTrackedAsync(Guid accountId, Guid id, CancellationToken cancellationToken)
     {

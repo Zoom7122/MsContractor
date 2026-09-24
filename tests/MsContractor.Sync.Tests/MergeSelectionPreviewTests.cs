@@ -73,6 +73,26 @@ public sealed class MergeSelectionPreviewTests
     }
 
     [Fact]
+    public async Task GetAsync_RejectsLockedSelection()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var job = new MergeJob { Id = Guid.NewGuid(), AccountId = fixture.AccountId,
+            MessageId = Guid.NewGuid(), MainCounterpartyId = fixture.First.Id, Payload = "{}" };
+        fixture.Db.Add(job);
+        fixture.Db.Add(new MergeCounterpartyLock { AccountId = fixture.AccountId,
+            CounterpartyId = fixture.Second.Id, MergeJob = job, MergeJobId = job.Id,
+            AcquiredAt = DateTimeOffset.UtcNow });
+        await fixture.Db.SaveChangesAsync();
+
+        var exception = await Assert.ThrowsAsync<MergeSelectionPreviewException>(() => fixture.Service.GetAsync(
+            fixture.AccountId, new MergeSelectionPreviewRequest([fixture.First.Id, fixture.Second.Id]),
+            CancellationToken.None));
+
+        Assert.Equal(MergeSelectionPreviewError.Busy, exception.Error);
+        Assert.Equal("COUNTERPARTY_BUSY", exception.Code);
+    }
+
+    [Fact]
     public async Task GatewayController_UsesSessionAccount()
     {
         var accountId = Guid.NewGuid();
@@ -140,6 +160,7 @@ public sealed class MergeSelectionPreviewTests
         public Counterparty First { get; private set; } = null!;
         public Counterparty Second { get; private set; } = null!;
         public Counterparty Foreign { get; private set; } = null!;
+        public CatalogSyncDbContext Db => db;
         public MergeSelectionPreviewService Service => new(new CounterpartyRepository(db));
 
         public static async Task<Fixture> CreateAsync()

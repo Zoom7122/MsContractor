@@ -41,9 +41,12 @@ public sealed class InternalMergeSelectionPreviewController : ControllerBase
         catch (MergeSelectionPreviewException exception)
         {
             var error = new InternalErrorResponse(exception.Code, exception.SafeMessage);
-            return exception.Error == MergeSelectionPreviewError.NotFound
-                ? NotFound(error)
-                : BadRequest(error);
+            return exception.Error switch
+            {
+                MergeSelectionPreviewError.NotFound => NotFound(error),
+                MergeSelectionPreviewError.Busy => Conflict(error),
+                _ => BadRequest(error)
+            };
         }
     }
 }

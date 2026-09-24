@@ -92,7 +92,8 @@ public sealed class MigrationSnapshotDiagnosticTests
             "20260914120000_RemoveSalesReturnRecreationRequest",
             "20260916120000_RemoveDocumentAdditionalData"
         ];
-        Assert.Equal(expected, context.GetService<IMigrationsAssembly>().Migrations.Keys);
+        Assert.Equal([.. expected, "20260924120000_AddMergeCounterpartyLocks"],
+            context.GetService<IMigrationsAssembly>().Migrations.Keys);
     }
 
     [Fact]

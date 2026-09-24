@@ -42,6 +42,8 @@ public sealed class EgressDbContext : DbContext
 
     public DbSet<FactureInRecreationItem> FactureInRecreationItems => Set<FactureInRecreationItem>();
 
+    public DbSet<FactureOutRawData> FactureOutRawData => Set<FactureOutRawData>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("egress");
@@ -212,6 +214,11 @@ public sealed class EgressDbContext : DbContext
         factureInRawData.ToTable("facturein_raw_data");
         factureInRawData.HasKey(item => new { item.AccountId, item.DocumentId });
         factureInRawData.Property(item => item.RawJson).HasColumnType("jsonb");
+
+        var factureOutRawData = modelBuilder.Entity<FactureOutRawData>();
+        factureOutRawData.ToTable("factureout_raw_data");
+        factureOutRawData.HasKey(item => new { item.AccountId, item.DocumentId });
+        factureOutRawData.Property(item => item.RawJson).HasColumnType("jsonb");
 
         var factureInRecreationItem = modelBuilder.Entity<FactureInRecreationItem>();
         factureInRecreationItem.ToTable("facturein_recreation_items");

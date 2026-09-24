@@ -33,6 +33,9 @@ MS_SALESRETURN_DOCUMENTS=factureout,paymentout,cashout,loss
 MS_PURCHASERETURN_DOCUMENTS=facturein,factureout,paymentin,cashin
 ```
 
+`factureout` на `cashin` создаётся через поле `payments`: в нём МойСклад хранит
+и входящие платежи, и приходные ордера.
+
 Один тип можно указать в обоих списках — тогда он создаётся в обоих сценариях.
 Для `purchasereturn` настройка `facturein` создаёт два документа: существующий
 `facturein` на связанную `supply` и ещё один `facturein`, привязанный к самому
@@ -64,6 +67,41 @@ PUT после создания в этом сценарии не использ
 нельзя — API возвращает ошибку `35001`. Отдельный `paymentout` не создаётся:
 один платёж создаётся на `supply` и затем используется как основание для своего
 `facturein`.
+
+Если в `MS_DOCUMENT_TYPES` указан `factureout`, скрипт запускает сценарий на
+`demand` для каждого КА. Документы, создаваемые на `demand`, задаются отдельно:
+
+```dotenv
+MS_DOCUMENT_TYPES=factureout
+MS_DEMAND_DOCUMENTS=factureout,paymentin,salesreturn,cashin
+```
+
+Если `MS_DEMAND_DOCUMENTS` не задан или пуст, создаются все четыре документа.
+Порядок создания:
+
+```text
+demand
+ ├── factureout (через demands)
+ ├── paymentin (через operations)
+ ├── salesreturn (через demand)
+ └── cashin (через operations)
+
+paymentin   → factureout (через payments)
+salesreturn → factureout (пропускается, см. ниже)
+cashin      → factureout (через payments)
+```
+
+`paymentin` и `cashin` из `MS_DEMAND_DOCUMENTS` создаются только на `demand`,
+а не отдельными документами без основания. Созданный сценарием `salesreturn`
+используется и для документов из `MS_SALESRETURN_DOCUMENTS`. `factureout` из
+`MS_SALESRETURN_DOCUMENTS` в этом сценарии не создаётся: `factureout` на ту же
+`demand` уже есть, а второй МойСклад отклоняет.
+
+JSON API МойСклад не создаёт `factureout` на основании `salesreturn`: поле
+`returns` принимает только `purchasereturn` (ошибка `1060`), а других полей для
+возврата покупателя нет (ошибка `17005`). Счёт-фактура, созданный из возврата в
+интерфейсе МойСклад, виден в API только через `salesreturn.factureOut`. Поэтому
+это задание попадает в пропущенные с объяснением причины.
 
 ## Удаление данных
 

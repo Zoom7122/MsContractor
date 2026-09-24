@@ -58,12 +58,15 @@ DEFAULT_DOCUMENTS_PER_TYPE = 1
 # Значения MS_COUNTERPARTY_COUNT, MS_DOCUMENTS_PER_TYPE, MS_COUNTERPARTY_NAME,
 # MS_COUNTERPARTY_PHONE,
 # MS_WRITE_REPORT_JSON, MS_DOCUMENT_TYPES, MS_DOCUMENT_TYPES_OPTIONAL,
-# MS_SALESRETURN_DOCUMENTS и MS_PURCHASERETURN_DOCUMENTS задаются в окружении.
+# MS_SALESRETURN_DOCUMENTS, MS_PURCHASERETURN_DOCUMENTS и MS_DEMAND_DOCUMENTS
+# задаются в окружении.
 # Типы документов можно передать через MS_DOCUMENT_TYPES, через запятую или пробел:
 # MS_DOCUMENT_TYPES=customerorder,demand,invoiceout
 # Для сценариев возврата связанные документы задаются отдельно:
 # MS_SALESRETURN_DOCUMENTS=factureout,paymentout,cashout,loss,facturein
 # MS_PURCHASERETURN_DOCUMENTS=facturein,factureout,paymentin,cashin
+# Для сценария factureout документы на demand задаются отдельно:
+# MS_DEMAND_DOCUMENTS=factureout,paymentin,salesreturn,cashin
 # Аргументы --docs, --stats и --all имеют более высокий приоритет.
 
 BASE_URL = os.getenv("MS_BASE_URL", "https://api.moysklad.ru/api/remap/1.2").rstrip("/")
@@ -180,6 +183,42 @@ FACTUREIN_PURCHASE_RETURN_JOB = "facturein_purchasereturn"
 FACTUREIN_SUPPLY_PAYMENTOUT_JOB = "facturein_supply_paymentout"
 FACTUREIN_SUPPLY_CASHOUT_JOB = "facturein_supply_cashout"
 FACTUREIN_PAYMENTOUT_JOB = "facturein_paymentout"
+
+# При явном выборе `factureout` создаём отдельный сценарий на demand:
+# demand -> factureout/paymentin/salesreturn/cashin, после чего создаём
+# factureout для paymentin и cashin (оба через поле payments). Состав
+# документов на demand задаётся через MS_DEMAND_DOCUMENTS.
+# JSON API МойСклад не создаёт factureout на основании salesreturn: поле
+# returns принимает только purchasereturn, поэтому это задание пропускается.
+FACTUREOUT_DEMAND_DOCUMENTS_ENV = "MS_DEMAND_DOCUMENTS"
+FACTUREOUT_DEMAND_DOCUMENT_TARGETS = {"factureout", "paymentin", "salesreturn", "cashin"}
+FACTUREOUT_DEMAND_JOB = "factureout_demand"
+FACTUREOUT_DEMAND_PAYMENTIN_JOB = "factureout_demand_paymentin"
+FACTUREOUT_DEMAND_SALESRETURN_JOB = "factureout_demand_salesreturn"
+FACTUREOUT_DEMAND_CASHIN_JOB = "factureout_demand_cashin"
+FACTUREOUT_PAYMENTIN_JOB = "factureout_paymentin"
+FACTUREOUT_SALESRETURN_JOB = "factureout_salesreturn"
+FACTUREOUT_CASHIN_JOB = "factureout_cashin"
+# Документ на demand -> (задание создания на demand, задание его factureout).
+FACTUREOUT_DEMAND_CHILD_JOBS = (
+    ("paymentin", FACTUREOUT_DEMAND_PAYMENTIN_JOB, FACTUREOUT_PAYMENTIN_JOB),
+    ("salesreturn", FACTUREOUT_DEMAND_SALESRETURN_JOB, FACTUREOUT_SALESRETURN_JOB),
+    ("cashin", FACTUREOUT_DEMAND_CASHIN_JOB, FACTUREOUT_CASHIN_JOB),
+)
+# Задание сценария factureout -> тип документа-основания.
+FACTUREOUT_SCENARIO_JOB_SOURCES = {
+    FACTUREOUT_DEMAND_JOB: "demand",
+    FACTUREOUT_DEMAND_PAYMENTIN_JOB: "demand",
+    FACTUREOUT_DEMAND_SALESRETURN_JOB: "demand",
+    FACTUREOUT_DEMAND_CASHIN_JOB: "demand",
+    FACTUREOUT_PAYMENTIN_JOB: "paymentin",
+    FACTUREOUT_SALESRETURN_JOB: "salesreturn",
+    FACTUREOUT_CASHIN_JOB: "cashin",
+}
+FACTUREOUT_SALESRETURN_SKIP_REASON = (
+    "JSON API МойСклад не создаёт factureout на основании salesreturn "
+    "(returns принимает только purchasereturn); создайте его в интерфейсе МС"
+)
 
 # Документы, которые можно создать в сценарии возврата. Связи между ними
 # настраиваются через MS_SALESRETURN_DOCUMENTS и MS_PURCHASERETURN_DOCUMENTS.
@@ -400,17 +439,44 @@ def return_document_mapping() -> Dict[str, Set[str]]:
     return mapping
 
 
+def factureout_demand_documents() -> Set[str]:
+    """Return documents to create on demand in the factureout scenario."""
+    raw_value = os.getenv(FACTUREOUT_DEMAND_DOCUMENTS_ENV)
+    if raw_value is None or not raw_value.strip():
+        return set(FACTUREOUT_DEMAND_DOCUMENT_TARGETS)
+
+    document_types = parse_document_type_list(raw_value, FACTUREOUT_DEMAND_DOCUMENTS_ENV)
+    unsupported = document_types - FACTUREOUT_DEMAND_DOCUMENT_TARGETS
+    if unsupported:
+        raise ValueError(
+            f"{FACTUREOUT_DEMAND_DOCUMENTS_ENV} содержит документы, которые нельзя "
+            f"создать на demand: {', '.join(sorted(unsupported))}"
+        )
+    return document_types
+
+
+def scenario_document_types(
+    facturein_scenario: bool, factureout_scenario: bool
+) -> Set[str]:
+    document_types: Set[str] = set()
+    if facturein_scenario:
+        document_types.update(FACTUREIN_SCENARIO_DOCUMENT_TYPES)
+    if factureout_scenario:
+        document_types.update({"demand", "factureout"})
+        document_types.update(factureout_demand_documents())
+    return document_types
+
+
 def selected_document_types(args: argparse.Namespace) -> Set[str]:
     facturein_scenario = facturein_scenario_requested(args)
+    scenario_types = scenario_document_types(
+        facturein_scenario, factureout_scenario_requested(args)
+    )
     if args.all:
-        document_types = set(ALL_DOCUMENT_TYPES)
-        if facturein_scenario:
-            document_types.update(FACTUREIN_SCENARIO_DOCUMENT_TYPES)
+        document_types = set(ALL_DOCUMENT_TYPES) | scenario_types
         return expand_document_dependencies(document_types, facturein_scenario)
     if args.docs:
-        document_types = set(args.docs)
-        if facturein_scenario:
-            document_types.update(FACTUREIN_SCENARIO_DOCUMENT_TYPES)
+        document_types = set(args.docs) | scenario_types
         return expand_document_dependencies(document_types, facturein_scenario)
     if args.stats:
         return expand_document_dependencies(set(STAT_DOCUMENT_TYPES))
@@ -433,25 +499,34 @@ def selected_document_types(args: argparse.Namespace) -> Set[str]:
         )
         document_types.update(optional_document_types)
 
-    if facturein_scenario:
-        document_types.update(FACTUREIN_SCENARIO_DOCUMENT_TYPES)
+    document_types.update(scenario_types)
 
     return expand_document_dependencies(document_types, facturein_scenario)
 
 
-def facturein_scenario_requested(args: argparse.Namespace) -> bool:
-    """Return whether explicit facturein selection enables the full scenario."""
+def scenario_requested(args: argparse.Namespace, document_type: str) -> bool:
+    """Return whether explicit selection of a facture enables its scenario."""
     if args.all:
         return True
     if args.docs:
-        return "facturein" in args.docs
+        return document_type in args.docs
     if args.stats:
         return False
 
     raw_types = os.getenv("MS_DOCUMENT_TYPES")
     if raw_types is None or not raw_types.strip():
         return False
-    return "facturein" in parse_document_type_list(raw_types, "MS_DOCUMENT_TYPES")
+    return document_type in parse_document_type_list(raw_types, "MS_DOCUMENT_TYPES")
+
+
+def facturein_scenario_requested(args: argparse.Namespace) -> bool:
+    """Return whether explicit facturein selection enables the full scenario."""
+    return scenario_requested(args, "facturein")
+
+
+def factureout_scenario_requested(args: argparse.Namespace) -> bool:
+    """Return whether explicit factureout selection enables the demand scenario."""
+    return scenario_requested(args, "factureout")
 
 
 def expand_document_dependencies(
@@ -491,12 +566,17 @@ def expand_document_dependencies(
 
 
 def dependent_document_types(
-    selected: Set[str], facturein_scenario: bool = False
+    selected: Set[str],
+    facturein_scenario: bool = False,
+    factureout_scenario: bool = False,
 ) -> Set[str]:
     configured_returns = return_document_mapping()
     dependent = set(DEPENDENT_DOCUMENT_TYPES)
     if facturein_scenario:
         dependent.update(FACTUREIN_SCENARIO_DEPENDENT_DOCUMENT_TYPES)
+    if factureout_scenario:
+        # paymentin/cashin сценария создаются на demand, а не отдельно.
+        dependent.update(factureout_demand_documents() & {"paymentin", "cashin"})
     for return_type, document_types in configured_returns.items():
         if return_type in selected:
             dependent.update(document_types)
@@ -506,9 +586,11 @@ def dependent_document_types(
 def dependent_document_jobs(
     selected: Set[str],
     facturein_scenario: bool = False,
+    factureout_scenario: bool = False,
 ) -> list[Tuple[str, Optional[str]]]:
     """Return (document type, return scenario) jobs in API-safe order."""
     configured_returns = return_document_mapping()
+    demand_documents = factureout_demand_documents() if factureout_scenario else set()
     jobs: list[Tuple[str, Optional[str]]] = []
 
     if facturein_scenario:
@@ -519,6 +601,16 @@ def dependent_document_jobs(
             ("cashout", FACTUREIN_SUPPLY_CASHOUT_JOB),
             ("facturein", FACTUREIN_PAYMENTOUT_JOB),
         ])
+
+    if factureout_scenario:
+        if "factureout" in demand_documents:
+            jobs.append(("factureout", FACTUREOUT_DEMAND_JOB))
+        for document_type, demand_job, _ in FACTUREOUT_DEMAND_CHILD_JOBS:
+            if document_type in demand_documents:
+                jobs.append((document_type, demand_job))
+        for document_type, _, factureout_job in FACTUREOUT_DEMAND_CHILD_JOBS:
+            if document_type in demand_documents:
+                jobs.append(("factureout", factureout_job))
 
     for document_type in DEPENDENT_DOCUMENT_CREATION_ORDER:
         if document_type not in selected:
@@ -550,6 +642,22 @@ def dependent_document_jobs(
             # represented by the explicit scenario jobs above.
             if not configured_return_types:
                 continue
+
+        # The factureout scenario already creates salesreturn and the demand
+        # factureout. A second factureout on the same demand is rejected by
+        # MoySklad, while purchasereturn -> factureout stays independent.
+        if factureout_scenario and document_type in {"salesreturn", "factureout"}:
+            if document_type == "salesreturn" and "salesreturn" in demand_documents:
+                continue
+            if document_type == "factureout":
+                if "factureout" in demand_documents:
+                    configured_return_types = [
+                        return_type
+                        for return_type in configured_return_types
+                        if return_type != "salesreturn"
+                    ]
+                if not configured_return_types:
+                    continue
 
         if configured_return_types:
             for return_type in configured_return_types:
@@ -1078,8 +1186,9 @@ def facture_template_payload(document_type: str, source_type: str, source: Dict[
     source_fields = {
         "factureout": {
             "demand": "demands",
+            # MoySklad keeps both incoming payments and cash receipts in payments.
             "paymentin": "payments",
-            "cashin": "cashIns",
+            "cashin": "payments",
             "purchasereturn": "returns",
         },
         "facturein": {
@@ -1358,11 +1467,11 @@ def verify_dependent_document(
 
     if source_type and source:
         relation_fields = {
-            "demand": ("demand", "demands"),
+            "demand": ("demand", "demands", "operations"),
             "supply": ("supply", "supplies", "operations"),
             "paymentin": ("payments",),
             "paymentout": ("payments",),
-            "cashin": ("cashIns",),
+            "cashin": ("payments",),
             "purchasereturn": ("returns", "operations"),
             "salesreturn": ("operations", "salesReturn"),
             "facturein": ("factureIn",),
@@ -1603,6 +1712,7 @@ def main() -> int:
     try:
         selected = selected_document_types(args)
         facturein_scenario = facturein_scenario_requested(args)
+        factureout_scenario = factureout_scenario_requested(args)
     except ValueError as exc:
         print(f"Ошибка: {exc}", file=sys.stderr)
         sys.exit(2)
@@ -1697,9 +1807,11 @@ def main() -> int:
     print("\nСоздаю КА и документы...")
 
     configured_dependent_types = dependent_document_types(
-        selected, facturein_scenario
+        selected, facturein_scenario, factureout_scenario
     )
-    dependent_jobs = dependent_document_jobs(selected, facturein_scenario)
+    dependent_jobs = dependent_document_jobs(
+        selected, facturein_scenario, factureout_scenario
+    )
     primary_selected = selected - configured_dependent_types
     total_document_types = len(primary_selected) + len(dependent_jobs)
     total_documents = (
@@ -1803,7 +1915,7 @@ def main() -> int:
                         FACTUREIN_SUPPLY_PAYMENTOUT_JOB,
                         FACTUREIN_SUPPLY_CASHOUT_JOB,
                         FACTUREIN_PAYMENTOUT_JOB,
-                    }:
+                    } and return_type not in FACTUREOUT_SCENARIO_JOB_SOURCES:
                         configured_source_type, configured_source = choose_configured_return_source(
                             doc_type, return_type, created_by_type, document_number
                         )
@@ -1901,6 +2013,26 @@ def main() -> int:
                             source,
                             supply,
                         )
+                    elif return_type in FACTUREOUT_SCENARIO_JOB_SOURCES:
+                        if return_type == FACTUREOUT_SALESRETURN_JOB:
+                            raise LookupError(FACTUREOUT_SALESRETURN_SKIP_REASON)
+                        source_type = FACTUREOUT_SCENARIO_JOB_SOURCES[return_type]
+                        source = created_document_at_index(
+                            created_by_type, source_type, document_number
+                        )
+                        if not source:
+                            raise LookupError(
+                                f"не создан {source_type} для этого номера"
+                            )
+                        if doc_type == "factureout":
+                            payload = facture_doc(doc_type, source_type, source)
+                        elif doc_type == "salesreturn":
+                            source = load_document_positions("demand", source)
+                            if not document_positions(source):
+                                raise LookupError("у отгрузки demand отсутствуют позиции")
+                            payload = salesreturn_doc(source)
+                        else:
+                            payload = financial_document_doc(doc_type, source)
                     elif doc_type == "loss":
                         if store is None or product is None:
                             raise LookupError("для списания не найдены склад или товар")

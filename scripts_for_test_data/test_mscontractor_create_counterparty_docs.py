@@ -115,7 +115,11 @@ class DependentDocumentPayloadTests(unittest.TestCase):
 
         with patch.dict(
             ms_docs.os.environ,
-            {"MS_SALESRETURN_DOCUMENTS": "", "MS_PURCHASERETURN_DOCUMENTS": ""},
+            {
+                "MS_SALESRETURN_DOCUMENTS": "",
+                "MS_PURCHASERETURN_DOCUMENTS": "",
+                "MS_DEMAND_DOCUMENTS": "",
+            },
         ):
             selected = ms_docs.selected_document_types(args)
 
@@ -123,8 +127,142 @@ class DependentDocumentPayloadTests(unittest.TestCase):
             {
                 "salesreturn", "purchasereturn", "retailsalesreturn", "factureout", "facturein",
                 "demand", "supply", "retaildemand", "paymentout", "cashout",
+                "paymentin", "cashin",
             },
             selected,
+        )
+
+    def test_factureout_in_ms_document_types_enables_demand_scenario(self) -> None:
+        args = argparse.Namespace(all=False, docs=None, stats=False)
+
+        with patch.dict(
+            ms_docs.os.environ,
+            {
+                "MS_DOCUMENT_TYPES": "factureout",
+                "MS_DEMAND_DOCUMENTS": "",
+                "MS_SALESRETURN_DOCUMENTS": "",
+                "MS_PURCHASERETURN_DOCUMENTS": "",
+            },
+        ):
+            selected = ms_docs.selected_document_types(args)
+
+        self.assertEqual(
+            selected,
+            {"demand", "factureout", "paymentin", "salesreturn", "cashin"},
+        )
+
+    def test_factureout_scenario_jobs_have_required_order(self) -> None:
+        selected = {"demand", "factureout", "paymentin", "salesreturn", "cashin"}
+
+        with patch.dict(
+            ms_docs.os.environ,
+            {
+                "MS_DEMAND_DOCUMENTS": "",
+                "MS_SALESRETURN_DOCUMENTS": "",
+                "MS_PURCHASERETURN_DOCUMENTS": "",
+            },
+        ):
+            jobs = ms_docs.dependent_document_jobs(selected, factureout_scenario=True)
+            dependent = ms_docs.dependent_document_types(
+                selected, factureout_scenario=True
+            )
+
+        self.assertEqual(
+            jobs,
+            [
+                ("factureout", ms_docs.FACTUREOUT_DEMAND_JOB),
+                ("paymentin", ms_docs.FACTUREOUT_DEMAND_PAYMENTIN_JOB),
+                ("salesreturn", ms_docs.FACTUREOUT_DEMAND_SALESRETURN_JOB),
+                ("cashin", ms_docs.FACTUREOUT_DEMAND_CASHIN_JOB),
+                ("factureout", ms_docs.FACTUREOUT_PAYMENTIN_JOB),
+                ("factureout", ms_docs.FACTUREOUT_SALESRETURN_JOB),
+                ("factureout", ms_docs.FACTUREOUT_CASHIN_JOB),
+            ],
+        )
+        self.assertEqual(
+            selected - dependent, {"demand"},
+        )
+
+    def test_demand_documents_env_limits_factureout_scenario(self) -> None:
+        args = argparse.Namespace(all=False, docs=None, stats=False)
+
+        with patch.dict(
+            ms_docs.os.environ,
+            {
+                "MS_DOCUMENT_TYPES": "factureout,paymentin",
+                "MS_DEMAND_DOCUMENTS": "factureout,cashin",
+                "MS_SALESRETURN_DOCUMENTS": "",
+                "MS_PURCHASERETURN_DOCUMENTS": "",
+            },
+        ):
+            selected = ms_docs.selected_document_types(args)
+            jobs = ms_docs.dependent_document_jobs(selected, factureout_scenario=True)
+            dependent = ms_docs.dependent_document_types(
+                selected, factureout_scenario=True
+            )
+
+        self.assertEqual(
+            selected, {"demand", "factureout", "cashin", "paymentin"}
+        )
+        self.assertEqual(
+            jobs,
+            [
+                ("factureout", ms_docs.FACTUREOUT_DEMAND_JOB),
+                ("cashin", ms_docs.FACTUREOUT_DEMAND_CASHIN_JOB),
+                ("factureout", ms_docs.FACTUREOUT_CASHIN_JOB),
+            ],
+        )
+        # paymentin is not in MS_DEMAND_DOCUMENTS and stays a standalone document.
+        self.assertEqual(selected - dependent, {"demand", "paymentin"})
+
+    def test_demand_documents_env_rejects_unsupported_types(self) -> None:
+        with patch.dict(ms_docs.os.environ, {"MS_DEMAND_DOCUMENTS": "paymentout"}):
+            with self.assertRaisesRegex(ValueError, "MS_DEMAND_DOCUMENTS"):
+                ms_docs.factureout_demand_documents()
+
+    def test_factureout_scenario_replaces_generic_salesreturn_and_demand_facture(self) -> None:
+        with patch.dict(
+            ms_docs.os.environ,
+            {
+                "MS_DEMAND_DOCUMENTS": "",
+                "MS_SALESRETURN_DOCUMENTS": "factureout,loss",
+                "MS_PURCHASERETURN_DOCUMENTS": "factureout",
+            },
+        ):
+            jobs = ms_docs.dependent_document_jobs(
+                {
+                    "demand", "supply", "factureout", "paymentin", "salesreturn",
+                    "cashin", "purchasereturn", "loss",
+                },
+                factureout_scenario=True,
+            )
+
+        self.assertNotIn(("salesreturn", None), jobs)
+        self.assertNotIn(("factureout", "salesreturn"), jobs)
+        self.assertNotIn(("factureout", None), jobs)
+        self.assertIn(("factureout", "purchasereturn"), jobs)
+        self.assertIn(("loss", "salesreturn"), jobs)
+        self.assertEqual(jobs.count(("salesreturn", ms_docs.FACTUREOUT_DEMAND_SALESRETURN_JOB)), 1)
+
+    def test_factureout_on_cashin_uses_payments_relation(self) -> None:
+        cashin = source("cashin", "cashin-id")
+        factureout = source("factureout", "factureout-id")
+        factureout["payments"] = [ms_docs.meta(cashin)]
+
+        payload = ms_docs.facture_template_payload("factureout", "cashin", cashin)
+
+        self.assertEqual(payload, {"payments": [ms_docs.meta(cashin)]})
+        ms_docs.verify_dependent_document(
+            "factureout", factureout, factureout["agent"], "cashin", cashin
+        )
+
+    def test_payment_on_demand_is_verified_through_operations(self) -> None:
+        demand = source("demand", "demand-id")
+        paymentin = source("paymentin", "paymentin-id")
+        paymentin["operations"] = [ms_docs.meta(demand)]
+
+        ms_docs.verify_dependent_document(
+            "paymentin", paymentin, paymentin["agent"], "demand", demand
         )
 
     def test_facturein_scenario_jobs_have_required_order(self) -> None:

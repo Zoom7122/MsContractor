@@ -1,0 +1,17 @@
+@MsContractor_MoySkladEgressService_HostAddress = http://localhost:8082
+# Set this to the Egress InternalApi:Key value before sending requests.
+@internalApiKey = HLgIyekmoPVyJUFAVv6U5XUsmxcQM8XwpmJvxS9EKSU=
+@accountId = b3d34ec3-243f-11f1-0a80-0b21000042b5
+@mainCounterpartyId = 615453e8-b762-11f1-0a80-1af9001efbbc
+# Replace with an existing factureout ID to verify that raw JSON is saved.
+@factureOutId = "1a9d54c8-b84b-11f1-0a80-0836000383a0","1e318514-b84b-11f1-0a80-1f8b00036539","1f175f07-b84b-11f1-0a80-1685000370e9","1f175f07-b84b-11f1-0a80-168500037222"
+
+### Verify factureout validation rejects an empty ID list (expects 400).
+POST {{MsContractor_MoySkladEgressService_HostAddress}}/internal/accounts/{{accountId}}/documents/factureout/recreate
+X-Internal-Api-Key: {{internalApiKey}}
+Content-Type: application/json
+
+{
+  "mainCounterpartyId": "{{mainCounterpartyId}}",
+  "factureOut": [{{factureOutId}}]
+}

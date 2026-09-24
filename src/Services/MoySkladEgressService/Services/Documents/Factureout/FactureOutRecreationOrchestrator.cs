@@ -13,18 +13,28 @@ public interface IFactureOutRecreationOrchestrator
 
 public sealed class FactureOutRecreationOrchestrator : IFactureOutRecreationOrchestrator
 {
-    public Task<FactureOutRecreationResult> ExecuteAsync(
+    private readonly IFactureOutPreparationService _preparationService;
+
+    public FactureOutRecreationOrchestrator(IFactureOutPreparationService preparationService)
+    {
+        _preparationService = preparationService;
+    }
+
+    public async Task<FactureOutRecreationResult> ExecuteAsync(
         Guid accountId,
         Guid mainCounterpartyId,
         IReadOnlyList<Guid> factureOutIds,
         CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        var preparation = await _preparationService.PrepareAsync(
+            accountId,
+            factureOutIds,
+            cancellationToken);
 
-        return Task.FromResult(new FactureOutRecreationResult(
+        return new FactureOutRecreationResult(
             [],
+            preparation.SkippedDocuments,
             [],
-            [],
-            []));
+            []);
     }
 }

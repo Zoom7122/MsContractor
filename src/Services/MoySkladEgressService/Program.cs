@@ -3,6 +3,7 @@ using MsContractor.MoySkladEgressService.Configuration;
 using MsContractor.MoySkladEgressService.Gateways.Counterparties;
 using MsContractor.MoySkladEgressService.Gateways.Documents;
 using MsContractor.MoySkladEgressService.Gateways.Documents.Facturein;
+using MsContractor.MoySkladEgressService.Gateways.Documents.Factureout;
 using MsContractor.MoySkladEgressService.Gateways.Documents.Purchasereturn;
 using MsContractor.MoySkladEgressService.Gateways.Documents.Salesreturn;
 using MsContractor.MoySkladEgressService.HealthChecks;
@@ -127,6 +128,14 @@ builder.Services.AddHttpClient<IMoySkladFactureInGateway, MoySkladFactureInGatew
 {
     AutomaticDecompression = DecompressionMethods.GZip
 });
+builder.Services.AddHttpClient<IMoySkladFactureOutGateway, MoySkladFactureOutGateway>(client =>
+{
+    client.BaseAddress = egressOptions.JsonApiBaseUrl;
+    client.Timeout = TimeSpan.FromSeconds(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.GZip
+});
 builder.Services.AddHttpClient<IMoySkladPurchaseReturnMoneyRelationsGateway, MoySkladPurchaseReturnMoneyRelationsGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
@@ -183,8 +192,10 @@ builder.Services.AddScoped<IPurchaseReturnRecreationOrchestrator, PurchaseReturn
 builder.Services.AddScoped<IFactureInRecreationOrchestrator, FactureInRecreationOrchestrator>();
 builder.Services.AddScoped<IFactureOutRecreationOrchestrator, FactureOutRecreationOrchestrator>();
 builder.Services.AddScoped<IFactureInRawDataRepository, FactureInRawDataRepository>();
+builder.Services.AddScoped<IFactureOutRawDataRepository, FactureOutRawDataRepository>();
 builder.Services.AddScoped<IFactureInRecreationItemRepository, FactureInRecreationItemRepository>();
 builder.Services.AddScoped<IFactureInPreparationService, FactureInPreparationService>();
+builder.Services.AddScoped<IFactureOutPreparationService, FactureOutPreparationService>();
 builder.Services.AddScoped<IFactureInPayloadBuilder, FactureInPayloadBuilder>();
 builder.Services.AddScoped<IFactureInDocumentTransferService, FactureInDocumentTransferService>();
 builder.Services.AddSingleton<IMoySkladRateLimiter, MoySkladRateLimiter>();

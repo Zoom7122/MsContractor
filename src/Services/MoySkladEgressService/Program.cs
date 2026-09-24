@@ -13,6 +13,7 @@ using MsContractor.BuildingBlocks.Logging;
 using MsContractor.BuildingBlocks.OpenApi;
 using MsContractor.MoySkladEgressService.Services.Documents;
 using MsContractor.MoySkladEgressService.Services.Documents.Facturein;
+using MsContractor.MoySkladEgressService.Services.Documents.Factureout;
 using MsContractor.MoySkladEgressService.Services.Documents.Purchasereturn;
 using MsContractor.MoySkladEgressService.Services.Documents.Salesreturn;
 using MsContractor.MoySkladEgressService.Repositories;
@@ -180,6 +181,7 @@ builder.Services.AddScoped<IPurchaseReturnFactureRelationsService, PurchaseRetur
 builder.Services.AddScoped<IPurchaseReturnVerifier, PurchaseReturnVerifier>();
 builder.Services.AddScoped<IPurchaseReturnRecreationOrchestrator, PurchaseReturnRecreationOrchestrator>();
 builder.Services.AddScoped<IFactureInRecreationOrchestrator, FactureInRecreationOrchestrator>();
+builder.Services.AddScoped<IFactureOutRecreationOrchestrator, FactureOutRecreationOrchestrator>();
 builder.Services.AddScoped<IFactureInRawDataRepository, FactureInRawDataRepository>();
 builder.Services.AddScoped<IFactureInRecreationItemRepository, FactureInRecreationItemRepository>();
 builder.Services.AddScoped<IFactureInPreparationService, FactureInPreparationService>();

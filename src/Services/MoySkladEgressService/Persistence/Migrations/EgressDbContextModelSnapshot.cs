@@ -58,6 +58,32 @@ namespace MsContractor.MoySkladEgressService.Persistence.Migrations
                 b.ToTable("factureout_raw_data", "egress");
             });
 
+            modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.FactureOutRecreationItem", b =>
+            {
+                b.Property<Guid>("AccountId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid?>("NewDocumentId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid?>("NewSyncId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid>("SourceDocumentId")
+                    .HasColumnType("uuid");
+
+                b.Property<Guid?>("SourceSyncId")
+                    .HasColumnType("uuid");
+
+                b.Property<string>("Status")
+                    .IsRequired()
+                    .HasColumnType("text");
+
+                b.HasKey("AccountId", "SourceDocumentId");
+
+                b.ToTable("factureout_recreation_items", "egress");
+            });
+
             modelBuilder.Entity("MsContractor.MoySkladEgressService.Models.FactureInRecreationItem", b =>
             {
                 b.Property<Guid>("AccountId")

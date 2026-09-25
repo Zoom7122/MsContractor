@@ -44,12 +44,13 @@ public static class DocumentFieldSupport
         ["commissionreportin"] = Set(Without(Common, "syncId"),
         [
             "shared", "organization", "agent", "contract", "agentAccount", "organizationAccount", "project",
-            "vatEnabled", "vatIncluded", "positions", "commissionPeriodStart", "commissionPeriodEnd"
+            "vatEnabled", "vatIncluded", "positions", "commissionPeriodStart", "commissionPeriodEnd",
+            "rewardType", "rewardPercent", "returnToCommissionerPositions"
         ]),
         ["commissionreportout"] = Set(Without(Common, "syncId"),
         [
             "organization", "agent", "contract", "agentAccount", "organizationAccount", "project", "vatEnabled",
-            "positions", "commissionPeriodStart", "commissionPeriodEnd"
+            "positions", "commissionPeriodStart", "commissionPeriodEnd", "rewardType", "rewardPercent"
         ]),
         ["factureout"] = Set(Common, ["shared", "organization", "agent", "contract", "paymentPurpose"]),
         ["facturein"] = Set(Common, ["shared", "organization", "agent", "contract", "incomingNumber", "incomingDate"]),

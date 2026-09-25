@@ -149,12 +149,37 @@ public sealed class SnapshotCollector(IMoySkladClient client, TextWriter progres
             var rule = DocumentRegistry.Get(type);
             var doc = await LoadDocument(rule, id, ct);
             var data = await DocumentNormalizer.For(rule).NormalizeAsync(doc,
-                async (relatedType, relatedId, token) => SemanticHasher.Hash(await Normalize(relatedType, relatedId, token)), ct);
+                async (relatedType, relatedId, token) =>
+                    await IsMarkedSideOfMutualLink(type, id, relatedType, relatedId, token)
+                        ? DocumentNormalizer.MutualLink
+                        : SemanticHasher.Hash(await Normalize(relatedType, relatedId, token)), ct);
             normalized[key] = data;
             return data;
         }
         finally { active.Remove(key); }
     }
+
+    /// <summary>
+    /// Two distinct recreated documents that reference each other form a cycle. The side whose type sorts first
+    /// (ordinal) writes a mutual-link marker, the other side hashes it. The choice depends only on the pair, not on
+    /// traversal order, so BEFORE and AFTER normalize identically. Self-references still fail as cycles.
+    /// </summary>
+    private async Task<bool> IsMarkedSideOfMutualLink(string type, Guid id, string relatedType, Guid relatedId, CancellationToken ct)
+    {
+        if (type == relatedType && id == relatedId || string.CompareOrdinal(type, relatedType) > 0) return false;
+        var related = await LoadDocument(DocumentRegistry.Get(relatedType), relatedId, ct);
+        return References(related, $"/entity/{type}/{id:D}");
+    }
+
+    private static bool References(JsonNode? node, string path) => node switch
+    {
+        JsonObject obj when obj["meta"]?["href"]?.GetValue<string>() is { } href &&
+                            Uri.TryCreate(href, UriKind.Absolute, out var uri) &&
+                            uri.AbsolutePath.EndsWith(path, StringComparison.OrdinalIgnoreCase) => true,
+        JsonObject obj => obj.Where(pair => pair.Key != "meta").Any(pair => References(pair.Value, path)),
+        JsonArray array => array.Any(item => References(item, path)),
+        _ => false
+    };
 
     public static Guid ReadId(JsonObject document) => Guid.TryParse(document["id"]?.GetValue<string>(), out var id) && id != Guid.Empty
         ? id : throw new VerifierException("Document has an invalid or missing UUID.");

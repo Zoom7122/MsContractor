@@ -1,3 +1,4 @@
+using System.Text.Json;
 using MsContractor.MoySkladEgressService.Gateways.Documents.Factureout;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Repositories;
@@ -16,15 +17,18 @@ public sealed class FactureOutPreparationService : IFactureOutPreparationService
 {
     private readonly IMoySkladFactureOutGateway _gateway;
     private readonly IFactureOutRawDataRepository _repository;
+    private readonly IFactureOutRecreationItemRepository _recreationItems;
     private readonly ILogger<FactureOutPreparationService> _logger;
 
     public FactureOutPreparationService(
         IMoySkladFactureOutGateway gateway,
         IFactureOutRawDataRepository repository,
+        IFactureOutRecreationItemRepository recreationItems,
         ILogger<FactureOutPreparationService> logger)
     {
         _gateway = gateway;
         _repository = repository;
+        _recreationItems = recreationItems;
         _logger = logger;
     }
 
@@ -50,6 +54,18 @@ public sealed class FactureOutPreparationService : IFactureOutPreparationService
 
             await _repository.UpsertAsync(accountId, batchDocuments, cancellationToken);
 
+            var preparedSourceSyncIds = batchDocuments.ToDictionary(
+                document => document.Key,
+                document => ReadSourceSyncId(document.Value));
+            var skippedIds = batch
+                .Where(documentId => !batchDocuments.ContainsKey(documentId))
+                .ToArray();
+            await _recreationItems.UpsertPreparationAsync(
+                accountId,
+                preparedSourceSyncIds,
+                skippedIds,
+                cancellationToken);
+
             foreach (var document in batchDocuments)
             {
                 if (!documentIds.Add(document.Key))
@@ -59,8 +75,7 @@ public sealed class FactureOutPreparationService : IFactureOutPreparationService
                 }
             }
 
-            skipped.AddRange(batch
-                .Where(documentId => !batchDocuments.ContainsKey(documentId))
+            skipped.AddRange(skippedIds
                 .Select(documentId => new FactureOutSkippedDocumentResult(
                     documentId,
                     "Skipped",
@@ -76,6 +91,28 @@ public sealed class FactureOutPreparationService : IFactureOutPreparationService
         }
 
         return new FactureOutPreparationResult(documentIds.ToArray(), skipped);
+    }
+
+    private static Guid? ReadSourceSyncId(string rawJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(rawJson);
+            if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                document.RootElement.TryGetProperty("syncId", out var syncIdElement) &&
+                syncIdElement.ValueKind == JsonValueKind.String &&
+                Guid.TryParse(syncIdElement.GetString(), out var syncId) &&
+                syncId != Guid.Empty)
+            {
+                return syncId;
+            }
+        }
+        catch (JsonException)
+        {
+            // The raw response has already been saved; an unavailable source sync id is optional.
+        }
+
+        return null;
     }
 
     private static void ValidateInput(Guid accountId, IReadOnlyList<Guid> factureOutIds)

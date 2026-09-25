@@ -4,7 +4,7 @@
 @accountId = b3d34ec3-243f-11f1-0a80-0b21000042b5
 @mainCounterpartyId = 615453e8-b762-11f1-0a80-1af9001efbbc
 # Replace with an existing factureout ID to verify that raw JSON is saved.
-@factureOutId = "1a9d54c8-b84b-11f1-0a80-0836000383a0","1e318514-b84b-11f1-0a80-1f8b00036539","1f175f07-b84b-11f1-0a80-1685000370e9","1f175f07-b84b-11f1-0a80-168500037222"
+@factureOutId = "b82627a6-b8d2-11f1-0a80-1f8b002a4f0b","b6876842-b8d2-11f1-0a80-0836002cca3f","b1d1dc17-b8d2-11f1-0a80-07d9002b5848","1f175f07-b84b-11f1-0a80-222500037222"
 
 ### Verify factureout validation rejects an empty ID list (expects 400).
 POST {{MsContractor_MoySkladEgressService_HostAddress}}/internal/accounts/{{accountId}}/documents/factureout/recreate

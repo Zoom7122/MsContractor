@@ -62,6 +62,15 @@ public sealed class DocumentFactory
                 ?? throw new InvalidOperationException("Commission contract was not prepared.")));
             Set(payload, type, "commissionPeriodStart", MoySkladTime.Format(step.PeriodStart));
             Set(payload, type, "commissionPeriodEnd", MoySkladTime.Format(step.PeriodEnd));
+
+            // rewardType: PercentOfSales | None (enum table of the commission report sections). A separate random
+            // stream keeps the planned values of existing scenarios unchanged.
+            var runtime = new TestDataRandomizer(step.RuntimeSeed);
+            var percent = runtime.Chance(0.7);
+            Set(payload, type, "rewardType", percent ? "PercentOfSales" : "None");
+            Set(payload, type, "rewardPercent", percent ? runtime.Between(3, 25) : 0);
+            if (step.Step.ReturnsToCommissioner)
+                Set(payload, type, "returnToCommissionerPositions", BuildReturnToCommissionerPositions(runtime));
         }
 
         if (DocumentFieldSupport.Supports(type, "incomingNumber"))
@@ -116,8 +125,16 @@ public sealed class DocumentFactory
         ApplyCommon(payload, type, scenario, step);
 
         // purchaseorder templates deliberately omit the supplier (documentation, "Шаблон Заказа поставщику на основе").
-        if (payload["agent"] is null && DocumentFieldSupport.Supports(type, "agent"))
+        // A retail template made on the shift only may carry the default retail customer: the test counterparty wins.
+        if ((payload["agent"] is null || step.Step.AddsPositions) && DocumentFieldSupport.Supports(type, "agent"))
             Set(payload, type, "agent", MetaReference.To(counterparty.Entity));
+        if (step.Step.AddsPositions)
+        {
+            var vatEnabled = step.VatEnabled && refs.VatRates.Count > 0;
+            Set(payload, type, "vatEnabled", vatEnabled);
+            if (vatEnabled) Set(payload, type, "vatIncluded", true); // VAT inside the price keeps the paid sum exact
+            Set(payload, type, "positions", BuildPositions(type, step, vatEnabled));
+        }
         if (payload["store"] is null && DocumentFieldSupport.Supports(type, "store"))
             Set(payload, type, "store", MetaReference.To(RequireStore()));
 
@@ -135,7 +152,7 @@ public sealed class DocumentFactory
                 // paymentPurpose is only available for factures based on payments.
                 Set(payload, type, "paymentPurpose", step.PaymentPurpose);
                 break;
-            case "retaildemand":
+            case "retaildemand" or "retailsalesreturn":
                 if (payload["retailStore"] is null) Set(payload, type, "retailStore", MetaReference.To(RequireRetailStore()));
                 SplitRetailPayment(payload, type, step);
                 break;
@@ -315,13 +332,44 @@ public sealed class DocumentFactory
         payload["positions"] = new JsonArray(keep.Select(position => (JsonNode)position.DeepClone()).ToArray());
     }
 
+    /// <summary>
+    /// cashSum + noCashSum pay the document. The template sum is used when it matches the positions (a sale by
+    /// order); positions added by the generator or reduced for a return are summed here.
+    /// </summary>
     private static void SplitRetailPayment(JsonObject payload, string type, StepPlan step)
     {
-        var sum = ReadSum(payload);
+        var sum = type == "retailsalesreturn" || step.Step.AddsPositions || ReadSum(payload) <= 0
+            ? PositionsSum(payload)
+            : ReadSum(payload);
         if (sum <= 0) return;
         var cash = (long)Math.Round(sum * step.PaymentShare);
         Set(payload, type, "cashSum", cash);
         Set(payload, type, "noCashSum", sum - cash);
+    }
+
+    private static long PositionsSum(JsonObject payload)
+    {
+        if (payload["positions"] is not JsonArray positions) return 0;
+        var vatOnTop = payload["vatEnabled"] is JsonValue enabled && enabled.GetValue<bool>() &&
+                       !(payload["vatIncluded"] is JsonValue included && included.GetValue<bool>());
+        return (long)Math.Round(positions.OfType<JsonObject>().Sum(position =>
+            ReadDecimal(position["price"]) * ReadDecimal(position["quantity"]) * (1 - ReadDecimal(position["discount"]) / 100) *
+            (vatOnTop ? 1 + ReadDecimal(position["vat"]) / 100 : 1)));
+    }
+
+    /// <summary>Goods returned to the commissioner's store (second position collection of commissionreportin).</summary>
+    private JsonArray BuildReturnToCommissionerPositions(TestDataRandomizer runtime)
+    {
+        var positions = new JsonArray();
+        foreach (var product in refs.Products.OrderBy(_ => runtime.Between(0, 1000)).Take(runtime.Between(1, 2)))
+            positions.Add(new JsonObject
+            {
+                ["assortment"] = MetaReference.To(product),
+                ["quantity"] = runtime.Pick(TestDataRandomizer.IntegerQuantities),
+                ["price"] = runtime.NextPriceKopecks(),
+                ["vat"] = 0
+            });
+        return positions;
     }
 
     private static void AddLink(JsonObject payload, RelationDefinition relation, JsonObject target, long? linkedSum)

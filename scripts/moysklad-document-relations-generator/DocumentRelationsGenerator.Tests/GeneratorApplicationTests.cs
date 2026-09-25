@@ -2,6 +2,7 @@ using DocumentRelationsGenerator.Cli;
 using DocumentRelationsGenerator.Manifest;
 using DocumentRelationsGenerator.MoySklad;
 using DocumentRelationsGenerator.Relations;
+using DocumentRelationsGenerator.Scenarios;
 
 namespace DocumentRelationsGenerator.Tests;
 
@@ -67,7 +68,8 @@ public sealed class GeneratorApplicationTests : IDisposable
         var manifest = LoadManifest();
         Assert.Equal(2, manifest.Counterparties.Count);
         Assert.Contains(manifest.Entities, entity => entity.Role == "store" && entity.Created); // no store in the account
-        Assert.Equal(2, manifest.Scenarios.Count(scenario => scenario.Status == "skipped"));
+        var retailScenarios = ScenarioRegistry.All.Count(scenario => scenario.Requirement == ScenarioRequirement.RetailStore);
+        Assert.Equal(retailScenarios * 2, manifest.Scenarios.Count(scenario => scenario.Status == "skipped"));
         Assert.Equal(6, manifest.Coverage!.Skipped);
         Assert.Equal(RelationCatalog.All.Count - 6, manifest.Coverage.Verified);
         Assert.Equal(0, manifest.Coverage.Failed);

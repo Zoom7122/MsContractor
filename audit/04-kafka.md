@@ -34,7 +34,7 @@ Location: `src/Services/CatalogSyncService/Services/SyncRequestedConsumer.cs`; `
 
 Lines: Sync `14-23,86-100`; Merge `18-28,66-89`
 
-Current behavior: Один `Consume()` сопровождается полным sync/merge до следующего poll. `MaxPollIntervalMs` не задан, значит действует client default.
+Current behavior: Один `Consume()` сопровождается полным sync/merge до следующего poll. У sync consumer `MaxPollIntervalMs` не задан (действует client default); merge выполняет несколько шагов по 10 минут каждый, что превышает заданный интервал.
 
 Problem: Apache Kafka считает consumer failed, если poll не происходит до истечения interval, и инициирует rebalance; официальный default — 300000 ms. [Apache Kafka consumer configuration](https://kafka.apache.org/41/generated/consumer_config.html)
 

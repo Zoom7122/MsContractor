@@ -24,6 +24,8 @@ x86/
 _ReSharper*/
 *.DotSettings.user
 
+audit/
+
 # Visual Studio
 .vs/
 .vscode/.vs/

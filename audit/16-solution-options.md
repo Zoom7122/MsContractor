@@ -232,15 +232,14 @@
 
 Предпочтителен вариант 2: явная версия стабильна для API/events/fencing и не привязана к деталям PostgreSQL MVCC. Lock полезен для sequencing, но не обнаруживает stale writer после lease expiry.
 
-### [D-03] Merge POST не идемпотентен и допускает конфликтующие jobs
+### [D-03] Merge POST не идемпотентен
 
 Варианты:
 
-1. Блокировать кнопку frontend. Не защищает network retry/другого пользователя.
-2. Idempotency key с unique account constraint, но без resource reservation.
-3. Idempotency key плюс active reservation rows/unique partial constraint на каждый counterparty; освобождение только terminal job.
+1. Блокировать кнопку frontend. Не защищает network retry.
+2. Idempotency key с unique `(account_id, key)`; повтор возвращает существующий job.
 
-Предпочтителен вариант 3: idempotency закрывает повтор того же запроса, reservation — разные конфликтующие запросы. Это две отдельные угрозы, и одной frontend блокировки недостаточно.
+Предпочтителен вариант 2: frontend-блокировка не закрывает повтор запроса после потери ответа.
 
 ### [D-04] Counterparty PK не включает account_id
 
@@ -452,16 +451,6 @@
 
 ## Observability
 
-### [O-01] Логируются полные archive bodies
-
-Варианты:
-
-1. Удалить body logs полностью.
-2. Redact known fields и truncation.
-3. Логировать allowlisted metadata (`count`, IDs операций, status, duration), а диагностический payload хранить только как access-controlled short-lived trace artifact по feature flag.
-
-Предпочтителен вариант 3: штатные logs остаются безопасными и полезными, а редкие диагностики возможны под явным контролем. Redaction blacklist хрупок к новым upstream fields.
-
 ### [O-02] Нет end-to-end sync trace
 
 Варианты:
@@ -492,15 +481,14 @@
 
 Предпочтителен вариант 3 до реализации сервисов; после реализации — вариант 2. Периодическое сообщение не является проверкой здоровья независимо от частоты.
 
-### [O-05] Непоследовательные startup/error logs
+### [O-05] Upstream 4xx логируются как Error
 
 Варианты:
 
-1. Заменить `Console.WriteLine` на ILogger.
-2. Ввести shared logging conventions/event IDs и severity table.
-3. Добавить middleware enrichment/redaction и structured logging analyzer/tests.
+1. Ввести shared logging conventions/event IDs и severity table.
+2. Добавить structured logging analyzer/tests для enforcement.
 
-Предпочтителен вариант 2 как небольшой, но системный шаг, затем 3 для enforcement. Простая замена Console не исправляет alert noise от expected 4xx.
+Предпочтителен вариант 1 как небольшой системный шаг, затем 2 для enforcement.
 
 ## Tests
 
@@ -513,16 +501,6 @@
 3. Дополнить вариант 2 небольшим nightly end-to-end environment с fault injection.
 
 Предпочтителен вариант 2 как обязательный PR gate и вариант 3 для дорогих crash/rebalance scenarios. Так feedback остаётся быстрым, а distributed failures всё же проверяются.
-
-### [T-02] Падает cookie-policy test
-
-Варианты:
-
-1. Изменить test под текущий `Secure=None`.
-2. Изменить controller под expected environment-aware policy.
-3. Сначала зафиксировать supported iframe origins/HTTPS contract в security decision, затем table-driven tests для dev/prod/forwarded HTTPS.
-
-Предпочтителен вариант 3: без browser/deployment контракта нельзя определить, ошибочен код или test. Подгонка одной стороны скрыла бы реальную security/compatibility проблему.
 
 ### [T-03] Redis test молча проходит
 

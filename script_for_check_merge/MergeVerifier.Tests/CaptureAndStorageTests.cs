@@ -109,13 +109,13 @@ public sealed class CaptureAndStorageTests
                 }
             }
             var result = await VerifierApplication.VerifyAsync(await SnapshotStore.ReadAsync(path), path, collector, output, error);
-            Assert.Equal(1, result); // All four documents match; three registry types remain explicitly Unsupported.
+            Assert.Equal(1, result); // All four documents match; retireorder remains explicitly Unsupported.
             Assert.Empty(error.ToString());
             Assert.Equal(bytes, await File.ReadAllBytesAsync(path));
             Assert.True(File.Exists(Path.Combine(folder, "after.json")));
             var report = JsonSerializer.Deserialize<VerificationReport>(await File.ReadAllTextAsync(Path.Combine(folder, "report.json")), SnapshotStore.JsonOptions)!;
             Assert.Equal(4, report.Totals[VerificationStatus.Matched]);
-            Assert.Equal(3, report.Totals[VerificationStatus.Unsupported]);
+            Assert.Equal(1, report.Totals[VerificationStatus.Unsupported]);
             foreach (var text in new[] { output.ToString(), JsonSerializer.Serialize(before), JsonSerializer.Serialize(report) })
             {
                 Assert.DoesNotContain("fixture-login", text); Assert.DoesNotContain("fixture-password", text);
@@ -173,6 +173,27 @@ public sealed class CaptureAndStorageTests
         var exception = await Assert.ThrowsAsync<VerifierException>(() => new SnapshotCollector(client, TextWriter.Null).CaptureAsync(Main, [Duplicate], default));
         Assert.Contains("Cyclic", exception.Message);
         Assert.DoesNotContain(Id.ToString(), exception.Message);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MutualRecreatedLinkIsNormalizedIndependentlyOfCaptureOrder(bool reversed)
+    {
+        // Live API: purchasereturn.factureOut and factureout.returns point at each other; both are recreated.
+        var api = new AccountApi();
+        var purchaseReturn = Raw("purchasereturn", Id, Duplicate); purchaseReturn["factureOut"] = Reference("factureout", OtherId);
+        var facture = Raw("factureout", OtherId, Duplicate); facture["returns"] = new JsonArray(Reference("purchasereturn", Id));
+        api.Documents.AddRange(reversed ? [facture, purchaseReturn] : [purchaseReturn, facture]);
+        using var client = api.CreateClient();
+
+        var snapshot = await new SnapshotCollector(client, TextWriter.Null).CaptureAsync(Main, [Duplicate], default);
+
+        var factureData = snapshot.Documents.Single(x => x.EntityType == "factureout").Data;
+        var returnData = snapshot.Documents.Single(x => x.EntityType == "purchasereturn").Data;
+        Assert.True(factureData.GetProperty("returns")[0].GetProperty("$ref").GetProperty("mutualLink").GetBoolean());
+        Assert.Equal(Normalization.SemanticHasher.Hash(factureData),
+            returnData.GetProperty("factureOut").GetProperty("$ref").GetProperty("semanticHash").GetString());
     }
 
     [Fact]

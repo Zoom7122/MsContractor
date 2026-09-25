@@ -1,24 +1,22 @@
 # Redis audit
 
-## [R-01] Distributed rate limiter фактически не реализован
+## [R-01] Distributed rate limiter неатомарен, без лимита параллельности и приоритета
 
 Severity: High
 
 Category: Redis
 
-Location: `src/Services/MoySkladEgressService/Services/MoySkladRateLimiter.cs`; `src/Services/MoySkladEgressService/Program.cs`
+Location: `src/Services/MoySkladEgressService/RateLimiting/MoySkladRateLimiter.cs`
 
-Lines: limiter `13-42`; Program `27-34,54-55`
+Current behavior: `WaitAsync` читает последний наблюдённый остаток и пропускает запрос, если он больше резерва; резервирования, декремента, семафора параллельности и приоритета merge нет.
 
-Current behavior: `WaitAsync` только проверяет cancellation и немедленно завершается. `ObserveAsync` пишет headers в log; Redis не используется для лимитов, `blocked_until`, concurrency или приоритета merge.
-
-Problem: Несколько Egress instances/accounts/users не разделяют budget, а full sync может занять все upstream slots перед merge writes.
+Problem: Несколько Egress instances, sync и merge одновременно видят один и тот же остаток и превышают budget; full sync может занять все upstream slots перед merge writes.
 
 Risk: 429 storms, нарушение приоритета critical writes, непредсказуемая производительность при horizontal scaling.
 
 Example scenario: Два full sync одновременно отправляют страницы; merge PUT проходит без reservation и получает 429.
 
-Recommended solution: Реализовать атомарный Redis limiter с account/user/global buckets, bounded concurrency, `blocked_until`, TTL/fencing и отдельной приоритетной очередью write; задокументировать fallback при Redis failure.
+Recommended solution: Атомарный Redis limiter с account/user/global buckets, bounded concurrency, `blocked_until`, TTL/fencing и отдельной приоритетной очередью write; задокументировать fallback при Redis failure.
 
 Priority: P0
 

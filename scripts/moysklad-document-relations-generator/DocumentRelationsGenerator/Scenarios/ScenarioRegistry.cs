@@ -51,6 +51,10 @@ public static class ScenarioRegistry
             if (!valid) throw new InvalidOperationException($"{scenario.Name}/{step.Key}: links do not fit step kind {step.Kind}.");
             if (step.Kind == StepKind.RetailShift && step.DocumentType != "retailshift")
                 throw new InvalidOperationException($"{scenario.Name}/{step.Key}: RetailShift step must create retailshift.");
+            if (step.AddsPositions && (step.Kind != StepKind.Template || !DocumentFieldSupport.Supports(step.DocumentType, "positions")))
+                throw new InvalidOperationException($"{scenario.Name}/{step.Key}: only template steps with positions can add positions.");
+            if (step.ReturnsToCommissioner && (step.Kind != StepKind.Root || step.DocumentType != "commissionreportin"))
+                throw new InvalidOperationException($"{scenario.Name}/{step.Key}: returnToCommissionerPositions belong to a commissionreportin root.");
 
             // "Документ-основание должен быть указан в единственном экземпляре" for both facture types.
             if (step.DocumentType is "factureout" or "facturein" &&
@@ -194,7 +198,14 @@ public static class ScenarioRegistry
                     PaymentPost("cashin", "cashin", Link("cashin.operations->retailshift", "retailshift")),
                     PaymentPost("paymentin", "paymentin", Link("paymentin.operations->retailshift", "retailshift"))
                 ]),
-            FactureOutFull()
+            FactureOutFull(),
+            SalesReturnFull(),
+            PurchaseReturnFull(),
+            FactureInFull(),
+            RetailDemandFull(),
+            RetailSalesReturnFull(),
+            CommissionReportInFull(),
+            CommissionReportOutFull()
         };
 
         foreach (var scenario in scenarios) Validate(scenario);
@@ -265,6 +276,191 @@ public static class ScenarioRegistry
             "(by supply, without base)",
             ScenarioRequirement.None, steps) { AlternatesAgreementsPerRoot = true };
     }
+
+    private static ScenarioDefinition Full(string name, string description, List<ScenarioStep> steps,
+        ScenarioRequirement requirement = ScenarioRequirement.None) =>
+        new(name, description, requirement, steps) { AlternatesAgreementsPerRoot = true };
+
+    /// <summary>
+    /// Every context of a sales return on one counterparty: by an order shipment (refunds and write-off), by an
+    /// invoice shipment that already has a factureout, by a standalone shipment, without a base document, and a
+    /// refund paid in one outgoing payment together with a supplier payment (two operations).
+    /// </summary>
+    private static ScenarioDefinition SalesReturnFull() => Full("salesreturn-full",
+        "all salesreturn contexts on one counterparty: by order/invoice/standalone demand, without base; loss, paymentout, " +
+        "cashout, a paymentout with two operations",
+        [
+            Root("order", "customerorder"),
+            Template("order-demand", "demand", Link("demand.customerOrder->customerorder", "order")),
+            Template("order-return", "salesreturn", Link("salesreturn.demand->demand", "order-demand")),
+            Template("order-return-loss", "loss", Link("loss.salesReturn->salesreturn", "order-return")),
+            Template("order-return-paymentout", "paymentout", Link("paymentout.operations->salesreturn", "order-return")),
+            Template("order-return-cashout", "cashout", Link("cashout.operations->salesreturn", "order-return")),
+            Root("invoice", "invoiceout"),
+            Template("invoice-demand", "demand", Link("demand.invoicesOut->invoiceout", "invoice")),
+            Template("fo-invoice-demand", "factureout", Link("factureout.demands->demand", "invoice-demand")),
+            Template("invoice-return", "salesreturn", Link("salesreturn.demand->demand", "invoice-demand")),
+            Template("invoice-return-paymentout", "paymentout", Link("paymentout.operations->salesreturn", "invoice-return")),
+            Root("demand", "demand"),
+            Template("demand-return", "salesreturn", Link("salesreturn.demand->demand", "demand")),
+            Root("return-without-base", "salesreturn"),
+            Template("rwb-loss", "loss", Link("loss.salesReturn->salesreturn", "return-without-base")),
+            Template("rwb-cashout", "cashout", Link("cashout.operations->salesreturn", "return-without-base")),
+            Root("supply", "supply"),
+            PaymentPost("netting-paymentout", "paymentout",
+                Link("paymentout.operations->salesreturn", "demand-return"),
+                Link("paymentout.operations->supply", "supply"))
+        ]);
+
+    /// <summary>
+    /// Every context of a purchase return: by an order supply, by an invoice supply, by a supply with a received
+    /// facture and an issued facture on the return (MSContractor skips such returns), without base, and a refund
+    /// received in one payment together with a customer payment.
+    /// </summary>
+    private static ScenarioDefinition PurchaseReturnFull() => Full("purchasereturn-full",
+        "all purchasereturn contexts on one counterparty: by order/invoice/standalone supply, with factures, without base; " +
+        "paymentin, cashin, a paymentin with two operations",
+        [
+            Root("order", "purchaseorder"),
+            Template("order-supply", "supply", Link("supply.purchaseOrder->purchaseorder", "order")),
+            Template("order-return", "purchasereturn", Link("purchasereturn.supply->supply", "order-supply")),
+            Template("order-return-paymentin", "paymentin", Link("paymentin.operations->purchasereturn", "order-return")),
+            Template("order-return-cashin", "cashin", Link("cashin.operations->purchasereturn", "order-return")),
+            Root("invoice", "invoicein"),
+            Template("invoice-supply", "supply", Link("supply.invoicesIn->invoicein", "invoice")),
+            Template("invoice-return", "purchasereturn", Link("purchasereturn.supply->supply", "invoice-supply")),
+            Template("invoice-return-cashin", "cashin", Link("cashin.operations->purchasereturn", "invoice-return")),
+            Root("supply", "supply"),
+            Template("fi-supply", "facturein", Link("facturein.supplies->supply", "supply")),
+            Template("supply-return", "purchasereturn", Link("purchasereturn.supply->supply", "supply")),
+            Template("fo-supply-return", "factureout", Link("factureout.returns->purchasereturn", "supply-return")),
+            Template("supply-return-paymentin", "paymentin", Link("paymentin.operations->purchasereturn", "supply-return")),
+            Root("return-without-base", "purchasereturn"),
+            Template("rwb-paymentin", "paymentin", Link("paymentin.operations->purchasereturn", "return-without-base")),
+            Root("demand", "demand"),
+            PaymentPost("netting-paymentin", "paymentin",
+                Link("paymentin.operations->purchasereturn", "invoice-return"),
+                Link("paymentin.operations->demand", "demand"))
+        ]);
+
+    /// <summary>
+    /// Every base and context of facturein: supply (by order, by invoice, standalone with a later return) and
+    /// paymentout/cashout on each document type an outgoing payment can be linked to, plus advances without document.
+    /// </summary>
+    private static ScenarioDefinition FactureInFull()
+    {
+        var steps = new List<ScenarioStep>();
+        void Payments(string prefix, string target, string targetType)
+        {
+            foreach (var payment in new[] { "paymentout", "cashout" })
+            {
+                steps.Add(Template($"{prefix}-{payment}", payment, Link($"{payment}.operations->{targetType}", target)));
+                steps.Add(Template($"fi-{prefix}-{payment}", "facturein", Link($"facturein.payments->{payment}", $"{prefix}-{payment}")));
+            }
+        }
+
+        steps.Add(Root("order", "purchaseorder", services: true));
+        steps.Add(Template("order-supply", "supply", Link("supply.purchaseOrder->purchaseorder", "order")));
+        steps.Add(Template("fi-order-supply", "facturein", Link("facturein.supplies->supply", "order-supply")));
+        Payments("order-advance", "order", "purchaseorder");
+        steps.Add(Root("invoice", "invoicein", services: true));
+        steps.Add(Template("invoice-supply", "supply", Link("supply.invoicesIn->invoicein", "invoice")));
+        steps.Add(Template("fi-invoice-supply", "facturein", Link("facturein.supplies->supply", "invoice-supply")));
+        Payments("invoice", "invoice", "invoicein");
+        steps.Add(Root("supply", "supply"));
+        steps.Add(Template("fi-supply", "facturein", Link("facturein.supplies->supply", "supply")));
+        steps.Add(Template("supply-return", "purchasereturn", Link("purchasereturn.supply->supply", "supply")));
+        Payments("supply", "supply", "supply");
+        foreach (var payment in new[] { "paymentout", "cashout" })
+        {
+            steps.Add(Root($"advance-{payment}", payment));
+            steps.Add(Template($"fi-advance-{payment}", "facturein", Link($"facturein.payments->{payment}", $"advance-{payment}")));
+        }
+        steps.Add(Root("commission-report", "commissionreportout"));
+        Payments("commission", "commission-report", "commissionreportout");
+        steps.Add(Root("demand", "demand"));
+        steps.Add(Template("demand-return", "salesreturn", Link("salesreturn.demand->demand", "demand")));
+        Payments("customer-refund", "demand-return", "salesreturn");
+        return Full("facturein-full",
+            "all facturein bases and contexts on one counterparty: supply (by order, by invoice, standalone), paymentout/cashout " +
+            "(on purchaseorder, invoicein, supply, commissionreportout, salesreturn, without document)", steps);
+    }
+
+    /// <summary>Retail sales in a test shift: without order, by an order paid in advance; returns and shift money.</summary>
+    private static ScenarioDefinition RetailDemandFull() => Full("retaildemand-full",
+        "all retaildemand contexts on one counterparty: sale in the shift without order, sale by an order with an advance, " +
+        "returns of both, cash and bank money of the shift",
+        [
+            new ScenarioStep("shift", "retailshift", StepKind.RetailShift, []),
+            Template("sale", "retaildemand", Link("retaildemand.retailShift->retailshift", "shift")) with { AddsPositions = true },
+            Template("sale-return", "retailsalesreturn",
+                Link("retailsalesreturn.demand->retaildemand", "sale"), Link("retailsalesreturn.retailShift->retailshift", "shift")),
+            Root("order", "customerorder"),
+            Template("order-advance-paymentin", "paymentin", Link("paymentin.operations->customerorder", "order")),
+            Template("order-sale", "retaildemand",
+                Link("retaildemand.retailShift->retailshift", "shift"), Link("retaildemand.customerOrder->customerorder", "order")),
+            Template("order-sale-return", "retailsalesreturn",
+                Link("retailsalesreturn.demand->retaildemand", "order-sale"), Link("retailsalesreturn.retailShift->retailshift", "shift")),
+            PaymentPost("shift-cashin", "cashin", Link("cashin.operations->retailshift", "shift")),
+            PaymentPost("shift-paymentin", "paymentin", Link("paymentin.operations->retailshift", "shift"))
+        ], ScenarioRequirement.RetailStore);
+
+    /// <summary>Retail returns: by a sale without order, by a sale by order, and without a base sale.</summary>
+    private static ScenarioDefinition RetailSalesReturnFull() => Full("retailsalesreturn-full",
+        "all retailsalesreturn contexts on one counterparty: by a shift sale, by a sale by order, without base sale",
+        [
+            new ScenarioStep("shift", "retailshift", StepKind.RetailShift, []),
+            Template("sale", "retaildemand", Link("retaildemand.retailShift->retailshift", "shift")) with { AddsPositions = true },
+            Template("sale-return", "retailsalesreturn",
+                Link("retailsalesreturn.demand->retaildemand", "sale"), Link("retailsalesreturn.retailShift->retailshift", "shift")),
+            Root("order", "customerorder"),
+            Template("order-sale", "retaildemand",
+                Link("retaildemand.retailShift->retailshift", "shift"), Link("retaildemand.customerOrder->customerorder", "order")),
+            Template("order-sale-return", "retailsalesreturn",
+                Link("retailsalesreturn.demand->retaildemand", "order-sale"), Link("retailsalesreturn.retailShift->retailshift", "shift")),
+            Template("return-without-base", "retailsalesreturn",
+                Link("retailsalesreturn.retailShift->retailshift", "shift")) with { AddsPositions = true }
+        ], ScenarioRequirement.RetailStore);
+
+    /// <summary>
+    /// Commission reports received under one commission contract: paid by bank and cash (with advance factures),
+    /// with goods returned to the commissioner paid together with a shipment, and an unpaid draft period.
+    /// </summary>
+    private static ScenarioDefinition CommissionReportInFull() => Full("commissionreportin-full",
+        "all commissionreportin contexts on one counterparty: paid by paymentin/cashin with factureout, " +
+        "returnToCommissionerPositions paid together with a demand, unpaid report",
+        [
+            Root("report-paid", "commissionreportin"),
+            Template("report-paid-paymentin", "paymentin", Link("paymentin.operations->commissionreportin", "report-paid")),
+            Template("fo-report-paid-paymentin", "factureout", Link("factureout.payments->paymentin", "report-paid-paymentin")),
+            Template("report-paid-cashin", "cashin", Link("cashin.operations->commissionreportin", "report-paid")),
+            Template("fo-report-paid-cashin", "factureout", Link("factureout.payments->cashin", "report-paid-cashin")),
+            Root("report-with-return", "commissionreportin") with { ReturnsToCommissioner = true },
+            Root("demand", "demand"),
+            PaymentPost("netting-paymentin", "paymentin",
+                Link("paymentin.operations->commissionreportin", "report-with-return"),
+                Link("paymentin.operations->demand", "demand")),
+            Root("report-unpaid", "commissionreportin")
+        ]);
+
+    /// <summary>Commission reports issued under one commission contract: paid (with received factures), paid together
+    /// with a supply, and unpaid.</summary>
+    private static ScenarioDefinition CommissionReportOutFull() => Full("commissionreportout-full",
+        "all commissionreportout contexts on one counterparty: paid by paymentout/cashout with facturein, paid together " +
+        "with a supply, unpaid report",
+        [
+            Root("report-paid", "commissionreportout"),
+            Template("report-paid-paymentout", "paymentout", Link("paymentout.operations->commissionreportout", "report-paid")),
+            Template("fi-report-paid-paymentout", "facturein", Link("facturein.payments->paymentout", "report-paid-paymentout")),
+            Template("report-paid-cashout", "cashout", Link("cashout.operations->commissionreportout", "report-paid")),
+            Template("fi-report-paid-cashout", "facturein", Link("facturein.payments->cashout", "report-paid-cashout")),
+            Root("report-with-supply", "commissionreportout"),
+            Root("supply", "supply"),
+            PaymentPost("netting-paymentout", "paymentout",
+                Link("paymentout.operations->commissionreportout", "report-with-supply"),
+                Link("paymentout.operations->supply", "supply")),
+            Root("report-unpaid", "commissionreportout")
+        ]);
 
     private static ScenarioStep Root(string key, string type, bool services = false) =>
         new(key, type, StepKind.Root, []) { AllowServices = services };

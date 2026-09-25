@@ -1,29 +1,5 @@
 # Logging / observability audit
 
-## [O-01] Batch archive request и response логируются целиком
-
-Severity: High
-
-Category: Security
-
-Location: `src/Services/MoySkladEgressService/Services/MoySkladCounterpartyGateway.cs`
-
-Lines: `188-203,278-280,300-315`
-
-Current behavior: Info logs содержат serialized archive payload и полный response body; error path извлекает upstream message.
-
-Problem: Response — полный JSON контрагентов, payload раскрывает их IDs. Logging policy не применяет allowlist/redaction/size limit.
-
-Risk: Business/PII data попадает в централизованные logs с более широким доступом и retention.
-
-Example scenario: Успешный merge пишет все поля archived counterparties в Dozzle/log collector.
-
-Recommended solution: Логировать только count, operation IDs, status, duration и bounded error code; применить centralized redaction и security regression test, запрещающий bodies/tokens.
-
-Priority: P1
-
-Confidence: High
-
 ## [O-02] Sync trace нельзя связать end-to-end
 
 Severity: Medium
@@ -96,25 +72,23 @@ Priority: P2
 
 Confidence: High
 
-## [O-05] Startup и expected client errors логируются непоследовательно
+## [O-05] Expected upstream 4xx логируются как Error
 
 Severity: Low
 
 Category: Code Quality
 
-Location: `src/Services/VendorService/Program.cs`; error middleware в Gateway/Vendor/Egress
+Location: `src/Services/MoySkladEgressService/ResponseHandling/MoySkladResponseHandler.cs`
 
-Lines: Vendor Program `74-86`; middleware `LogError` branches
+Current behavior: Любой не-2xx ответ МойСклад, включая ожидаемые бизнес-отказы, логируется уровнем Error.
 
-Current behavior: Vendor startup использует `Console.WriteLine`; ряд controlled 4xx проходит через Error-level logging.
+Problem: Client/business mistakes повышают alert noise.
 
-Problem: Поля не единообразны, client mistakes повышают alert noise.
+Risk: Труднее отделить реальные 5xx от ожидаемых отказов.
 
-Risk: Труднее фильтровать startup/dependency incidents и реальные 5xx.
+Example scenario: Серия отказов по закрытому периоду выглядит как outage в error-rate dashboard.
 
-Example scenario: Серия invalid client requests выглядит как server outage в error-rate dashboard.
-
-Recommended solution: Только structured ILogger; 4xx по policy — Information/Warning, 5xx — Error; единый event ID/error code.
+Recommended solution: Upstream 4xx — Warning/Information по policy, 5xx — Error; единый event ID/error code.
 
 Priority: P3
 

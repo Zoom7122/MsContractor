@@ -1,6 +1,6 @@
 # Test audit
 
-Фактический запуск: `dotnet build MsContractor.sln --no-restore` — успешно, 0 warnings/0 errors. `dotnet test MsContractor.sln --no-build` — Sync 101/101, Vendor 21/22, один fail. `npm run build` не запускался: `npm` отсутствует, зависимости по ограничению не устанавливались.
+Фактический запуск: `dotnet build MsContractor.sln --no-restore` — успешно, 0 warnings/0 errors. Актуальные результаты `dotnet test` — в [summary.md](summary.md#build-and-tests).
 
 ## [T-01] Critical distributed flows не покрыты real-infrastructure tests
 
@@ -23,30 +23,6 @@ Example scenario: Unit test подтверждает manual commit path, но н
 Recommended solution: Добавить tiered Testcontainers suite и deterministic fault injection; отдельно account-isolation/concurrency/idempotency/security scenarios.
 
 Priority: P1
-
-Confidence: High
-
-## [T-02] Текущий Vendor test suite падает на cookie policy
-
-Severity: Medium
-
-Category: Testing
-
-Location: `tests/MsContractor.VendorService.Tests/MoyskladSessionControllerTests.cs`; `src/Services/VendorService/Controllers/MoyskladSessionController.cs`
-
-Lines: test `35-65`; controller `155-164`
-
-Current behavior: Test для Development/non-forwarded HTTPS ожидает `SameSite=Lax` без Secure; controller всегда выставляет `SameSite=None; Secure=true`. Результат запуска: 1 failed из 22.
-
-Problem: Реализация и зафиксированная security policy расходятся; CI baseline не green.
-
-Risk: Неясна intended cookie semantics локально/за proxy; будущие regressions теряются среди известного fail.
-
-Example scenario: HTTP dev iframe не получает Secure cookie, хотя тест явно требует environment-appropriate behavior.
-
-Recommended solution: Согласовать browser deployment contract, изменить либо implementation, либо test только после security review; CI должен снова стать zero-failure.
-
-Priority: P2
 
 Confidence: High
 

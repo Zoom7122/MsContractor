@@ -48,25 +48,23 @@ Priority: P1
 
 Confidence: High
 
-## [D-03] Merge POST не идемпотентен и не блокирует конфликтующие jobs
+## [D-03] Merge POST не идемпотентен
 
 Severity: High
 
 Category: DB
 
-Location: `src/Services/DuplicatesMergeService/Services/MergeJobCreator.cs`; `src/Services/CatalogSyncService/Repo/CatalogSyncDbContext.cs`
+Location: `src/Services/DuplicatesMergeService/Services/MergeJobCreator.cs`
 
-Lines: creator `39-121`; DbContext `88-115`
+Current behavior: Каждый POST создаёт новые job/message IDs; idempotency key отсутствует.
 
-Current behavior: Каждый POST создаёт новые job/message IDs. Constraint запрещает дубли operations только внутри одного job, но не одновременные active jobs на одних counterparties.
+Problem: Повтор POST после потери ответа не возвращает уже созданный job.
 
-Problem: Response loss/repeated click или два пользователя создают независимые destructive workflows.
+Risk: Повторная отправка получает конфликт вместо идентификатора существующей операции; пользователь не знает, что merge уже запущен.
 
-Risk: Повторные PUT/archive, конфликтующие main payload и непредсказуемый итоговый status.
+Example scenario: Gateway timeout после commit; frontend повторяет POST и получает ошибку.
 
-Example scenario: Gateway timeout после commit; frontend повторяет POST, и два merge jobs архивируют одинаковые IDs.
-
-Recommended solution: Client idempotency key с unique `(account_id,key)`, active-operation reservation/lock по counterparty и conflict response.
+Recommended solution: Client idempotency key с unique `(account_id,key)`; повтор возвращает существующий job.
 
 Priority: P1
 

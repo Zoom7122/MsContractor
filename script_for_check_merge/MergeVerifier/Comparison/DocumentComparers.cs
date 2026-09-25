@@ -94,6 +94,8 @@ public class RecreatedDocumentComparer(DocumentRule rule) : IDocumentComparer
 public sealed class SalesReturnComparer(DocumentRule rule) : RecreatedDocumentComparer(rule);
 public sealed class PurchaseReturnComparer(DocumentRule rule) : RecreatedDocumentComparer(rule);
 public sealed class RetailSalesReturnComparer(DocumentRule rule) : RecreatedDocumentComparer(rule);
+public sealed class FactureInComparer(DocumentRule rule) : RecreatedDocumentComparer(rule);
+public sealed class FactureOutComparer(DocumentRule rule) : RecreatedDocumentComparer(rule);
 
 public sealed class UnsupportedDocumentComparer(DocumentRule rule) : IDocumentComparer
 {
@@ -113,6 +115,8 @@ public static class DocumentComparisonService
             "salesreturn" => new SalesReturnComparer(rule),
             "purchasereturn" => new PurchaseReturnComparer(rule),
             "retailsalesreturn" => new RetailSalesReturnComparer(rule),
+            "facturein" => new FactureInComparer(rule),
+            "factureout" => new FactureOutComparer(rule),
             _ => throw new VerifierException("No comparer for recreated document type.")
         },
         _ => new UnsupportedDocumentComparer(rule)

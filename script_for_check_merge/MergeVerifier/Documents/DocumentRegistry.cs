@@ -30,11 +30,14 @@ public static class DocumentRegistry
         Put("commissionreportin", true, "payments") with
         { PositionCollections = ["positions", "returnToCommissionerPositions"] },
         Put("commissionreportout", true, "payments"),
-        Recreate("salesreturn", "payments", "losses"),
-        Recreate("purchasereturn", "payments"),
-        Recreate("retailsalesreturn"),
-        new("factureout", DocumentTransferMode.Unsupported),
-        new("facturein", DocumentTransferMode.Unsupported),
+        Recreate("salesreturn", true, "payments", "losses"),
+        Recreate("purchasereturn", true, "payments"),
+        Recreate("retailsalesreturn", true),
+        // Factures cannot change agent in place: a live PUT {agent} on factureout answers 200 but keeps the old agent
+        // (checked by GET). MSContractor deletes and recreates facturein (MergeProcessor.RecreateFactureInsAsync) and
+        // prepares the same for factureout (Egress FactureOutRecreationOrchestrator).
+        Recreate("factureout", false, "demands", "payments", "returns"),
+        Recreate("facturein", false, "supplies", "payments"),
         new("retireorder", DocumentTransferMode.Unsupported)
         { AgentFilterSupported = false, PositionCollections = ["positions"] }
     ];
@@ -46,7 +49,7 @@ public static class DocumentRegistry
         new(type, DocumentTransferMode.PutAgent)
         { PositionCollections = positions ? ["positions"] : [], UnorderedCollections = unordered };
 
-    private static DocumentRule Recreate(string type, params string[] unordered) =>
+    private static DocumentRule Recreate(string type, bool positions, params string[] unordered) =>
         new(type, DocumentTransferMode.Recreate)
-        { PositionCollections = ["positions"], UnorderedCollections = unordered };
+        { PositionCollections = positions ? ["positions"] : [], UnorderedCollections = unordered };
 }

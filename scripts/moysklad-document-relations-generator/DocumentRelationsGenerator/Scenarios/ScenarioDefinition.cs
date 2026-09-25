@@ -31,6 +31,15 @@ public sealed record ScenarioStep(string Key, string DocumentType, StepKind Kind
     /// <summary>Root positions may include a service (only where the chain never reaches a return or loss).</summary>
     public bool AllowServices { get; init; }
 
+    /// <summary>
+    /// Template step whose base carries no positions (a retail sale or return created on the shift only): the
+    /// generator adds planned positions with whole-ruble prices and no discount, so the paid sum is exact.
+    /// </summary>
+    public bool AddsPositions { get; init; }
+
+    /// <summary>commissionreportin root that also fills returnToCommissionerPositions.</summary>
+    public bool ReturnsToCommissioner { get; init; }
+
     public IEnumerable<string> Dependencies => Links.Select(link => link.TargetStep).Distinct(StringComparer.Ordinal);
 }
 

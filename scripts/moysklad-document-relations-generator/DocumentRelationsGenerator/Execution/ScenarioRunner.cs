@@ -64,8 +64,10 @@ public sealed class ScenarioRunner
         manifest.Save();
 
         output.WriteLine();
-        output.WriteLine($"=== {plan.Label}: contract={Flag(plan.WithContract)}, agentAccount={Flag(plan.WithAgentAccount)}" +
-                         (plan.WithForeignCurrency ? ", foreign currency" : ""));
+        output.WriteLine(plan.Scenario.AlternatesAgreementsPerRoot
+            ? $"=== {plan.Label}: contract / agentAccount alternate between root documents"
+            : $"=== {plan.Label}: contract={Flag(plan.WithContract)}, agentAccount={(plan.WithAgentAccount ? "explicit" : "default")}" +
+              (plan.WithForeignCurrency ? ", foreign currency" : ""));
 
         var created = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         var broken = new HashSet<string>(StringComparer.Ordinal);

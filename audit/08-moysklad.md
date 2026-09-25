@@ -50,25 +50,23 @@ Priority: P1
 
 Confidence: High
 
-## [M-03] Rate-limit headers учитываются неполно
+## [M-03] Rate-limit hints не используются при retry merge
 
 Severity: High
 
 Category: MoySklad
 
-Location: `src/Services/MoySkladEgressService/Services/MoySkladRateLimiter.cs`
+Location: `src/Services/DuplicatesMergeService/Consumers/MergeRequestedConsumer.cs`; `src/Services/MoySkladEgressService/RateLimiting/MoySkladRateLimiter.cs`
 
-Lines: `22-42`
+Current behavior: Merge повторяет операцию через фиксированные 2 секунды, не получая `Retry-After` от Egress; ключ состояния лимита в Redis живёт `X-Lognex-Retry-TimeInterval` и может истечь раньше `Retry-After`.
 
-Current behavior: Логируются Limit, Remaining, `X-Lognex-Retry-After`, Reset; `X-Lognex-Retry-TimeInterval` не читается и никакой header не влияет на admission/retry.
+Problem: Повтор до разрешённого времени, дополнительные 429 и блокировка merge behind sync.
 
-Problem: Vendor/JSON API возвращает upstream timing hints, включая `X-Lognex-Retry-TimeInterval`; реализация только наблюдает их. [Vendor API example](https://dev.moysklad.ru/doc/api/vendor/1.0/)
+Risk: Исчерпание попыток merge на 429.
 
-Risk: Повтор до разрешённого времени, дополнительные 429 и блокировка merge behind sync.
+Example scenario: Upstream просит подождать дольше интервала, ключ истекает, и запросы уходят раньше срока.
 
-Example scenario: Upstream просит 3000 ms interval, но Kafka retry запускается через фиксированные 2000 ms.
-
-Recommended solution: Нормализовать все официальные headers, обновлять Redis `blocked_until`/rate window и тестировать clock/skew/malformed headers.
+Recommended solution: Передавать `Retry-After` из Egress в Merge, держать `blocked_until` не меньше `Retry-After`; тестировать clock/skew/malformed headers.
 
 Priority: P1
 

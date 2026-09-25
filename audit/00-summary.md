@@ -6,15 +6,15 @@
 
 ## Project health
 
-Система имеет хорошие локальные основы — account-scoped запросы в прикладном коде, шифрование access token в PostgreSQL, typed `HttpClient`, manual Kafka commit, inbox/outbox для merge и детальная проверка discovery pagination. При этом текущий Compose нельзя считать production-ready: секреты находятся в Git, окружение принудительно `Development`, internal API и хранилища опубликованы на host, Redis rate limiter фактически пустой. В sync/merge есть подтверждённые окна потери/рассинхронизации состояния.
+Система имеет хорошие локальные основы — account-scoped запросы в прикладном коде, шифрование access token в PostgreSQL, typed `HttpClient`, manual Kafka commit, inbox/outbox для merge и детальная проверка discovery pagination. При этом текущий Compose нельзя считать production-ready: секреты находятся в Git, окружение принудительно `Development`, internal API и хранилища опубликованы на host, Redis rate limiter неатомарен и не даёт приоритета merge. В sync/merge есть подтверждённые окна потери/рассинхронизации состояния.
 
 Итоговая оценка: **высокий риск production-развёртывания до закрытия P0/P1**.
 
 ## Findings
 
 - Critical: 4
-- High: 24
-- Medium: 28
+- High: 23
+- Medium: 27
 - Low: 6
 
 Info-наблюдения и результаты запуска проверок в эти числа не включены.
@@ -25,7 +25,7 @@ Info-наблюдения и результаты запуска проверо�
 2. Compose всегда запускает backend в `Development`, из-за чего публично доступен dev-session endpoint (`C-02`).
 3. Internal API опубликованы наружу и защищены одним уже скомпрометированным ключом; возможен выбор чужого `accountId` (`C-03`).
 4. PostgreSQL, Redis, Kafka и административные UI опубликованы без production-защиты (`C-04`).
-5. Реального distributed rate limiter нет; sync не уступает merge write operations (`R-01`).
+5. Distributed rate limiter не резервирует бюджет атомарно и не ограничивает параллельность; sync не уступает merge write operations (`R-01`).
 6. Full sync удаляет каталог до первого запроса в МойСклад (`D-01`).
 7. Sync возвращает `202` после прямой Kafka-публикации без durable operation/outbox (`K-01`).
 8. Sync и merge не имеют межпроцессной координации и optimistic concurrency (`A-03`, `D-02`).
@@ -37,7 +37,7 @@ Info-наблюдения и результаты запуска проверо�
 - DuplicatesMergeService напрямую использует DbContext/entities и схему CatalogSyncService.
 - Vendor outbox создаётся, но publisher отсутствует.
 - Sync HTTP acceptance не создаёт operation/outbox в PostgreSQL до Kafka.
-- Redis заявлен как distributed rate-limit runtime-state, но limiter не хранит состояние и не блокирует запросы.
+- Redis rate limiter не резервирует бюджет атомарно, не ограничивает параллельность и не даёт приоритета merge.
 - NotificationService и AuditService остаются heartbeat-заглушками.
 
 Прямых вызовов JSON API 1.2 из Sync/Merge не найдено; они идут через Egress. Access token в Kafka-контрактах и frontend-коде не найден.
@@ -49,14 +49,13 @@ Info-наблюдения и результаты запуска проверо�
 - Наружу опубликованы internal endpoints и stateful infrastructure.
 - Один общий env-блок раздаёт DB password/internal key сервисам без необходимости.
 - Access token передаётся Egress по plaintext HTTP внутри Docker network.
-- Batch request/response МойСклада логируются целиком.
 - Нет явной CSRF-защиты cookie-authenticated state-changing endpoints.
 
 ## Reliability risks
 
 - Ошибка после предварительного удаления оставляет full-sync каталог пустым.
 - Нет durable HTTP acceptance и request idempotency для sync/merge.
-- Длительные consumer handlers могут превысить стандартный `max.poll.interval.ms`.
+- Длительные consumer handlers превышают `max.poll.interval.ms` (у sync — стандартный default, у merge шаги дольше заданного интервала).
 - Outbox publishers не claim-ят строки при нескольких instances.
 - Merge retry — фиксированные 2 секунды без `Retry-After`/`blocked_until`.
 - Kafka state теряется при пересоздании контейнера.
@@ -70,16 +69,15 @@ Info-наблюдения и результаты запуска проверо�
 - Redis integration test молча считается успешным без `TEST_REDIS_CONNECTION`.
 - Нет тестов параллельных sync/merge, повторной HTTP-отправки и recovery после response loss.
 - Нет frontend test suite; production build не запущен из-за отсутствия `npm`.
-- Один существующий VendorService test падает на cookie policy.
 
 ## Quick wins
 
 - Немедленно отозвать/ротировать найденные секреты, затем очистить Git history.
 - Перенести dev route и Swagger/UI под environment/profile guard.
 - Убрать host port publishing у internal services/data stores или bind к localhost для dev.
-- Удалить полные request/response body из production logs.
+- Удалить бизнес-payload документов из production logs.
 - Подключить Kafka volume и разделить production Compose/profile.
-- Явно настроить `MaxPollIntervalMs` и retry/backoff policy.
+- Настроить `MaxPollIntervalMs` для sync consumer и retry/backoff policy.
 - Сделать Redis integration test явным skip/fail по профилю.
 
 ## Recommended order
@@ -98,4 +96,4 @@ Consumer rebalance settings, outbox claiming, session sliding/revoke atomicity, 
 
 ### P3
 
-Makefile/README/env cleanup, structured startup logging, repository hygiene and maintainability refactoring.
+Makefile/README/env cleanup, repository hygiene and maintainability refactoring.

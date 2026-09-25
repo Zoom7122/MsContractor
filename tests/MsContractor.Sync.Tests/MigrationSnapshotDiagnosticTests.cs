@@ -145,7 +145,9 @@ public sealed class MigrationSnapshotDiagnosticTests
                 "20260922100000_AddPurchaseReturnRelatedRawData",
                 "20260922110000_AddPurchaseReturnMoneyRelationSnapshots",
                 "20260923120000_AddFactureInRawData",
-                "20260923130000_AddFactureInRecreationItems"
+                "20260923130000_AddFactureInRecreationItems",
+                "20260924120000_AddFactureOutRawData",
+                "20260925120000_AddFactureOutRecreationItems"
             ],
             context.GetService<IMigrationsAssembly>().Migrations.Keys);
     }
@@ -207,6 +209,26 @@ public sealed class MigrationSnapshotDiagnosticTests
         Assert.True(
             differences.Count == 0,
             string.Join(Environment.NewLine, differences.Select(Describe)));
+    }
+
+    [Fact]
+    public void FactureOutRecreationItemsMigration_CreatesAccountScopedTableWithoutRawDataForeignKey()
+    {
+        using var context = new EgressDbContext(new DbContextOptionsBuilder<EgressDbContext>()
+            .UseNpgsql("Host=localhost;Database=test;Username=postgres;Password=postgres").Options);
+        var migrationsAssembly = context.GetService<IMigrationsAssembly>();
+        var migration = migrationsAssembly.CreateMigration(
+            migrationsAssembly.Migrations["20260925120000_AddFactureOutRecreationItems"],
+            context.Database.ProviderName!);
+
+        var table = Assert.Single(migration.UpOperations.OfType<CreateTableOperation>());
+        Assert.Equal("egress", table.Schema);
+        Assert.Equal("factureout_recreation_items", table.Name);
+        Assert.Equal(
+            ["AccountId", "SourceDocumentId", "SourceSyncId", "NewSyncId", "NewDocumentId", "Status"],
+            table.Columns.Select(column => column.Name));
+        Assert.Equal(["AccountId", "SourceDocumentId"], table.PrimaryKey!.Columns);
+        Assert.Empty(table.ForeignKeys);
     }
 
 }

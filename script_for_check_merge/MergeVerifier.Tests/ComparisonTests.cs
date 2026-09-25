@@ -199,7 +199,82 @@ public sealed class ComparisonTests
     {
         var report = DocumentComparisonService.Compare(Snapshot(), Snapshot());
         Assert.False(report.Passed); Assert.Equal(1, report.ExitCode);
-        Assert.Equal(3, report.Totals[VerificationStatus.Unsupported]);
+        Assert.Equal(1, report.Totals[VerificationStatus.Unsupported]);
+        Assert.Equal(["retireorder"], report.Types.Where(x => x.TransferMode == DocumentTransferMode.Unsupported).Select(x => x.EntityType));
+    }
+
+    private static JsonObject Account(Guid counterparty, Guid account) => new()
+    {
+        ["meta"] = new JsonObject
+        {
+            ["type"] = "account",
+            ["href"] = new Uri(BaseUrl, $"entity/counterparty/{counterparty}/accounts/{account}").AbsoluteUri
+        }
+    };
+
+    [Fact]
+    public async Task OwnAgentAccountReplacedByMainAccountIsNotAChange()
+    {
+        // Live API: PUT {agent: main} makes MoySklad replace the duplicate's account with main's default account.
+        var before = Raw(); before["agentAccount"] = Account(Duplicate, Id);
+        var after = Raw(agent: Main); after["agentAccount"] = Account(Main, OtherId);
+        Assert.Equal(1, Compare("customerorder", [await Document(before)], [await Document(after)]).Count(VerificationStatus.Matched));
+    }
+
+    [Fact]
+    public async Task DuplicateAccountLeftOnMainDocumentIsAChange()
+    {
+        var before = Raw(); before["agentAccount"] = Account(Duplicate, Id);
+        var after = Raw(agent: Main); after["agentAccount"] = Account(Duplicate, Id);
+        var result = Compare("customerorder", [await Document(before)], [await Document(after)]);
+        Assert.Equal(1, result.Count(VerificationStatus.Changed));
+        Assert.Contains(result.Documents.Single().Differences, x => x.Path.StartsWith("/agentAccount", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task LostAgentAccountIsAChange()
+    {
+        var before = Raw(); before["agentAccount"] = Account(Duplicate, Id);
+        Assert.Equal(1, Compare("customerorder", [await Document(before)], [await Document(Raw(agent: Main))])
+            .Count(VerificationStatus.Changed));
+    }
+
+    [Fact]
+    public async Task RecreatedDocumentGetsNewSyncIdButPutAgentDocumentMustKeepIt()
+    {
+        // Egress recreation generates a new syncId; an in-place agent change keeps it.
+        var sourceReturn = Raw("salesreturn"); sourceReturn["syncId"] = Guid.NewGuid().ToString();
+        var recreatedReturn = Raw("salesreturn", Guid.NewGuid(), Main); recreatedReturn["syncId"] = Guid.NewGuid().ToString();
+        Assert.Equal(1, Compare("salesreturn", [await Document(sourceReturn, "salesreturn")],
+            [await Document(recreatedReturn, "salesreturn")]).Count(VerificationStatus.Matched));
+
+        var order = Raw(); order["syncId"] = Guid.NewGuid().ToString();
+        var movedOrder = Raw(agent: Main); movedOrder["syncId"] = Guid.NewGuid().ToString();
+        Assert.Equal(1, Compare("customerorder", [await Document(order)], [await Document(movedOrder)]).Count(VerificationStatus.Changed));
+    }
+
+    [Fact]
+    public async Task FactureInIsRecreatedAndReferencesToItFollowTheNewDocument()
+    {
+        Assert.Equal(DocumentTransferMode.Recreate, DocumentRegistry.Get("facturein").TransferMode);
+        Assert.Equal(DocumentTransferMode.Recreate, DocumentRegistry.Get("factureout").TransferMode);
+
+        var oldFacture = Raw("facturein", Id); oldFacture["syncId"] = Guid.NewGuid().ToString();
+        var newFacture = Raw("facturein", OtherId, Main); newFacture["syncId"] = Guid.NewGuid().ToString();
+        var before = await Document(oldFacture, "facturein");
+        var after = await Document(newFacture, "facturein");
+        Assert.Equal(1, Compare("facturein", [before], [after]).Count(VerificationStatus.Matched));
+
+        // supply.factureIn points to a different ID after recreation; the semantic hash stays the same.
+        var hashes = new Dictionary<Guid, string>
+        {
+            [Id] = Normalization.SemanticHasher.Hash(before.Data), [OtherId] = Normalization.SemanticHasher.Hash(after.Data)
+        };
+        RecreatedReferenceResolver resolver = (_, id, _) => Task.FromResult(hashes[id]);
+        var supply = Raw("supply"); supply["factureIn"] = Reference("facturein", Id);
+        var movedSupply = Raw("supply", agent: Main); movedSupply["factureIn"] = Reference("facturein", OtherId);
+        Assert.Equal(1, Compare("supply", [await Document(supply, "supply", resolver)],
+            [await Document(movedSupply, "supply", resolver)]).Count(VerificationStatus.Matched));
     }
 
     [Fact]

@@ -54,7 +54,8 @@ public static class SnapshotStore
                 throw new VerifierException("Invalid document rule, owner or data in snapshot.");
             if (rule.TransferMode == DocumentTransferMode.Recreate)
             {
-                if (document.StableDocumentId is not null || document.Data.TryGetProperty("created", out _))
+                if (document.StableDocumentId is not null ||
+                    DocumentNormalizer.RecreatedTechnicalFields.Any(field => document.Data.TryGetProperty(field, out _)))
                     throw new VerifierException("Recreated document contains technical identity data.");
             }
             else if (!Guid.TryParse(document.StableDocumentId, out var id) || id == Guid.Empty || !seen.Add((rule.EntityType, id)))

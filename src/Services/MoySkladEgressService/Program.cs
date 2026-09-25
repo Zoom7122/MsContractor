@@ -193,10 +193,14 @@ builder.Services.AddScoped<IFactureInRecreationOrchestrator, FactureInRecreation
 builder.Services.AddScoped<IFactureOutRecreationOrchestrator, FactureOutRecreationOrchestrator>();
 builder.Services.AddScoped<IFactureInRawDataRepository, FactureInRawDataRepository>();
 builder.Services.AddScoped<IFactureOutRawDataRepository, FactureOutRawDataRepository>();
+builder.Services.AddScoped<IFactureOutRecreationItemRepository, FactureOutRecreationItemRepository>();
 builder.Services.AddScoped<IFactureInRecreationItemRepository, FactureInRecreationItemRepository>();
 builder.Services.AddScoped<IFactureInPreparationService, FactureInPreparationService>();
 builder.Services.AddScoped<IFactureOutPreparationService, FactureOutPreparationService>();
 builder.Services.AddScoped<IFactureInPayloadBuilder, FactureInPayloadBuilder>();
+builder.Services.AddScoped<IFactureOutPayloadBuilder, FactureOutPayloadBuilder>();
+builder.Services.AddScoped<IFactureOutDocumentRecreationVerifier, FactureOutDocumentRecreationVerifier>();
+builder.Services.AddScoped<IFactureOutDocumentRecreationService, FactureOutDocumentRecreationService>();
 builder.Services.AddScoped<IFactureInDocumentTransferService, FactureInDocumentTransferService>();
 builder.Services.AddSingleton<IMoySkladRateLimiter, MoySkladRateLimiter>();
 builder.Services.AddHealthChecks()

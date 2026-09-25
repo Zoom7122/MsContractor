@@ -49,8 +49,11 @@ public static class ScenarioPlanner
             moments[step.Key] = moment;
 
             var positions = new List<PositionPlan>();
-            if (step.Kind == StepKind.Root && DocumentFieldSupport.Supports(step.DocumentType, "positions"))
+            if ((step.Kind == StepKind.Root || step.AddsPositions) && DocumentFieldSupport.Supports(step.DocumentType, "positions"))
             {
+                // Positions added to a retail shift template are paid in cash/card, so their sum must be exact:
+                // whole rubles, whole quantities, no discount.
+                var exact = step.AddsPositions;
                 var productIndexes = Enumerable.Range(0, ReferenceData.ProductCount).OrderBy(_ => random.Between(0, 1000)).ToList();
                 var count = random.Between(1, 5);
                 for (var i = 0; i < count; i++)
@@ -59,9 +62,9 @@ public static class ScenarioPlanner
                     positions.Add(new PositionPlan(
                         isService ? random.Between(0, ReferenceData.ServiceCount - 1) : productIndexes[i],
                         isService,
-                        random.NextQuantity(allowFractional: !isService),
-                        random.NextPriceKopecks(),
-                        NoDiscountTypes.Contains(step.DocumentType) ? 0 : random.NextDiscount(),
+                        exact ? random.Pick(TestDataRandomizer.IntegerQuantities) : random.NextQuantity(allowFractional: !isService),
+                        exact ? random.NextPriceKopecks() / 100 * 100 : random.NextPriceKopecks(),
+                        exact || NoDiscountTypes.Contains(step.DocumentType) ? 0 : random.NextDiscount(),
                         random.Between(0, 99)));
                 }
             }

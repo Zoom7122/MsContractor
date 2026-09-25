@@ -110,6 +110,28 @@ public sealed class ScenarioRegistryTests
         Assert.Equal(4, roots.Select(step => (step.WithContract, step.WithAgentAccount)).Distinct().Count());
     }
 
+    [Theory]
+    [InlineData("factureout-full", "factureout")]
+    [InlineData("salesreturn-full", "salesreturn")]
+    [InlineData("purchasereturn-full", "purchasereturn")]
+    [InlineData("facturein-full", "facturein")]
+    [InlineData("retaildemand-full", "retaildemand")]
+    [InlineData("retailsalesreturn-full", "retailsalesreturn")]
+    [InlineData("commissionreportin-full", "commissionreportin")]
+    [InlineData("commissionreportout-full", "commissionreportout")]
+    public void FullScenario_ContainsEveryRelationOfItsDocument(string scenarioName, string documentType)
+    {
+        var scenario = ScenarioRegistry.Select([scenarioName]).Single();
+        var links = scenario.Steps.SelectMany(step => step.Links).Select(link => link.RelationId).ToHashSet();
+        var expected = RelationCatalog.All
+            .Where(relation => relation.SourceType == documentType || relation.TargetType == documentType)
+            .Select(relation => relation.Id).ToList();
+        Assert.NotEmpty(expected);
+        Assert.All(expected, id => Assert.Contains(id, links));
+        Assert.True(scenario.AlternatesAgreementsPerRoot);
+        Assert.Contains(scenario.Steps, step => step.DocumentType == documentType);
+    }
+
     [Fact]
     public void OtherScenarios_KeepOneAgreementVariantPerScenario()
     {
@@ -120,7 +142,7 @@ public sealed class ScenarioRegistryTests
     }
 
     [Fact]
-    public void OnlyRetailFlow_RequiresARetailStore() =>
-        Assert.Equal(["retail-flow"], ScenarioRegistry.All.Where(scenario => scenario.Requirement != ScenarioRequirement.None)
-            .Select(scenario => scenario.Name));
+    public void OnlyRetailScenarios_RequireARetailStore() =>
+        Assert.Equal(["retail-flow", "retaildemand-full", "retailsalesreturn-full"],
+            ScenarioRegistry.All.Where(scenario => scenario.Requirement != ScenarioRequirement.None).Select(scenario => scenario.Name));
 }

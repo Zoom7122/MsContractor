@@ -24,17 +24,63 @@
 | [salesreturn](https://dev.moysklad.ru/doc/api/remap/1.2/#/documents/sales-return) | да | да | нет | Recreate | Раздел изменения явно запрещает изменение agent. Для возврата с основанием требуется совпадение контрагента с основанием. |
 | [purchasereturn](https://dev.moysklad.ru/doc/api/remap/1.2/#/documents/purchase-return) | да | да | нет | Recreate | Раздел изменения явно запрещает изменение agent; при создании возврата с основанием контрагент должен совпадать с основанием. purchasereturn содержит противоречивую общую фразу; приоритет отдан конкретному запрету. |
 | [retailsalesreturn](https://dev.moysklad.ru/doc/api/remap/1.2/#/documents/retail-sales-return) | да | да | нет | Recreate | Раздел изменения явно запрещает изменение agent. Для возврата с основанием требуется совпадение контрагента с основанием. |
-| [factureout](https://dev.moysklad.ru/doc/api/remap/1.2/#/documents/factureout) | да | да | не подтверждено для общего случая | Unsupported | GET и PUT описаны, но пример PUT меняет только name. Нет уверенного подтверждения изменения именно agent; режим не угадывается. |
-| [facturein](https://dev.moysklad.ru/doc/api/remap/1.2/#/documents/facturein) | да | да | не подтверждено для общего случая | Unsupported | GET и PUT описаны, но пример PUT меняет только name. Нет уверенного подтверждения изменения именно agent; режим не угадывается. |
+| [factureout](https://dev.moysklad.ru/doc/api/remap/1.2/#/documents/factureout) | да | да | нет (проверено на API) | Recreate | Пример PUT в документации меняет только name. На реальном API `PUT {agent}` отвечает 200, но и ответ, и повторный GET содержат прежнего контрагента, даже если основание уже перенесено. Перенести можно только пересозданием; в Egress для этого есть `FactureOutRecreationOrchestrator`. |
+| [facturein](https://dev.moysklad.ru/doc/api/remap/1.2/#/documents/facturein) | да | да | не подтверждено | Recreate | MSContractor при merge удаляет и создаёт facturein заново (`MergeProcessor.RecreateFactureInsAsync`, Egress `FactureInDocumentTransferService`); проверено на API. |
 | [retireorder](https://dev.moysklad.ru/doc/api/remap/1.2/#/documents/retireorder) | да | да | не подтверждено для общего случая | Unsupported | Изменение ограничено documentState CREATED, CHECKED_NOT_OK, PROCESSING_ERROR; общей гарантии переноса нет. agent не имеет документированного оператора фильтрации. Endpoint не сканируется целиком; тип всегда отмечается Unsupported. |
 
 ## Ограничения и полнота
 
-`factureout`, `facturein` запрашиваются с фильтром agent и фиксируются в snapshot, но сравнение не объявляется успешным.
 `retireorder` не загружается без документированного agent-фильтра. Он явно присутствует в capture coverage как Unsupported, даже если неизвестно, есть ли такие документы.
 Поэтому текущая строгая проверка всего заданного реестра **не выдаст полный PASS**: результат будет exit 1 с Unsupported. Это осознанное выполнение требования не угадывать неописанные правила. Убрать это ограничение можно только после дополнения доказательств и правил, а не CLI-переключателем скрытия типов.
 
+## Проверка на реальном API
+
+2026-09-25 на тестовом аккаунте (`scripts_for_test_data/.env.test_data`) выполнен полный цикл:
+`scripts/moysklad-document-relations-generator --all --counterparties 2` → `capture` (main = контрагент 1,
+duplicate = контрагент 2) → merge duplicate в main → `verify`. Настоящий merge MSContractor требует всего стека, поэтому
+merge воспроизведён по коду Egress:
+
+- `PUT {agent: main}` для customerorder, demand, purchaseorder, supply, paymentin/out, cashin/out, invoiceout/in
+  (`MergeDocumentChangeService`, 45 документов, все ответы 200);
+- договор комиссии duplicate переносится на main, затем у отчётов меняются `agent` и `contract`
+  (`MoySkladDocumentAgentAndContractService`);
+- salesreturn: отвязка платежей и списания → удаление → создание с новым `syncId`, без договора, с основным счётом
+  main → привязка обратно (`SalesReturnRecreationOrchestrator`);
+- facturein и factureout: удаление → создание на том же основании с новым `syncId`
+  (`FactureInDocumentTransferService`; для factureout — по той же схеме);
+- purchasereturn со счётом-фактурой не переносится (`PURCHASERETURN_FACTURE_RELATIONS_PRESENT`), вместе с ним
+  остаётся и его factureout.
+
+Что показала проверка до исправлений (все отличия ложные):
+
+| Наблюдение на API | Эффект в старой версии |
+|---|---|
+| `PUT {agent}` сам заменяет `agentAccount` на основной счёт нового контрагента | 32 документа `Changed` по `/agentAccount` |
+| Пересоздание всегда даёт новый `syncId` | salesreturn `Missing` + `Unexpected`; каскадом `Changed` у demand.returns и payment operations |
+| facturein пересоздаётся | ссылки `factureIn` у supply/paymentout/cashout `Changed` (сравнивался ID); сам тип `Unsupported` |
+| `PUT {agent}` у factureout отвечает 200, но контрагент не меняется | тип `Unsupported`; перенос невозможен без пересоздания |
+| При factureout в режиме Recreate `purchasereturn.factureOut` ↔ `factureout.returns` ссылаются друг на друга | `capture` падал с ошибкой цикла |
+
+Итог исправленной версии на том же сценарии: 106 документов в BEFORE, **104 Matched, 0 Changed, 0 Unexpected**.
+Оставшиеся отличия настоящие: purchasereturn и его factureout остались на duplicate (`StillOnDuplicate` + `Missing`), а
+`retireorder` помечен `Unsupported` намеренно. Независимый скрипт перечитал через GET списки документов main и
+duplicate по каждому типу: количества совпали с вердиктом верификатора, расхождений 0. Отдельно снимок BEFORE сверен с
+GET по 94 документам (поля, позиции, 116 коллекций связей): расхождений 0.
+
 ## Нормализация
+
+Два правила добавлены после проверки на реальном API (см. «Проверка на реальном API»):
+
+- `agentAccount` — счёт контрагента. Раздел изменения документов требует обновлять его вместе с `agent`, а при
+  `PUT {agent}` МойСклад сам подставляет основной счёт нового контрагента. Поэтому сравнивается не ID счёта, а
+  принадлежность: счёт контрагента документа → `{"$ref": {"type": "account", "owner": "agent"}}`. Любой другой
+  счёт (например, счёт duplicate на документе main) и пропажа счёта остаются расхождением.
+- `syncId` пересоздаваемого документа — технический ключ идемпотентности (раздел «Назначение поля syncId»);
+  Egress генерирует новый при каждом пересоздании. У Recreate он игнорируется, как `created`; у PutAgent
+  сравнивается.
+- Взаимные ссылки двух Recreate документов (`purchasereturn.factureOut` ↔ `factureout.returns`, появились
+  после перевода factureout в Recreate). Сторона с меньшим (ordinal) типом хранит маркер `mutualLink`,
+  другая — hash. Правило не зависит от порядка обхода.
 
 - Для PutAgent из корня убираются `id` (вынесен в stableDocumentId), `agent` (вынесен в sourceCounterpartyId), `accountId`, `meta`, `href`, `uuidHref`, `updated`. `created` сохраняется.
 - Для Recreate дополнительно удаляется `created`. ID не сохраняется даже в stableDocumentId. `externalCode`, `name`, `code` и неизвестные бизнес-поля сохраняются: изменение автоматически сгенерированного кода тоже диагностируется.

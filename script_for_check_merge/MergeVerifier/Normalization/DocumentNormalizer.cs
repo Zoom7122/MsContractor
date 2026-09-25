@@ -16,6 +16,19 @@ public class DocumentNormalizer(DocumentRule rule) : IDocumentNormalizer
     public string EntityType => rule.EntityType;
     public static readonly string[] RootTechnicalFields = ["id", "accountId", "meta", "href", "uuidHref", "updated", "agent"];
 
+    /// <summary>
+    /// Identity of the object itself for recreated documents: a new document gets a new creation time and a new
+    /// syncId (Egress generates one per recreation; a syncId cannot be reused).
+    /// </summary>
+    public static readonly string[] RecreatedTechnicalFields = ["created", "syncId"];
+
+    /// <summary>
+    /// Resolver answer for one side of a link between two recreated documents that reference each other
+    /// (purchasereturn.factureOut and factureout.returns). Hashing both sides would be circular; the link is still
+    /// verified because the other side carries the full semantic hash.
+    /// </summary>
+    public const string MutualLink = "\u0000mutual-link";
+
     public static IDocumentNormalizer For(DocumentRule rule) => rule.EntityType switch
     {
         "salesreturn" => new SalesReturnNormalizer(rule),
@@ -29,7 +42,13 @@ public class DocumentNormalizer(DocumentRule rule) : IDocumentNormalizer
         var result = new JsonObject();
         foreach (var (key, value) in document)
         {
-            if (RootTechnicalFields.Contains(key) || key == "created" && rule.TransferMode == DocumentTransferMode.Recreate) continue;
+            if (RootTechnicalFields.Contains(key) ||
+                rule.TransferMode == DocumentTransferMode.Recreate && RecreatedTechnicalFields.Contains(key)) continue;
+            if (key == "agentAccount" && OwnAgentAccount(value, document["agent"]) is { } ownAccount)
+            {
+                result[key] = ownAccount;
+                continue;
+            }
             if (rule.PositionCollections.Contains(key))
             {
                 if (value is not JsonArray positions) throw new VerifierException("Positions were not fully loaded.");
@@ -71,6 +90,27 @@ public class DocumentNormalizer(DocumentRule rule) : IDocumentNormalizer
         return result;
     }
 
+    /// <summary>
+    /// A counterparty account belongs to its counterparty, so it cannot survive a merge: the documentation requires
+    /// updating agentAccount together with agent, and MoySklad itself switches to the new agent's default account
+    /// when only agent is changed (observed live). What a merge must preserve is "an account of the document's own
+    /// counterparty". Any other account (for example the duplicate's account left on a main document) keeps its
+    /// full reference and is reported as a change.
+    /// </summary>
+    private static JsonObject? OwnAgentAccount(JsonNode? account, JsonNode? agent)
+    {
+        var accountHref = account?["meta"]?["href"]?.GetValue<string>();
+        var agentHref = agent?["meta"]?["href"]?.GetValue<string>();
+        if (!Uri.TryCreate(accountHref, UriKind.Absolute, out var accountUri) ||
+            !Uri.TryCreate(agentHref, UriKind.Absolute, out var agentUri)) return null;
+        var segments = accountUri.AbsolutePath.TrimEnd('/').Split('/');
+        var marker = Array.LastIndexOf(segments, "accounts");
+        if (marker < 2 || marker != segments.Length - 2 || segments[marker - 2] != "counterparty" ||
+            !Guid.TryParse(segments[marker - 1], out var owner) ||
+            !Guid.TryParse(agentUri.Segments.Last().Trim('/'), out var agentId) || owner != agentId) return null;
+        return new JsonObject { ["$ref"] = new JsonObject { ["type"] = "account", ["owner"] = "agent" } };
+    }
+
     private static async Task<JsonNode?> NormalizeValue(JsonNode? node, RecreatedReferenceResolver resolver, CancellationToken ct)
     {
         if (node is JsonArray array)
@@ -96,7 +136,10 @@ public class DocumentNormalizer(DocumentRule rule) : IDocumentNormalizer
             {
                 if (segments[0] != type || !Guid.TryParse(segments[1], out var id))
                     throw new VerifierException("Invalid recreated document reference.");
-                output["$ref"] = new JsonObject { ["type"] = type, ["semanticHash"] = await resolver(type, id, ct) };
+                var resolved = await resolver(type, id, ct);
+                output["$ref"] = resolved == MutualLink
+                    ? new JsonObject { ["type"] = type, ["mutualLink"] = true }
+                    : new JsonObject { ["type"] = type, ["semanticHash"] = resolved };
             }
             else output["$ref"] = new JsonObject { ["type"] = type, ["key"] = key };
         }

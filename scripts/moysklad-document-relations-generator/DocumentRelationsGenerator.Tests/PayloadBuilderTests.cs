@@ -266,6 +266,49 @@ public sealed class PayloadBuilderTests
     }
 
     [Fact]
+    public void RetailReturnWithoutBase_GetsOwnCounterpartyExactPositionsAndFullPayment()
+    {
+        var (refs, counterparty) = References();
+        var plan = Plan("retailsalesreturn-full");
+        var step = plan.Step("return-without-base");
+        var shift = Entity("retailshift", "sh");
+        var template = new JsonObject
+        {
+            ["retailShift"] = MetaReference.To(shift),
+            ["agent"] = MetaReference.Create($"{Api}counterparty/retail-customer", "counterparty") // default retail customer
+        };
+
+        var payload = new DocumentFactory(refs, Run).BuildFromTemplate(plan, step, template, counterparty,
+            new Dictionary<string, JsonObject> { ["shift"] = shift });
+
+        Assert.Equal(MetaReference.Href(counterparty.Entity), MetaReference.Href(payload["agent"]));
+        var positions = ((JsonArray)payload["positions"]!).OfType<JsonObject>().ToList();
+        Assert.NotEmpty(positions);
+        Assert.All(positions, position =>
+        {
+            Assert.Equal(0, JsonNumbers.Read(position["price"]) % 100);
+            Assert.Equal(0, JsonNumbers.Read(position["quantity"]) % 1);
+            Assert.Equal(0, JsonNumbers.Read(position["discount"]));
+        });
+        var sum = positions.Sum(position => JsonNumbers.Read(position["price"]) * JsonNumbers.Read(position["quantity"]));
+        Assert.Equal(sum, JsonNumbers.Read(payload["cashSum"]) + JsonNumbers.Read(payload["noCashSum"]));
+        Assert.Equal(MetaReference.Href(refs.RetailStore), MetaReference.Href(payload["retailStore"]));
+    }
+
+    [Fact]
+    public void CommissionReportIn_WithReturnToCommissioner_UsesDocumentedFields()
+    {
+        var (refs, counterparty) = References();
+        var plan = Plan("commissionreportin-full");
+        var payload = new DocumentFactory(refs, Run).BuildRoot(plan, plan.Step("report-with-return"), counterparty);
+
+        Assert.NotEmpty((JsonArray)payload["returnToCommissionerPositions"]!);
+        Assert.Contains(payload["rewardType"]!.GetValue<string>(), new[] { "PercentOfSales", "None" });
+        Assert.Equal(MetaReference.Href(counterparty.CommissionContract), MetaReference.Href(payload["contract"]));
+        Assert.Null(new DocumentFactory(refs, Run).BuildRoot(plan, plan.Step("report-unpaid"), counterparty)["returnToCommissionerPositions"]);
+    }
+
+    [Fact]
     public void Set_RejectsFieldsTheDocumentTypeDoesNotHave()
     {
         Assert.Throws<InvalidOperationException>(() => DocumentFactory.Set(new JsonObject(), "cashin", "agentAccount", "x"));

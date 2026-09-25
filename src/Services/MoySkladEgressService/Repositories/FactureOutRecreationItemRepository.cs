@@ -8,7 +8,7 @@ public interface IFactureOutRecreationItemRepository
 {
     Task UpsertPreparationAsync(
         Guid accountId,
-        IReadOnlyDictionary<Guid, Guid?> preparedSourceSyncIds,
+        IReadOnlyDictionary<Guid, Guid?> sourceSyncIds,
         IReadOnlyCollection<Guid> skippedDocumentIds,
         CancellationToken cancellationToken);
 
@@ -33,23 +33,17 @@ public sealed class FactureOutRecreationItemRepository : IFactureOutRecreationIt
 
     public async Task UpsertPreparationAsync(
         Guid accountId,
-        IReadOnlyDictionary<Guid, Guid?> preparedSourceSyncIds,
+        IReadOnlyDictionary<Guid, Guid?> sourceSyncIds,
         IReadOnlyCollection<Guid> skippedDocumentIds,
         CancellationToken cancellationToken)
     {
         ValidateAccountId(accountId);
-        ValidateDocumentIds(preparedSourceSyncIds.Keys, nameof(preparedSourceSyncIds));
+        ValidateDocumentIds(sourceSyncIds.Keys, nameof(sourceSyncIds));
         ValidateDocumentIds(skippedDocumentIds, nameof(skippedDocumentIds));
 
-        var preparedIds = preparedSourceSyncIds.Keys.ToHashSet();
-        if (skippedDocumentIds.Any(preparedIds.Contains))
-        {
-            throw new ArgumentException(
-                "A document cannot be both prepared and skipped.",
-                nameof(skippedDocumentIds));
-        }
-
-        var allIds = preparedIds.Concat(skippedDocumentIds).ToArray();
+        var sourceIds = sourceSyncIds.Keys.ToHashSet();
+        var skippedIds = skippedDocumentIds.ToHashSet();
+        var allIds = sourceIds.Concat(skippedIds).Distinct().ToArray();
         if (allIds.Length == 0)
             return;
 
@@ -57,17 +51,22 @@ public sealed class FactureOutRecreationItemRepository : IFactureOutRecreationIt
             .Where(item => item.AccountId == accountId && allIds.Contains(item.SourceDocumentId))
             .ToDictionaryAsync(item => item.SourceDocumentId, cancellationToken);
 
-        foreach (var (documentId, sourceSyncId) in preparedSourceSyncIds)
+        foreach (var (documentId, sourceSyncId) in sourceSyncIds)
         {
             var item = GetOrCreate(accountId, documentId, existing);
             item.SourceSyncId = sourceSyncId;
             item.NewSyncId = null;
             item.NewDocumentId = null;
-            item.Status = FactureOutRecreationStatuses.Prepared;
+            item.Status = skippedIds.Contains(documentId)
+                ? FactureOutRecreationStatuses.Skipped
+                : FactureOutRecreationStatuses.Prepared;
         }
 
         foreach (var documentId in skippedDocumentIds)
         {
+            if (sourceIds.Contains(documentId))
+                continue;
+
             var item = GetOrCreate(accountId, documentId, existing);
             item.SourceSyncId = null;
             item.NewSyncId = null;

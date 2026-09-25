@@ -193,11 +193,77 @@ public static class ScenarioRegistry
                         Link("retailsalesreturn.retailShift->retailshift", "retailshift")),
                     PaymentPost("cashin", "cashin", Link("cashin.operations->retailshift", "retailshift")),
                     PaymentPost("paymentin", "paymentin", Link("paymentin.operations->retailshift", "retailshift"))
-                ])
+                ]),
+            FactureOutFull()
         };
 
         foreach (var scenario in scenarios) Validate(scenario);
         return scenarios;
+    }
+
+    /// <summary>
+    /// Every business context of factureout on one counterparty. A facture has exactly one base (demand, paymentin,
+    /// cashin or purchasereturn) and a base has one facture, so each context gets its own factureout. Payments are
+    /// placed on every document type they can be linked to, and on nothing (an advance without a document).
+    /// </summary>
+    private static ScenarioDefinition FactureOutFull()
+    {
+        var steps = new List<ScenarioStep>();
+
+        void Payments(string prefix, string target, string targetType)
+        {
+            foreach (var payment in new[] { "paymentin", "cashin" })
+            {
+                steps.Add(Template($"{prefix}-{payment}", payment, Link($"{payment}.operations->{targetType}", target)));
+                steps.Add(Template($"fo-{prefix}-{payment}", "factureout", Link($"factureout.payments->{payment}", $"{prefix}-{payment}")));
+            }
+        }
+
+        // Sale by order: invoice, shipment with its facture, advances (bank and cash) with advance factures.
+        steps.Add(Root("order", "customerorder", services: true));
+        steps.Add(Template("order-invoice", "invoiceout", Link("invoiceout.customerOrder->customerorder", "order")));
+        steps.Add(Template("order-demand", "demand", Link("demand.customerOrder->customerorder", "order")));
+        steps.Add(Template("fo-order-demand", "factureout", Link("factureout.demands->demand", "order-demand")));
+        Payments("order-advance", "order", "customerorder");
+
+        // Sale by invoice without an order.
+        steps.Add(Root("invoice", "invoiceout", services: true));
+        steps.Add(Template("invoice-demand", "demand", Link("demand.invoicesOut->invoiceout", "invoice")));
+        steps.Add(Template("fo-invoice-demand", "factureout", Link("factureout.demands->demand", "invoice-demand")));
+        Payments("invoice", "invoice", "invoiceout");
+
+        // Shipment without order or invoice, paid after shipping, partly returned after the facture.
+        steps.Add(Root("demand", "demand"));
+        steps.Add(Template("fo-demand", "factureout", Link("factureout.demands->demand", "demand")));
+        steps.Add(Template("demand-return", "salesreturn", Link("salesreturn.demand->demand", "demand")));
+        Payments("demand", "demand", "demand");
+
+        // Advance received without any document.
+        foreach (var payment in new[] { "paymentin", "cashin" })
+        {
+            steps.Add(Root($"advance-{payment}", payment));
+            steps.Add(Template($"fo-advance-{payment}", "factureout", Link($"factureout.payments->{payment}", $"advance-{payment}")));
+        }
+
+        // Return to supplier by supply, with the supplier's refund (bank and cash).
+        steps.Add(Root("supply", "supply"));
+        steps.Add(Template("supply-return", "purchasereturn", Link("purchasereturn.supply->supply", "supply")));
+        steps.Add(Template("fo-supply-return", "factureout", Link("factureout.returns->purchasereturn", "supply-return")));
+        Payments("supply-return-refund", "supply-return", "purchasereturn");
+
+        // Return to supplier without a supply ("возврат без основания").
+        steps.Add(Root("return-without-base", "purchasereturn"));
+        steps.Add(Template("fo-return-without-base", "factureout", Link("factureout.returns->purchasereturn", "return-without-base")));
+
+        // Commissioner's report paid by the commissioner.
+        steps.Add(Root("commission-report", "commissionreportin"));
+        Payments("commission", "commission-report", "commissionreportin");
+
+        return new ScenarioDefinition("factureout-full",
+            "all factureout bases and business contexts on one counterparty: demand (by order, by invoice, standalone), " +
+            "paymentin/cashin (on order, invoice, demand, purchasereturn, commission report, without document), purchasereturn " +
+            "(by supply, without base)",
+            ScenarioRequirement.None, steps) { AlternatesAgreementsPerRoot = true };
     }
 
     private static ScenarioStep Root(string key, string type, bool services = false) =>

@@ -276,14 +276,18 @@ public sealed class GeneratorApplication
     {
         output.WriteLine();
         output.WriteLine($"=== {plan.Label}{(skipReason is null ? "" : $"  SKIPPED: {skipReason}")}");
-        output.WriteLine($"    contract={(plan.WithContract ? "with" : "without")}, agentAccount={(plan.WithAgentAccount ? "with" : "without")}" +
-                         (plan.WithForeignCurrency ? ", foreign currency if the account has one" : ""));
+        output.WriteLine(plan.Scenario.AlternatesAgreementsPerRoot
+            ? "    contract / agentAccount alternate between root documents (shown on each root)"
+            : $"    contract={(plan.WithContract ? "with" : "without")}, agentAccount={(plan.WithAgentAccount ? "explicit non-default" : "default")}" +
+              (plan.WithForeignCurrency ? ", foreign currency if the account has one" : ""));
         foreach (var step in plan.Steps)
         {
             var details = new List<string> { MoySkladTime.Format(step.Moment)[..16] };
             if (DocumentFieldSupport.Supports(step.Step.DocumentType, "applicable"))
                 details.Add(step.Applicable ? "applicable" : "draft");
             details.Add(step.Step.Kind.ToString().ToLowerInvariant());
+            if (plan.Scenario.AlternatesAgreementsPerRoot && step.Step.Kind == StepKind.Root)
+                details.Add($"contract={(step.WithContract ? "with" : "without")}, agentAccount={(step.WithAgentAccount ? "explicit" : "default")}");
             if (step.Positions.Count > 0)
                 details.Add(string.Join(", ", step.Positions.Select(position =>
                     $"{(position.IsService ? "SERVICE" : "PRODUCT")}-{position.AssortmentIndex + 1:00} x{position.Quantity.ToString(CultureInfo.InvariantCulture)} " +

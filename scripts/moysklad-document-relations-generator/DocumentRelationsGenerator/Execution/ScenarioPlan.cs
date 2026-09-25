@@ -30,7 +30,10 @@ public sealed record StepPlan(
     DateTime PlannedMoment,
     DateTime PeriodStart,
     DateTime PeriodEnd,
-    int RuntimeSeed);
+    int RuntimeSeed,
+    bool WithContract,
+    bool WithAgentAccount,
+    long AmountKopecks);
 
 public sealed record ScenarioPlan(
     ScenarioDefinition Scenario,

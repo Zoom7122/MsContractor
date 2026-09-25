@@ -41,8 +41,8 @@ public sealed class PayloadBuilderTests
             SalesContract = Entity("contract", "sales"),
             CommissionContract = Entity("contract", "commission")
         };
-        counterparty.Accounts.Add(Entity("account", "a1"));
-        counterparty.Accounts.Add(Entity("account", "a2"));
+        counterparty.Accounts.Add(Entity("account", "a1", new JsonObject { ["isDefault"] = true }));
+        counterparty.Accounts.Add(Entity("account", "a2", new JsonObject { ["isDefault"] = false }));
         refs.Counterparties.Add(counterparty);
         return (refs, counterparty);
     }
@@ -55,7 +55,9 @@ public sealed class PayloadBuilderTests
     {
         var (refs, counterparty) = References();
         var factory = new DocumentFactory(refs, Run);
-        var roots = ScenarioRegistry.All.SelectMany(scenario => new[] { 1, 2 }.Select(index => ScenarioPlanner.Plan(scenario, index, Run)))
+        // Many seeds, so every random branch (VAT on/off, with/without contract, ...) is exercised for every type.
+        var roots = Enumerable.Range(1, 40).Select(seed => Run with { Seed = seed })
+            .SelectMany(run => ScenarioRegistry.All.SelectMany(scenario => new[] { 1, 2 }.Select(index => ScenarioPlanner.Plan(scenario, index, run))))
             .SelectMany(plan => plan.Steps.Where(step => step.Step.Kind == StepKind.Root).Select(step => (plan, step)));
 
         foreach (var (plan, step) in roots)
@@ -64,13 +66,19 @@ public sealed class PayloadBuilderTests
             var type = step.Step.DocumentType;
             Assert.All(payload.Select(pair => pair.Key), key => Assert.True(DocumentFieldSupport.Supports(type, key), $"{type}.{key}"));
             Assert.Equal(MetaReference.Href(counterparty.Entity), MetaReference.Href(payload["agent"]));
-            Assert.InRange(((JsonArray)payload["positions"]!).Count, 1, 5);
+            if (DocumentFieldSupport.Supports(type, "positions")) Assert.InRange(((JsonArray)payload["positions"]!).Count, 1, 5);
+            else Assert.True(JsonNumbers.Read(payload["sum"]) > 0, $"{type} without positions needs a sum");
             Assert.Contains(Run.RunId, payload["externalCode"]!.GetValue<string>());
             if (type.StartsWith("commissionreport", StringComparison.Ordinal))
                 Assert.Equal(MetaReference.Href(counterparty.CommissionContract), MetaReference.Href(payload["contract"]));
             else
-                Assert.Equal(plan.WithContract, payload["contract"] is not null);
-            if (DocumentFieldSupport.Supports(type, "agentAccount")) Assert.Equal(plan.WithAgentAccount, payload["agentAccount"] is not null);
+                Assert.Equal(step.WithContract, payload["contract"] is not null);
+            if (DocumentFieldSupport.Supports(type, "agentAccount"))
+            {
+                // Without an explicit account MoySklad sets the default one itself; the explicit variant is never the default.
+                Assert.Equal(step.WithAgentAccount, payload["agentAccount"] is not null);
+                if (step.WithAgentAccount) Assert.EndsWith("/a2", MetaReference.Href(payload["agentAccount"]));
+            }
         }
     }
 

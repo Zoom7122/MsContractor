@@ -11,7 +11,9 @@ namespace DocumentRelationsGenerator.Execution;
 /// </summary>
 public static class ScenarioPlanner
 {
-    private static readonly HashSet<string> NoDiscountTypes = ["commissionreportin", "commissionreportout"];
+    // Positions without a writable discount (purchasereturn: read-only).
+    private static readonly HashSet<string> NoDiscountTypes = ["commissionreportin", "commissionreportout", "purchasereturn"];
+    private static readonly HashSet<string> Payments = ["paymentin", "paymentout", "cashin", "cashout"];
 
     public static ScenarioPlan Plan(ScenarioDefinition scenario, int counterpartyIndex, RunIdentity run)
     {
@@ -33,6 +35,7 @@ public static class ScenarioPlanner
             .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
 
         var start = random.NextScenarioStart(run.AnchorDate);
+        var rootIndex = 0;
         var moments = new Dictionary<string, DateTime>(StringComparer.Ordinal);
         var steps = new List<StepPlan>();
         for (var index = 0; index < ordered.Count; index++)
@@ -63,6 +66,22 @@ public static class ScenarioPlanner
                 }
             }
 
+            // Variants per scenario, or alternating between roots (all four combinations on one counterparty).
+            var stepContract = withContract;
+            var stepAgentAccount = withAgentAccount;
+            if (scenario.AlternatesAgreementsPerRoot && step.Kind == StepKind.Root)
+            {
+                stepContract ^= rootIndex % 2 == 1;
+                stepAgentAccount ^= rootIndex / 2 % 2 == 1;
+                rootIndex++;
+            }
+
+            // A payment without a base document (advance) needs its own amount. Drawn only for such steps, so the
+            // random stream of scenarios without them is unchanged.
+            var amount = step.Kind == StepKind.Root && Payments.Contains(step.DocumentType)
+                ? random.Between(10, 500) * 100 * 100L
+                : 0;
+
             // A base paid by two payments gets partial payments, so the second template still has an unpaid sum.
             var sharedBase = step.Links.Any(link => paymentsPerBase.GetValueOrDefault(link.TargetStep) > 1);
             var share = sharedBase ? random.Between(30, 60) / 100m : random.NextPaymentShare();
@@ -91,7 +110,10 @@ public static class ScenarioPlanner
                 moment.AddDays(random.Between(1, 14)),
                 moment.Date.AddDays(-random.Between(20, 40)),
                 moment.Date.AddDays(-random.Between(1, 10)),
-                StableSeed.Derive(run.Seed, scenario.Name, counterpartyIndex, step.Key, "runtime")));
+                StableSeed.Derive(run.Seed, scenario.Name, counterpartyIndex, step.Key, "runtime"),
+                stepContract,
+                stepAgentAccount,
+                amount));
         }
 
         return new ScenarioPlan(scenario, counterpartyIndex, withContract, withAgentAccount, withForeignCurrency, steps);

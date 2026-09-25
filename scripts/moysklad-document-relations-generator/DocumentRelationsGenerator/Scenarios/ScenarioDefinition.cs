@@ -42,4 +42,10 @@ public sealed record ScenarioDefinition(
 {
     /// <summary>Documents use a foreign account currency when one exists (chosen per run by the seed).</summary>
     public bool AllowsForeignCurrency { get; init; }
+
+    /// <summary>
+    /// contract / agentAccount variants alternate between the root documents of the scenario, so one counterparty
+    /// gets both variants inside one scenario (otherwise the variant is chosen once per scenario).
+    /// </summary>
+    public bool AlternatesAgreementsPerRoot { get; init; }
 }

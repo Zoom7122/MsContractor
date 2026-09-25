@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using DocumentRelationsGenerator.Execution;
 using DocumentRelationsGenerator.Relations;
 using DocumentRelationsGenerator.Scenarios;
 
@@ -83,6 +84,39 @@ public sealed class ScenarioRegistryTests
             ScenarioRegistry.Select(["purchase-flow", "sales-flow"]).Select(scenario => scenario.Name));
         var error = Assert.Throws<GeneratorException>(() => ScenarioRegistry.Select(["sales-flow", "no-such-flow"]));
         Assert.Contains("no-such-flow", error.Message);
+    }
+
+    [Fact]
+    public void FactureOutFull_CoversEveryFactureOutBaseAndContextOnOneCounterparty()
+    {
+        var scenario = ScenarioRegistry.Select(["factureout-full"]).Single();
+        var factures = scenario.Steps.Where(step => step.DocumentType == "factureout").ToList();
+        var links = scenario.Steps.SelectMany(step => step.Links).Select(link => link.RelationId).ToHashSet();
+
+        Assert.Equal(17, factures.Count);
+        Assert.All(factures, facture => Assert.Single(facture.Links));
+        Assert.Equal(factures.Count, factures.Select(facture => facture.Links[0].TargetStep).Distinct().Count());
+        Assert.Subset(links, RelationCatalog.All.Where(relation => relation.SourceType == "factureout").Select(relation => relation.Id).ToHashSet());
+        foreach (var payment in new[] { "paymentin", "cashin" })
+        {
+            foreach (var target in new[] { "customerorder", "invoiceout", "demand", "purchasereturn", "commissionreportin" })
+                Assert.Contains($"{payment}.operations->{target}", links);
+            Assert.Contains(scenario.Steps, step => step.Kind == StepKind.Root && step.DocumentType == payment); // advance without document
+        }
+        Assert.Contains(scenario.Steps, step => step.Kind == StepKind.Root && step.DocumentType == "purchasereturn"); // return without base
+
+        var roots = ScenarioPlanner.Plan(scenario, 1, new RunIdentity("run", 7, new DateOnly(2026, 9, 25))).Steps
+            .Where(step => step.Step.Kind == StepKind.Root).ToList();
+        Assert.Equal(4, roots.Select(step => (step.WithContract, step.WithAgentAccount)).Distinct().Count());
+    }
+
+    [Fact]
+    public void OtherScenarios_KeepOneAgreementVariantPerScenario()
+    {
+        var run = new RunIdentity("run", 7, new DateOnly(2026, 9, 25));
+        foreach (var plan in ScenarioRegistry.All.Where(scenario => !scenario.AlternatesAgreementsPerRoot)
+                     .Select(scenario => ScenarioPlanner.Plan(scenario, 1, run)))
+            Assert.All(plan.Steps, step => Assert.Equal((plan.WithContract, plan.WithAgentAccount), (step.WithContract, step.WithAgentAccount)));
     }
 
     [Fact]

@@ -121,6 +121,7 @@ Run id вида `20260924-221530-a81f` уникален для каждого з
 | `commission-flow` | commissionreportin/out (договор комиссии) и по два платежа на каждый |
 | `payment-multi-operations` | один paymentin на customerorder и его invoiceout, свой `linkedSum` на каждую операцию |
 | `retail-flow` | тестовая смена; retaildemand на customerorder; retailsalesreturn; cashin и paymentin на смену |
+| `factureout-full` | все основания и бизнес-контексты factureout на одном контрагенте: 17 счетов-фактур (см. ниже) |
 
 Один граф не может вместить всё: у счёта-фактуры ровно одно основание, и на одно основание не
 создаётся вторая фактура. Поэтому factureout создаётся отдельно на demand, paymentin, cashin и
@@ -131,6 +132,46 @@ Creation = `template` создаются через `PUT /entity/<type>/new` с 
 заполняет согласованно: позиции, контрагент, организация, договор, валюта. Затем генератор меняет
 только разрешённые поля и отправляет `POST`. Если родитель не создан, его потомки пропускаются
 (`[SKIP]`); независимые ветки сценария продолжают выполняться, другие сценарии тоже.
+
+### Сценарий `factureout-full`
+
+Полный набор данных для factureout на одном контрагенте (`--counterparties 1`, по умолчанию):
+
+```bash
+dotnet run --project DocumentRelationsGenerator -- --scenario factureout-full
+```
+
+У счёта-фактуры ровно одно основание, и одно основание не может иметь двух фактур. Поэтому на каждый контекст
+создаётся свой factureout — всего 17:
+
+```text
+Продажа по заказу                customerorder → invoiceout, demand
+  fo-order-demand                  factureout → demand (demands)
+  fo-order-advance-paymentin       factureout → paymentin (payments); paymentin → customerorder — аванс
+  fo-order-advance-cashin          factureout → cashin (payments);    cashin → customerorder
+Продажа по счёту                 invoiceout → demand (invoicesOut)
+  fo-invoice-demand                factureout → demand
+  fo-invoice-paymentin / -cashin   factureout → paymentin / cashin; платёж → invoiceout
+Отгрузка без заказа и счёта      demand; salesreturn → demand (возврат после счёта-фактуры)
+  fo-demand                        factureout → demand
+  fo-demand-paymentin / -cashin    factureout → paymentin / cashin; платёж → demand
+Аванс без документа              paymentin / cashin без operations
+  fo-advance-paymentin / -cashin   factureout → paymentin / cashin
+Возврат поставщику по приёмке    supply → purchasereturn (supply)
+  fo-supply-return                 factureout → purchasereturn (returns)
+  fo-supply-return-refund-*        factureout → paymentin / cashin; возврат денег → purchasereturn
+Возврат поставщику без основания purchasereturn без supply
+  fo-return-without-base           factureout → purchasereturn (returns)
+Отчёт комиссионера               commissionreportin (договор комиссии)
+  fo-commission-paymentin / -cashin factureout → paymentin / cashin; платёж → commissionreportin
+```
+
+Договор и счёт контрагента чередуются между 8 корневыми документами, поэтому на одном контрагенте есть
+factureout с договором и без. Часть счетов-фактур (и других листовых документов) создаётся черновиками
+(`applicable=false`). Связь `salesreturn.factureOut` в сценарий не входит: API её не сохраняет (DOCUMENT_RELATIONS.md).
+
+Проверено на реальном API 2026-09-25 (`--seed 20260925`): создано 40 документов, 32 связи подтверждены встроенным
+и независимым GET, у всех 17 factureout обратное поле `factureOut` основания указывает на свой счёт-фактуру.
 
 ### Розница
 
@@ -156,7 +197,9 @@ Creation = `template` создаются через `PUT /entity/<type>/new` с 
 - `name`, `description`, `externalCode`, `applicable` (у родителей всегда `true`), `shared`,
   `owner`/`group` (текущий сотрудник), `project`, `organizationAccount`;
 - `contract` и `agentAccount` чередуются по сценариям и контрагентам, так что в наборе есть все
-  четыре комбинации «с/без»;
+  четыре комбинации. Документ без счёта у контрагента со счетами создать нельзя (проверено: без поля
+  МойСклад ставит основной счёт, `null` даёт 412/3000). Поэтому варианты счёта такие: «основной, подставленный
+  МойСклад» и «явно выбранный неосновной»;
 - `rate`: в `customerorder-procurement` иногда используется не основная валюта, если она есть;
   `organizationAccount` тогда не ставится (ошибка 22004);
 - платежи: полная или частичная сумма и `linkedSum`; `paymentPurpose`, `incomingNumber`;

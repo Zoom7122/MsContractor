@@ -25,7 +25,7 @@ public sealed class DocumentFactory
     private static readonly HashSet<string> Returns = ["salesreturn", "purchasereturn", "retailsalesreturn"];
     private static readonly HashSet<string> Payments = ["paymentin", "paymentout", "cashin", "cashout"];
     private static readonly HashSet<string> OutgoingPayments = ["paymentout", "cashout"];
-    private static readonly HashSet<string> NoPositionDiscount = ["commissionreportin", "commissionreportout", "loss"];
+    private static readonly HashSet<string> NoPositionDiscount = ["commissionreportin", "commissionreportout", "loss", "purchasereturn"];
 
     private readonly ReferenceData refs;
     private readonly RunIdentity run;
@@ -50,7 +50,8 @@ public sealed class DocumentFactory
         {
             var vatEnabled = step.VatEnabled && refs.VatRates.Count > 0;
             Set(payload, type, "vatEnabled", vatEnabled);
-            if (vatEnabled) Set(payload, type, "vatIncluded", step.VatIncluded);
+            // vatIncluded is read-only for commissionreportout.
+            if (vatEnabled && DocumentFieldSupport.Supports(type, "vatIncluded")) Set(payload, type, "vatIncluded", step.VatIncluded);
             Set(payload, type, "positions", BuildPositions(type, step, vatEnabled));
         }
 
@@ -67,6 +68,14 @@ public sealed class DocumentFactory
         {
             Set(payload, type, "incomingNumber", step.IncomingNumber);
             Set(payload, type, "incomingDate", MoySkladTime.Format(step.IncomingDate));
+        }
+
+        if (Payments.Contains(type))
+        {
+            // A payment without operations: an advance that is not linked to any document.
+            Set(payload, type, "sum", step.AmountKopecks);
+            Set(payload, type, "paymentPurpose", step.PaymentPurpose);
+            if (OutgoingPayments.Contains(type)) Set(payload, type, "expenseItem", MetaReference.To(RequireExpenseItem()));
         }
 
         if (DocumentFieldSupport.Supports(type, "deliveryPlannedMoment"))
@@ -250,10 +259,14 @@ public sealed class DocumentFactory
     private void ApplyAgreement(JsonObject payload, string type, ScenarioPlan scenario, StepPlan step,
         CounterpartyData counterparty)
     {
-        if (scenario.WithContract && counterparty.SalesContract is not null && DocumentFieldSupport.Supports(type, "contract"))
+        if (step.WithContract && counterparty.SalesContract is not null && DocumentFieldSupport.Supports(type, "contract"))
             Set(payload, type, "contract", MetaReference.To(counterparty.SalesContract));
-        if (scenario.WithAgentAccount && counterparty.Accounts.Count > 0 && DocumentFieldSupport.Supports(type, "agentAccount"))
-            Set(payload, type, "agentAccount", MetaReference.To(counterparty.Accounts[step.Index % counterparty.Accounts.Count]));
+        // A document of a counterparty that has accounts cannot be saved without agentAccount (live API: omitted ->
+        // MoySklad sets the default account; null -> 412/3000). The variants are therefore "default account set by
+        // MoySklad" and "an explicitly chosen non-default account".
+        if (step.WithAgentAccount && DocumentFieldSupport.Supports(type, "agentAccount") &&
+            counterparty.Accounts.FirstOrDefault(account => account["isDefault"] is not JsonValue flag || !flag.GetValue<bool>()) is { } explicitAccount)
+            Set(payload, type, "agentAccount", MetaReference.To(explicitAccount));
 
         if (scenario.WithForeignCurrency && refs.ForeignCurrency is not null)
             Set(payload, type, "rate", new JsonObject { ["currency"] = MetaReference.To(refs.ForeignCurrency) });

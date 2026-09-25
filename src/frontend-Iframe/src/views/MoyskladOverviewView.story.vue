@@ -1,128 +1,44 @@
 <script setup>
 import MoyskladOverviewView from './MoyskladOverviewView.vue'
+import { buildBusyCounterpartyIds, buildMergeJobs } from '../mocks/fixtures/merge'
+import { buildOverview } from '../mocks/fixtures/sections'
 
-const connectedOverviewData = {
-  connection: {
-    ok: true,
-    label: 'Подключено',
-    description: 'Соединение активно',
-    counterpartyTotal: 1356,
-  },
-  local: {
-    counterpartiesCount: 978,
-  },
-  duplicates: {
-    groupsCount: 8,
-  },
-  mergeQueue: {
-    jobsCount: 3,
-  },
-  lastSync: {
-    startedAtLabel: '13.06.2026 15:02',
-    modeLabel: 'Полная синхронизация',
-  },
+function variant(scenario) {
+  const jobs = buildMergeJobs(scenario)
+  return {
+    ...buildOverview(scenario, jobs),
+    mergeQueueData: { jobs, busyCounterpartyIds: buildBusyCounterpartyIds(jobs) }
+  }
 }
 
-const dashboardStatusData = {
-  totalCounterparties: 1356,
-  processedCounterparties: 978,
-  newCounterparties: 157,
-  updatedCounterparties: 784,
-  errorsCount: 4,
-  progressPercent: 72,
-  currentStep: 'Обновление данных контрагентов',
-  currentPage: 12,
-  totalPages: 18,
-  running: true,
-  status: 'running',
-}
-
-const idleDashboardStatusData = {
-  totalCounterparties: 120,
-  processedCounterparties: 0,
-  newCounterparties: 0,
-  updatedCounterparties: 0,
-  errorsCount: 0,
-  progressPercent: 0,
-  currentStep: null,
-  currentPage: null,
-  totalPages: null,
-  running: false,
-  status: 'idle',
-}
-
-const disconnectedOverviewData = {
-  connection: {
-    ok: false,
-    label: 'Не подключено',
-    description: 'Проверьте установку решения',
-    counterpartyTotal: 0,
-  },
-  local: {
-    counterpartiesCount: 0,
-  },
-  duplicates: {
-    groupsCount: 0,
-  },
-  mergeQueue: {
-    jobsCount: 0,
-  },
-  lastSync: {
-    startedAtLabel: null,
-    modeLabel: 'Синхронизация ещё не запускалась',
-  },
-}
-
-const emptyOverviewData = {
-  connection: {
-    ok: null,
-    label: null,
-    description: null,
-    counterpartyTotal: 0,
-  },
-  local: {
-    counterpartiesCount: 0,
-  },
-  duplicates: {
-    groupsCount: 0,
-  },
-  mergeQueue: {
-    jobsCount: 0,
-  },
-  lastSync: {
-    startedAtLabel: null,
-    modeLabel: null,
-  },
-}
+const normal = variant('normal')
+const partial = variant('partial')
+const many = variant('many')
+const empty = variant('empty')
 </script>
 
 <template>
   <Story title="МойСклад/Обзор">
-    <Variant title="Подключено">
-      <div class="story-page">
-        <MoyskladOverviewView
-          :overview-data="connectedOverviewData"
-          :dashboard-status-data="dashboardStatusData"
-        />
-      </div>
+    <Variant title="Обычные данные">
+      <div class="story-page"><MoyskladOverviewView v-bind="normal" /></div>
     </Variant>
-
-    <Variant title="Нет подключения">
-      <div class="story-page">
-        <MoyskladOverviewView
-          :overview-data="disconnectedOverviewData"
-          :dashboard-status-data="idleDashboardStatusData"
-        />
-      </div>
+    <Variant title="Частичные ошибки merge">
+      <div class="story-page"><MoyskladOverviewView v-bind="partial" /></div>
     </Variant>
-
-    <Variant title="Пустое состояние">
-      <div class="story-page">
-        <MoyskladOverviewView
-          :overview-data="emptyOverviewData"
-          :dashboard-status-data="idleDashboardStatusData"
-        />
-      </div>
+    <Variant title="Много задач">
+      <div class="story-page"><MoyskladOverviewView v-bind="many" /></div>
+    </Variant>
+    <Variant title="Синхронизация не выполнялась">
+      <div class="story-page"><MoyskladOverviewView v-bind="empty" /></div>
+    </Variant>
+    <Variant title="Загрузка">
+      <div class="story-page"><MoyskladOverviewView loading /></div>
+    </Variant>
+    <Variant title="Ошибка">
+      <div class="story-page"><MoyskladOverviewView load-error="Сервис временно недоступен" /></div>
+    </Variant>
+    <Variant title="Источник данных не подключён">
+      <div class="story-page"><MoyskladOverviewView /></div>
     </Variant>
   </Story>
 </template>

@@ -1,12 +1,25 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import {
+  Connection,
+  CopyDocument,
+  Refresh,
+  Timer,
+  User,
+  VideoPause
+} from '@element-plus/icons-vue'
 
 import MergeQueuePanel from '../components/overview/MergeQueuePanel.vue'
+import AcceptedNotice from '../components/ui/AcceptedNotice.vue'
+import ErrorNotice from '../components/ui/ErrorNotice.vue'
+import PageHeader from '../components/ui/PageHeader.vue'
+import SectionPanel from '../components/ui/SectionPanel.vue'
+import StatTile from '../components/ui/StatTile.vue'
+import StatusBadge from '../components/ui/StatusBadge.vue'
 import { startFullSync, startIncrementalSync } from '../api/sync'
-import MSlogo from '../assets/MSlogo.png'
-import iconCounterpartiesCard from '../assets/icon_counterparties_card.png'
-import iconMergeQueueCard from '../assets/icon_merge_queue_card.png'
-import iconSyncCard from '../assets/icon_sync_card.png'
+import { readAccepted, toUserError } from '../utils/errors'
+import { formatNumber } from '../utils/format'
 
 const props = defineProps({
   overviewData: {
@@ -17,15 +30,25 @@ const props = defineProps({
     type: Object,
     default: null,
   },
+  mergeQueueData: {
+    type: Object,
+    default: null,
+  },
+  loading: {
+    type: Boolean,
+    default: false,
+  },
+  loadError: {
+    type: [String, Object],
+    default: null,
+  },
 })
 
+const router = useRouter()
 const overviewData = ref(createEmptyOverviewData())
 const dashboardStatus = ref(createEmptyDashboardStatus())
-const overviewLoading = ref(false)
-const statusLoading = ref(false)
-const statusError = ref('Раздел временно недоступен')
-const syncActionLoading = ref(false)
-const syncActionMessage = ref(null)
+const syncActionMode = ref('')
+const syncAccepted = ref(null)
 const syncActionError = ref(null)
 
 watch(
@@ -48,41 +71,104 @@ watch(
   { immediate: true }
 )
 
-const cards = computed(() => [
-  {
-    key: 'connection',
-    title: 'Подключение к МС',
-    icon: MSlogo,
-    type: 'connection',
-    status: overviewData.value.connection.ok,
-    value: overviewData.value.connection.label,
-    description: overviewData.value.connection.description,
-  },
-  {
-    key: 'counterparties',
-    title: 'Контрагентов в базе',
-    icon: iconCounterpartiesCard,
-    value: overviewData.value.local.counterpartiesCount,
-    description: 'Всего в базе',
-  },
-  {
-    key: 'mergeQueue',
-    title: 'Очередь объединений КА',
-    icon: iconMergeQueueCard,
-    value: overviewData.value.mergeQueue.jobsCount,
-    description: 'В обработке',
-  },
-  {
-    key: 'lastSync',
-    title: 'Последняя синхронизация',
-    icon: iconSyncCard,
-    value: overviewData.value.lastSync.startedAtLabel,
-    description: overviewData.value.lastSync.modeLabel,
-  },
-])
-
-const normalizedDashboardStatus = computed(() => dashboardStatus.value)
+const hasOverviewData = computed(() => Boolean(props.overviewData))
+const hasStatusData = computed(() => Boolean(props.dashboardStatusData) || Boolean(syncAccepted.value))
+const syncActionLoading = computed(() => Boolean(syncActionMode.value))
 const syncProgressPercent = computed(() => calculateSyncProgress(overviewData.value))
+const normalizedDashboardStatus = computed(() => dashboardStatus.value)
+
+const connectionBadge = computed(() => {
+  const status = overviewData.value.connection.ok
+  if (!hasOverviewData.value || status === null || status === undefined) {
+    return { label: 'Нет данных', tone: 'neutral' }
+  }
+  return status ? { label: 'Подключено', tone: 'success' } : { label: 'Не подключено', tone: 'danger' }
+})
+
+const connectionHint = computed(() => {
+  const connection = overviewData.value.connection
+  if (!hasOverviewData.value) {
+    return 'Ожидает проверки'
+  }
+  if (connection.description) {
+    return connection.description
+  }
+  return connection.counterpartyTotal > 0 ? `Контрагентов в МС: ${formatNumber(connection.counterpartyTotal)}` : 'Ожидает проверки'
+})
+
+const tiles = computed(() => {
+  const data = overviewData.value
+  const known = hasOverviewData.value
+  const total = data.connection.counterpartyTotal
+
+  return [
+    {
+      key: 'counterparties',
+      label: 'Контрагентов в базе',
+      icon: User,
+      value: known ? formatNumber(data.local.counterpartiesCount) : '—',
+      hint: !known ? 'Нет данных' : total > 0 ? `из ${formatNumber(total)} в МоёмСкладе` : 'Синхронизация не выполнялась',
+    },
+    {
+      key: 'duplicates',
+      label: 'Групп дублей',
+      icon: CopyDocument,
+      tone: 'warning',
+      value: known ? formatNumber(data.duplicates.groupsCount) : '—',
+      hint: known ? 'по последнему поиску' : 'Нет данных',
+      to: { name: 'moysklad-duplicates' },
+      linkLabel: 'К дублям',
+    },
+    {
+      key: 'mergeQueue',
+      label: 'Объединений в работе',
+      icon: Timer,
+      tone: 'neutral',
+      value: known ? formatNumber(data.mergeQueue.jobsCount) : '—',
+      hint: known ? 'в очереди и выполняются' : 'Нет данных',
+    },
+    {
+      key: 'lastSync',
+      label: 'Последняя синхронизация',
+      icon: Refresh,
+      tone: 'success',
+      value: displayValue(data.lastSync.startedAtLabel),
+      hint: data.lastSync.modeLabel || 'Ещё не запускалась',
+    },
+  ]
+})
+
+const syncState = computed(() => {
+  const status = normalizedDashboardStatus.value
+  if (status.running && ['queued', 'pending', 'accepted'].includes(String(status.status))) {
+    return { label: 'В очереди', tone: 'neutral' }
+  }
+  if (status.running) {
+    return { label: 'Выполняется', tone: 'primary', spinning: true }
+  }
+  if (!hasStatusData.value) {
+    return { label: 'Нет данных', tone: 'neutral' }
+  }
+  return { label: 'Не запущена', tone: 'neutral' }
+})
+
+const needsFirstSync = computed(() =>
+  hasOverviewData.value &&
+  overviewData.value.local.counterpartiesCount === 0 &&
+  !normalizedDashboardStatus.value.running
+)
+
+const syncStats = computed(() => {
+  const status = normalizedDashboardStatus.value
+  const known = hasStatusData.value
+  const value = (number) => (known ? formatNumber(number) : '—')
+  return [
+    { key: 'processed', label: 'Обработано', value: value(status.processedCounterparties) },
+    { key: 'new', label: 'Новых', value: value(status.newCounterparties) },
+    { key: 'updated', label: 'Обновлено', value: value(status.updatedCounterparties) },
+    { key: 'errors', label: 'Ошибок', value: value(status.errorsCount), danger: known && status.errorsCount > 0 },
+  ]
+})
 
 function createEmptyOverviewData() {
   return {
@@ -225,66 +311,42 @@ function normalizeProgressPercent(progressPercent, processedCounterparties, tota
   return Math.round(Math.min(100, Math.max(0, percent)))
 }
 
-async function handleFullSync() {
-  syncActionMessage.value = null
+async function runSync(mode) {
+  syncAccepted.value = null
   syncActionError.value = null
-  syncActionLoading.value = true
+  syncActionMode.value = mode
 
+  const isFull = mode === 'full'
   try {
-    const result = await startFullSync()
-    syncActionMessage.value = 'Полная синхронизация поставлена в очередь'
+    const response = await (isFull ? startFullSync() : startIncrementalSync())
+    const accepted = readAccepted(response)
+    syncAccepted.value = {
+      id: accepted.id,
+      title: isFull ? 'Полная синхронизация поставлена в очередь' : 'Инкрементная синхронизация поставлена в очередь',
+    }
     dashboardStatus.value = {
       ...dashboardStatus.value,
       running: true,
-      status: result?.status || 'queued',
+      status: accepted.status || 'queued',
       currentStep: 'Ожидание запуска синхронизации',
     }
   } catch (error) {
-    if (error?.status === 401) {
-      syncActionError.value = 'Сессия истекла. Откройте приложение заново через МойСклад.'
-    } else if (error?.status === 503) {
-      syncActionError.value = 'Очередь синхронизации временно недоступна. Повторите попытку позже.'
-    } else {
-      syncActionError.value = error?.message || 'Не удалось запустить полную синхронизацию'
-    }
+    syncActionError.value = toUserError(
+      error,
+      isFull ? 'Не удалось запустить полную синхронизацию' : 'Не удалось запустить инкрементную синхронизацию'
+    )
   } finally {
-    syncActionLoading.value = false
+    syncActionMode.value = ''
   }
 }
 
-function markSyncUnavailable() {
-  syncActionMessage.value = null
-  syncActionError.value = 'Раздел временно недоступен'
+function handleFullSync() {
+  return runSync('full')
 }
 
-async function handleIncrementalSync() {
-  syncActionMessage.value = null
-  syncActionError.value = null
-  syncActionLoading.value = true
-
-  try {
-    const result = await startIncrementalSync()
-    syncActionMessage.value = 'Инкрементная синхронизация поставлена в очередь'
-    dashboardStatus.value = {
-      ...dashboardStatus.value,
-      running: true,
-      status: result?.status || 'queued',
-      currentStep: 'Ожидание запуска синхронизации',
-    }
-  } catch (error) {
-    if (error?.status === 401) {
-      syncActionError.value = 'Сессия истекла. Откройте приложение заново через МойСклад.'
-    } else if (error?.status === 503) {
-      syncActionError.value = 'Очередь синхронизации временно недоступна. Повторите попытку позже.'
-    } else {
-      syncActionError.value = error?.message || 'Не удалось запустить инкрементную синхронизацию'
-    }
-  } finally {
-    syncActionLoading.value = false
-  }
+function handleIncrementalSync() {
+  return runSync('incremental')
 }
-
-const handleCancelSync = markSyncUnavailable
 
 function displayValue(value) {
   if (value === null || value === undefined || value === '') {
@@ -293,156 +355,155 @@ function displayValue(value) {
 
   return value
 }
-
-function connectionStatusLabel(status) {
-  if (status === true) {
-    return 'Подключено'
-  }
-  if (status === false) {
-    return 'Не подключено'
-  }
-  return 'Нет данных'
-}
-
-function connectionTagType(status) {
-  if (status === true) {
-    return 'success'
-  }
-  if (status === false) {
-    return 'danger'
-  }
-  return 'info'
-}
-
-function cardDescription(card) {
-  if (card.type === 'connection' && (card.description === null || card.description === undefined || card.description === '')) {
-    return 'Ожидает проверки'
-  }
-
-  return displayValue(card.description)
-}
 </script>
 
 <template>
-  <section v-loading="overviewLoading || statusLoading" class="overview-top-cards" aria-label="Сводка по МоемуСкладу">
-    <el-card v-for="card in cards" :key="card.key" class="overview-card" shadow="never">
-      <h2 class="overview-card__title">{{ card.title }}</h2>
+  <div class="app-page overview-page">
+    <PageHeader
+      title="Обзор"
+      subtitle="Подключение, синхронизация и ход объединений контрагентов"
+    >
+      <template #actions>
+        <el-button :icon="CopyDocument" @click="router.push({ name: 'moysklad-duplicates' })">
+          Найти дубли
+        </el-button>
+      </template>
+    </PageHeader>
 
-      <div class="overview-card__body">
-        <img class="overview-card__icon" :src="card.icon" :alt="card.title" />
+    <ErrorNotice v-if="loadError" :error="loadError" fallback="Не удалось загрузить сводку" />
 
-        <div class="overview-card__content">
-          <div v-if="card.type === 'connection'" class="overview-card__status">
-            <el-tag :type="connectionTagType(card.status)" size="small" effect="light">
-              {{ connectionStatusLabel(card.status) }}
-            </el-tag>
-          </div>
-
-          <div v-else class="overview-card__value">
-            {{ displayValue(card.value) }}
-          </div>
-
-          <p class="overview-card__description">
-            {{ cardDescription(card) }}
-          </p>
+    <section class="overview-kpis" aria-label="Сводка">
+      <div class="overview-kpis__connection">
+        <div class="overview-kpis__connection-head">
+          <span class="overview-kpis__connection-icon" aria-hidden="true">
+            <el-icon><Connection /></el-icon>
+          </span>
+          <span class="overview-kpis__label">МойСклад</span>
         </div>
+        <el-skeleton v-if="loading" animated :rows="1" />
+        <template v-else>
+          <StatusBadge :label="connectionBadge.label" :tone="connectionBadge.tone" />
+          <span class="overview-kpis__hint">{{ connectionHint }}</span>
+        </template>
       </div>
-    </el-card>
-  </section>
 
-  <section class="overview-queue-section">
-    <div class="overview-queue-section__intro">
-      <div>
-        <span class="overview-queue-section__kicker">Контрагенты</span>
-        <h2>Очередь объединений по КА</h2>
-      </div>
-      <p>Активные merge-задачи, последние результаты и заблокированные контрагенты в одном месте.</p>
-    </div>
+      <StatTile
+        v-for="tile in tiles"
+        :key="tile.key"
+        class="overview-kpis__tile"
+        :label="tile.label"
+        :value="tile.value"
+        :hint="tile.hint"
+        :icon="tile.icon"
+        :tone="tile.tone"
+        :to="tile.to"
+        :link-label="tile.linkLabel"
+        :loading="loading"
+      />
+    </section>
 
-    <MergeQueuePanel />
-  </section>
-
-  <el-card class="sync-panel" shadow="never">
-    <div class="sync-panel__main">
-      <h2 class="sync-panel__title">Синхронизация с МойСклад</h2>
-
-      <el-progress
-        class="sync-panel__progress-row"
-        :percentage="syncProgressPercent"
-        :stroke-width="10"
+    <div class="overview-grid">
+      <MergeQueuePanel
+        class="overview-grid__queue"
+        :data="mergeQueueData"
+        :loading="loading"
+        :load-error="loadError ? 'Очередь объединений недоступна' : null"
       />
 
-      <div class="sync-panel__stats">
-        <div class="sync-panel__stat">
-          <span class="sync-panel__stat-label">Всего контрагентов в базе</span>
-          <strong>{{ overviewData.local.counterpartiesCount }}</strong>
+      <SectionPanel class="sync-panel" title="Синхронизация" subtitle="Загрузка контрагентов из МоегоСклада">
+        <template #actions>
+          <StatusBadge
+            v-if="!loading"
+            :label="syncState.label"
+            :tone="syncState.tone"
+            :spinning="syncState.spinning"
+            :icon="syncState.spinning ? Refresh : null"
+          />
+        </template>
+
+        <el-skeleton v-if="loading" :rows="5" animated />
+
+        <div v-else class="sync-panel__body">
+          <p v-if="needsFirstSync" class="sync-panel__hint">
+            Данных в базе ещё нет. Запустите полную синхронизацию — после неё можно искать и объединять дубли.
+          </p>
+
+          <div class="sync-panel__progress">
+            <div class="sync-panel__progress-head">
+              <span class="sync-panel__progress-label">Загружено в базу</span>
+              <span class="sync-panel__progress-value app-nums">{{ syncProgressPercent }}%</span>
+            </div>
+            <el-progress
+              :percentage="syncProgressPercent"
+              :stroke-width="8"
+              :show-text="false"
+              :status="syncProgressPercent === 100 ? 'success' : undefined"
+            />
+            <span class="sync-panel__progress-caption app-nums">
+              <template v-if="hasOverviewData && overviewData.connection.counterpartyTotal > 0">
+                {{ formatNumber(overviewData.local.counterpartiesCount) }} из {{ formatNumber(overviewData.connection.counterpartyTotal) }} контрагентов
+              </template>
+              <template v-else>Нет данных о количестве контрагентов</template>
+            </span>
+          </div>
+
+          <dl class="sync-panel__stats">
+            <div v-for="stat in syncStats" :key="stat.key" class="sync-panel__stat">
+              <dt>{{ stat.label }}</dt>
+              <dd class="app-nums" :class="{ 'sync-panel__stat-value--danger': stat.danger }">{{ stat.value }}</dd>
+            </div>
+          </dl>
+
+          <p class="sync-panel__step">
+            <span class="app-text-muted">Текущий шаг:</span>
+            {{ normalizedDashboardStatus.currentStep || 'Нет активной синхронизации' }}
+            <span
+              v-if="normalizedDashboardStatus.currentPage && normalizedDashboardStatus.totalPages"
+              class="app-text-muted app-nums"
+            >
+              · страница {{ normalizedDashboardStatus.currentPage }} из {{ normalizedDashboardStatus.totalPages }}
+            </span>
+          </p>
+
+          <AcceptedNotice
+            v-if="syncAccepted"
+            :title="syncAccepted.title"
+            description="Запрос принят. Синхронизация выполняется в фоне — прогресс обновится после её запуска."
+            :operation-id="syncAccepted.id"
+            operation-label="ID запуска"
+            closable
+            @close="syncAccepted = null"
+          />
+          <ErrorNotice v-if="syncActionError" :error="syncActionError" />
         </div>
 
-        <div class="sync-panel__stat">
-          <span class="sync-panel__stat-label">Обработано</span>
-          <strong>{{ normalizedDashboardStatus.processedCounterparties }}</strong>
-        </div>
-
-        <div class="sync-panel__stat">
-          <span class="sync-panel__stat-label">Новых</span>
-          <strong class="sync-panel__stat-blue">{{ normalizedDashboardStatus.newCounterparties }}</strong>
-        </div>
-
-        <div class="sync-panel__stat">
-          <span class="sync-panel__stat-label">Обновлено</span>
-          <strong class="sync-panel__stat-blue">{{ normalizedDashboardStatus.updatedCounterparties }}</strong>
-        </div>
-
-        <div class="sync-panel__stat">
-          <span class="sync-panel__stat-label">Ошибки</span>
-          <strong class="sync-panel__stat-red">{{ normalizedDashboardStatus.errorsCount }}</strong>
-        </div>
-      </div>
-
-      <div class="sync-panel__footer">
-        <span>Текущий шаг:</span>
-        <strong>{{ normalizedDashboardStatus.currentStep || 'Нет активной синхронизации' }}</strong>
-
-        <span v-if="normalizedDashboardStatus.currentPage && normalizedDashboardStatus.totalPages">
-          (страница {{ normalizedDashboardStatus.currentPage }} из {{ normalizedDashboardStatus.totalPages }})
-        </span>
-      </div>
+        <template #footer>
+          <div class="sync-panel__actions">
+            <el-button
+              type="primary"
+              :loading="syncActionMode === 'full'"
+              :disabled="syncActionLoading || loading"
+              @click="handleFullSync"
+            >
+              Полная синхронизация
+            </el-button>
+            <el-button
+              :loading="syncActionMode === 'incremental'"
+              :disabled="syncActionLoading || loading"
+              @click="handleIncrementalSync"
+            >
+              Инкрементная
+            </el-button>
+          </div>
+          <el-tooltip v-if="normalizedDashboardStatus.running && !loading" content="Остановка синхронизации пока недоступна" placement="top">
+            <span>
+              <el-button text type="danger" :icon="VideoPause" disabled>Остановить</el-button>
+            </span>
+          </el-tooltip>
+        </template>
+      </SectionPanel>
     </div>
-
-    <div class="sync-panel__actions">
-      <el-button
-        type="primary"
-        class="sync-panel__btn sync-panel__btn--primary"
-        :loading="syncActionLoading"
-        :disabled="syncActionLoading"
-        @click="handleFullSync"
-      >
-        Полная синхронизация
-      </el-button>
-
-      <el-button
-        plain
-        class="sync-panel__btn sync-panel__btn--outline"
-        :loading="syncActionLoading"
-        :disabled="syncActionLoading"
-        @click="handleIncrementalSync"
-      >
-        Инкрементная синхронизация
-      </el-button>
-
-      <el-button
-        type="danger"
-        plain
-        class="sync-panel__btn sync-panel__btn--danger"
-        disabled
-      >
-        Отменить синхронизацию
-      </el-button>
-
-      <el-alert v-if="syncActionMessage" :title="syncActionMessage" type="success" :closable="false" show-icon />
-      <el-alert v-if="syncActionError" :title="syncActionError" type="error" :closable="false" show-icon />
-    </div>
-  </el-card>
+  </div>
 </template>
 
 <style scoped src="../styles/pages/overview.css"></style>

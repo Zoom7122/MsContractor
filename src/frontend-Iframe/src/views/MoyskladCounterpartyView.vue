@@ -1,15 +1,41 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { RefreshRight } from '@element-plus/icons-vue'
+
+import CopyableId from '../components/ui/CopyableId.vue'
+import EmptyState from '../components/ui/EmptyState.vue'
+import ErrorNotice from '../components/ui/ErrorNotice.vue'
+import PageHeader from '../components/ui/PageHeader.vue'
+import SectionPanel from '../components/ui/SectionPanel.vue'
+import StatusBadge from '../components/ui/StatusBadge.vue'
+import { documentTypeLabel } from '../domain/merge'
+import { formatDateTime, formatNumber } from '../utils/format'
+
+const props = defineProps({
+  counterpartyData: {
+    type: Object,
+    default: null
+  },
+  loading: {
+    type: Boolean,
+    default: false
+  },
+  loadError: {
+    type: [String, Object],
+    default: null
+  }
+})
 
 const route = useRoute()
 const router = useRouter()
 
-const loading = ref(false)
 const syncing = ref(false)
-const error = ref('Раздел временно недоступен')
 const syncMessage = ref(null)
-const counterparty = ref(createEmptyCounterpartyPage())
+const counterparty = computed(() =>
+  props.counterpartyData ? normalizeCounterpartyPage(props.counterpartyData) : createEmptyCounterpartyPage()
+)
+const unavailable = computed(() => !props.counterpartyData && !props.loading && !props.loadError)
 
 const counterpartyId = computed(() => String(route.params.id || '').trim())
 const details = computed(() => counterparty.value.item || createEmptyCounterpartyDetails())
@@ -19,11 +45,6 @@ const backQuery = computed(() => {
   delete query.returnTo
   return query
 })
-
-function handleFullSync() {
-  syncMessage.value = null
-  error.value = 'Раздел временно недоступен'
-}
 
 function handleBack() {
   if (route.query.returnTo === 'history-counterparties') {
@@ -110,99 +131,135 @@ function archiveLabel(archived) {
 </script>
 
 <template>
-  <main class="counterparty-page">
-    <header class="counterparty-page__header">
-      <div>
-        <span class="counterparty-page__kicker">Карточка КА</span>
-        <h1>{{ displayValue(details.name, 'Контрагент') }}</h1>
-        <p>{{ displayValue(details.description, 'Описание отсутствует') }}</p>
-      </div>
+  <div class="app-page counterparty-page">
+    <PageHeader
+      :title="displayValue(details.name, 'Карточка контрагента')"
+      show-back
+      back-label="Назад"
+      @back="handleBack"
+    >
+      <template v-if="details.id" #meta>
+        <StatusBadge :tone="details.archived ? 'neutral' : 'success'" :label="archiveLabel(details.archived)" />
+      </template>
+      <template v-if="details.description" #subtitle>
+        <span class="counterparty-page__description">{{ details.description }}</span>
+      </template>
+      <template #actions>
+        <el-tooltip content="Обновление выгрузки пока недоступно" placement="top">
+          <span>
+            <el-button :icon="RefreshRight" :loading="syncing" disabled>Обновить выгрузку</el-button>
+          </span>
+        </el-tooltip>
+      </template>
+    </PageHeader>
 
-      <div class="counterparty-page__header-actions">
-        <el-tag :type="details.archived ? 'info' : 'success'" effect="light">
-          {{ archiveLabel(details.archived) }}
-        </el-tag>
-        <el-button plain @click="handleBack">Назад</el-button>
-        <el-button type="primary" :loading="syncing" disabled>Обновить полную выгрузку</el-button>
-      </div>
-    </header>
-
-    <el-skeleton v-if="loading" :rows="4" animated />
-    <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
+    <ErrorNotice v-if="loadError" :error="loadError" fallback="Не удалось загрузить карточку контрагента" />
     <el-alert v-if="syncMessage" :title="syncMessage" type="success" :closable="false" show-icon />
 
-    <section v-if="!loading && details.id" class="counterparty-page__grid">
-      <el-card class="counterparty-card" shadow="never">
-        <template #header>
-          <div class="counterparty-card__header">
-            <h2>Основные данные</h2>
-            <p>Поля карточки и метаданные синхронизации</p>
-          </div>
-        </template>
-        <el-descriptions :column="2" border size="small">
-          <el-descriptions-item label="ID">{{ displayValue(details.id) }}</el-descriptions-item>
-          <el-descriptions-item label="Email">{{ displayValue(details.email) }}</el-descriptions-item>
-          <el-descriptions-item label="Телефон">{{ displayValue(details.phone) }}</el-descriptions-item>
-          <el-descriptions-item label="Создан">{{ displayValue(details.createdAt) }}</el-descriptions-item>
-          <el-descriptions-item label="Обновлён">{{ displayValue(details.updatedAt) }}</el-descriptions-item>
-          <el-descriptions-item label="Синхронизирован">{{ displayValue(details.syncedAt) }}</el-descriptions-item>
-        </el-descriptions>
-      </el-card>
-
-      <el-card class="counterparty-card" shadow="never">
-        <template #header>
-          <div class="counterparty-card__header">
-            <h2>Полная выгрузка</h2>
-            <p>Последний экспорт и связанные документы</p>
-          </div>
-        </template>
-        <div class="counterparty-kpis">
-          <div class="counterparty-kpi">
-            <span>Связанных документов</span>
-            <strong>{{ counterparty.linkedDocumentsTotal }}</strong>
-          </div>
-          <div class="counterparty-kpi">
-            <span>Документов в превью</span>
-            <strong>{{ linkedDocumentsPreview.length }}</strong>
-          </div>
-          <div class="counterparty-kpi">
-            <span>Ошибок выгрузки</span>
-            <strong>{{ counterparty.latestFullExport?.errorCount || 0 }}</strong>
-          </div>
-        </div>
-
-        <el-descriptions v-if="counterparty.latestFullExport" :column="3" border size="small">
-          <el-descriptions-item label="Export ID">#{{ counterparty.latestFullExport.id }}</el-descriptions-item>
-          <el-descriptions-item label="Создан">{{ displayValue(counterparty.latestFullExport.createdAt) }}</el-descriptions-item>
-          <el-descriptions-item label="Статус">
-            <el-tag :type="counterparty.latestFullExport.isPartial ? 'warning' : 'success'" size="small">
-              {{ counterparty.latestFullExport.isPartial ? 'Частичный' : 'Полный' }}
-            </el-tag>
-          </el-descriptions-item>
-        </el-descriptions>
-      </el-card>
+    <section v-if="loading" class="counterparty-page__grid" aria-busy="true">
+      <SectionPanel v-for="index in 2" :key="index">
+        <el-skeleton :rows="4" animated />
+      </SectionPanel>
     </section>
 
-    <el-card v-if="!loading && details.id" class="counterparty-card counterparty-card--documents" shadow="never">
-      <template #header>
-        <div class="counterparty-card__header">
-          <h2>Связанные документы</h2>
-          <p>Первые документы из карточки контрагента</p>
-        </div>
-      </template>
+    <SectionPanel v-else-if="unavailable">
+      <EmptyState
+        image="unavailable"
+        title="Карточка пока недоступна"
+        description="Подробные данные контрагента, выгрузки и связанные документы появятся здесь после подключения сервиса карточек."
+      >
+        <CopyableId :value="counterpartyId" label="ID контрагента" full />
+      </EmptyState>
+    </SectionPanel>
 
-      <el-empty v-if="!linkedDocumentsPreview.length" description="Связанные документы пока не найдены" :image-size="64" />
-      <div v-else class="counterparty-documents">
-        <el-card v-for="document in linkedDocumentsPreview" :key="document.id" class="counterparty-document" shadow="never">
-          <div class="counterparty-document__top">
-            <strong>{{ displayValue(document.documentType) }}</strong>
-            <span>{{ displayValue(document.createdAt) }}</span>
-          </div>
-          <p>{{ displayValue(document.documentId) }}</p>
-        </el-card>
-      </div>
-    </el-card>
-  </main>
+    <template v-else-if="details.id">
+      <section class="counterparty-page__grid">
+        <SectionPanel title="Основные данные" subtitle="Поля карточки и метаданные синхронизации">
+          <el-descriptions :column="1" border size="small" class="counterparty-page__descriptions">
+            <el-descriptions-item label="Email">{{ displayValue(details.email) }}</el-descriptions-item>
+            <el-descriptions-item label="Телефон">
+              <span class="app-nums">{{ displayValue(details.phone) }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="Создан">
+              <span class="app-nums">{{ formatDateTime(details.createdAt) }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="Обновлён">
+              <span class="app-nums">{{ formatDateTime(details.updatedAt) }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="Синхронизирован">
+              <span class="app-nums">{{ formatDateTime(details.syncedAt) }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="ID">
+              <CopyableId :value="details.id" full />
+            </el-descriptions-item>
+          </el-descriptions>
+        </SectionPanel>
+
+        <SectionPanel title="Полная выгрузка" subtitle="Последний экспорт карточки и связанных документов">
+          <template v-if="counterparty.latestFullExport" #actions>
+            <StatusBadge
+              size="sm"
+              :tone="counterparty.latestFullExport.isPartial ? 'warning' : 'success'"
+              :label="counterparty.latestFullExport.isPartial ? 'Частичная' : 'Полная'"
+            />
+          </template>
+
+          <dl class="counterparty-kpis">
+            <div class="counterparty-kpi">
+              <dt>Связанных документов</dt>
+              <dd class="app-nums">{{ formatNumber(counterparty.linkedDocumentsTotal) }}</dd>
+            </div>
+            <div class="counterparty-kpi">
+              <dt>Ошибок выгрузки</dt>
+              <dd class="app-nums" :class="{ 'counterparty-kpi__value--danger': counterparty.latestFullExport?.errorCount }">
+                {{ formatNumber(counterparty.latestFullExport?.errorCount || 0) }}
+              </dd>
+            </div>
+            <div class="counterparty-kpi">
+              <dt>Выгрузка от</dt>
+              <dd class="app-nums counterparty-kpi__date">{{ formatDateTime(counterparty.latestFullExport?.createdAt) }}</dd>
+            </div>
+          </dl>
+
+          <p v-if="counterparty.latestFullExport" class="app-meta counterparty-page__export-id">
+            Выгрузка #{{ counterparty.latestFullExport.id }}
+          </p>
+          <p v-else class="app-meta">Полная выгрузка ещё не выполнялась.</p>
+        </SectionPanel>
+      </section>
+
+      <SectionPanel title="Связанные документы" flush>
+        <template #actions>
+          <span v-if="counterparty.linkedDocumentsTotal > linkedDocumentsPreview.length" class="app-meta app-nums">
+            Показаны первые {{ linkedDocumentsPreview.length }} из {{ formatNumber(counterparty.linkedDocumentsTotal) }}
+          </span>
+        </template>
+
+        <EmptyState
+          v-if="!linkedDocumentsPreview.length"
+          size="sm"
+          image="documents"
+          title="Связанных документов нет"
+          description="У контрагента нет документов в последней выгрузке."
+        />
+        <el-table v-else :data="linkedDocumentsPreview" table-layout="fixed" row-key="id">
+          <el-table-column label="Тип документа" min-width="200">
+            <template #default="{ row }">{{ documentTypeLabel(row.documentType) }}</template>
+          </el-table-column>
+          <el-table-column label="ID документа" min-width="220">
+            <template #default="{ row }">
+              <CopyableId :value="row.documentId" full />
+            </template>
+          </el-table-column>
+          <el-table-column label="Дата" width="160">
+            <template #default="{ row }">
+              <span class="app-text-secondary app-nums">{{ formatDateTime(row.createdAt) }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </SectionPanel>
+    </template>
+  </div>
 </template>
 
 <style scoped src="../styles/pages/counterparty.css"></style>

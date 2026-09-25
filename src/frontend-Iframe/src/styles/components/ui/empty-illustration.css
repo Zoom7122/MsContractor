@@ -1,0 +1,79 @@
+.empty-illustration {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.ei-ground {
+  fill: #e6eaef;
+}
+
+.ei-sheet {
+  fill: #fff;
+  stroke: var(--app-color-border-strong);
+  stroke-width: 1.5;
+}
+
+.ei-sheet--accent {
+  stroke: var(--app-color-primary-border);
+}
+
+.ei-sheet--selected {
+  fill: var(--app-color-primary-soft);
+  stroke: var(--app-color-primary);
+}
+
+.ei-sheet--dashed {
+  stroke-dasharray: 4 3;
+}
+
+.ei-line {
+  fill: #e3e8ee;
+}
+
+.ei-muted {
+  fill: var(--app-color-text-muted);
+}
+
+.ei-soft {
+  fill: #d5e5f7;
+}
+
+.ei-soft-strong {
+  fill: #a9cbef;
+}
+
+.ei-accent {
+  fill: var(--app-color-primary);
+}
+
+.ei-cursor {
+  stroke: #fff;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.ei-stroke-accent {
+  stroke: var(--app-color-primary);
+}
+
+.ei-stroke-soft {
+  stroke: #cfe1f5;
+}
+
+.ei-danger {
+  fill: var(--app-color-danger);
+}
+
+.ei-danger-soft {
+  fill: var(--app-color-danger-soft);
+  stroke: var(--app-color-danger);
+}
+
+.ei-success-soft {
+  fill: var(--app-color-success-soft);
+}
+
+.ei-stroke-success {
+  stroke: var(--app-color-success);
+}

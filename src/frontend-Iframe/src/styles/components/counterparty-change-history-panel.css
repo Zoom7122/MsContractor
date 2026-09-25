@@ -1,59 +1,54 @@
-.counterparty-history {
-  display: grid;
-  min-width: 0;
-  gap: 12px;
-}
-
-.counterparty-history__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.counterparty-history__header h1 {
-  margin: 0;
-  font-size: 20px;
-}
-
-.counterparty-history__header p {
-  margin: 3px 0 0;
-  color: var(--app-color-text-secondary);
-  font-size: 12px;
-}
-
 .counterparty-history__tabs {
-  margin-bottom: -12px;
+  padding: 0 var(--app-space-4);
 }
 
 .counterparty-history__tabs :deep(.el-tabs__header) {
   margin-bottom: 0;
 }
 
-:deep(.counterparty-history__filters > .el-card__body) {
-  padding: 10px 12px;
-}
-
-.counterparty-history__filter-grid {
+.counterparty-history__filters {
   display: grid;
-  grid-template-columns: minmax(210px, 1.5fr) repeat(5, minmax(125px, 1fr)) auto;
+  grid-template-columns: minmax(220px, 2fr) repeat(4, minmax(130px, 1fr)) auto;
   align-items: end;
-  gap: 8px;
+  gap: var(--app-space-3);
+  padding: var(--app-space-3) var(--app-space-4);
+  border-bottom: 1px solid var(--app-color-border-light);
 }
 
-.counterparty-history__filter-grid :deep(.el-form-item) {
+.counterparty-history__filters :deep(.el-form-item) {
   min-width: 0;
   margin-bottom: 0;
 }
 
-.counterparty-history__filter-grid :deep(.el-select),
-.counterparty-history__filter-grid :deep(.el-date-editor) {
+.counterparty-history__filters :deep(.el-select),
+.counterparty-history__filters :deep(.el-date-editor.el-input) {
   width: 100%;
 }
 
 .counterparty-history__filter-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--app-space-1);
+}
+
+.counterparty-history__filter-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.counterparty-history__scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--app-space-2);
+  padding: var(--app-space-2) var(--app-space-4);
+  color: var(--app-color-primary-dark);
+  background: var(--app-color-primary-soft);
+  border-bottom: 1px solid var(--app-color-primary-border);
+  font-size: var(--app-font-size-sm);
+}
+
+.counterparty-history__skeleton,
+.counterparty-history__state {
+  padding: var(--app-space-4);
 }
 
 .counterparty-history__table {
@@ -61,24 +56,55 @@
 }
 
 .counterparty-history__counterparty {
-  max-width: calc(100% - 60px);
-  overflow: hidden;
-  vertical-align: middle;
-  text-overflow: ellipsis;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--app-space-2);
+}
+
+.counterparty-history__link {
+  display: block;
+  min-width: 0;
+  padding: 0;
+  color: var(--app-color-primary);
+  background: none;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.counterparty-history__link:hover {
+  text-decoration: underline;
+}
+
+.counterparty-history__old {
+  color: var(--app-color-text-secondary);
+}
+
+.counterparty-history__empty {
+  color: var(--app-color-text-muted);
+  font-style: italic;
+}
+
+.counterparty-history__arrow {
+  color: var(--app-color-text-muted);
 }
 
 .counterparty-history__pagination {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--app-color-text-secondary);
-  font-size: 11px;
+  gap: var(--app-space-3);
+}
+
+.counterparty-history__page-size {
+  width: 140px;
 }
 
 @media (max-width: 1250px) {
-  .counterparty-history__filter-grid {
-    grid-template-columns: repeat(3, minmax(150px, 1fr));
+  .counterparty-history__filters {
+    grid-template-columns: repeat(4, minmax(140px, 1fr));
   }
 
   .counterparty-history__field--wide {
@@ -86,13 +112,9 @@
   }
 }
 
-@media (max-width: 700px) {
-  .counterparty-history__header {
-    flex-direction: column;
-  }
-
-  .counterparty-history__filter-grid {
-    grid-template-columns: 1fr 1fr;
+@media (max-width: 760px) {
+  .counterparty-history__filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .counterparty-history__field--wide,
@@ -101,13 +123,8 @@
   }
 }
 
-@media (max-width: 480px) {
-  .counterparty-history__filter-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .counterparty-history__field--wide,
-  .counterparty-history__filter-actions {
-    grid-column: auto;
+@media (max-width: 460px) {
+  .counterparty-history__filters {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

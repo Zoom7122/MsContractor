@@ -1,15 +1,84 @@
+/*
+ * Design tokens.
+ * Small, flat foundation: colors, typography, spacing, radius, motion and sizes.
+ * Components use these tokens instead of raw values.
+ */
 :root {
-  --app-color-primary: #168de2;
-  --app-color-primary-dark: #0f76c4;
-  --app-color-text: #263238;
-  --app-color-text-secondary: #66727d;
-  --app-color-border: #d8dde3;
-  --app-color-border-light: #e7eaee;
+  /* Surfaces */
+  --app-color-background: #f0f2f5;
   --app-color-surface: #ffffff;
-  --app-color-background: #f4f6f8;
-  --app-color-success: #32a852;
-  --app-color-warning: #d99614;
-  --app-color-danger: #d9534f;
-  --app-sidebar-width: 220px;
-  --app-sidebar-collapsed-width: 58px;
+  --app-color-surface-muted: #f7f8fa;
+  --app-color-surface-hover: #f4f8fd;
+  --app-color-surface-selected: #eaf2fc;
+
+  /* Borders */
+  --app-color-border: #dce1e7;
+  --app-color-border-light: #e8ebef;
+  --app-color-border-strong: #c5ccd5;
+
+  /* Text */
+  --app-color-text: #1f2a36;
+  --app-color-text-regular: #3b4754;
+  --app-color-text-secondary: #5d6976;
+  --app-color-text-muted: #8a94a1;
+  --app-color-text-inverse: #ffffff;
+
+  /* Accent */
+  --app-color-primary: #1677d2;
+  --app-color-primary-dark: #1162ae;
+  --app-color-primary-soft: #eaf2fc;
+  --app-color-primary-border: #b9d6f2;
+
+  /* Status */
+  --app-color-success: #2b9557;
+  --app-color-success-soft: #e9f6ee;
+  --app-color-warning: #c77d05;
+  --app-color-warning-soft: #fdf4e3;
+  --app-color-danger: #d23f3f;
+  --app-color-danger-soft: #fcecec;
+  --app-color-info: #66727f;
+  --app-color-info-soft: #eff1f4;
+
+  /* Typography scale */
+  --app-font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, system-ui, -apple-system, sans-serif;
+  --app-font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+  --app-font-size-xs: 11px;   /* metadata, ids, captions */
+  --app-font-size-sm: 12px;   /* secondary text, table meta */
+  --app-font-size-md: 13px;   /* body */
+  --app-font-size-lg: 15px;   /* section title */
+  --app-font-size-xl: 18px;   /* page title */
+  --app-font-size-kpi: 22px;  /* numbers in stat tiles */
+  --app-line-height: 1.45;
+  --app-font-weight-medium: 500;
+  --app-font-weight-semibold: 600;
+
+  /* Spacing: 4 / 8 / 12 / 16 / 24 / 32 */
+  --app-space-1: 4px;
+  --app-space-2: 8px;
+  --app-space-3: 12px;
+  --app-space-4: 16px;
+  --app-space-5: 24px;
+  --app-space-6: 32px;
+
+  /* Radius */
+  --app-radius-sm: 4px;
+  --app-radius-md: 6px;
+  --app-radius-lg: 8px;
+  --app-radius-pill: 999px;
+
+  /* Elevation — used sparingly */
+  --app-shadow-xs: 0 1px 2px rgb(20 32 46 / 5%);
+  --app-shadow-overlay: 0 8px 24px rgb(20 32 46 / 14%);
+
+  /* Motion */
+  --app-transition-fast: 120ms ease;
+  --app-transition: 180ms ease;
+
+  /* Sizes */
+  --app-control-height: 32px;
+  --app-control-height-sm: 28px;
+  --app-navbar-height: 48px;
+  --app-content-max-width: 1600px;
+  --app-content-padding: 20px;
+  --app-focus-ring: 0 0 0 2px rgb(22 119 210 / 28%);
 }

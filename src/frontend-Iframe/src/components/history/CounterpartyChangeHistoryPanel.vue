@@ -1,6 +1,24 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { Right, Search } from '@element-plus/icons-vue'
+
+import EmptyState from '../ui/EmptyState.vue'
+import ErrorNotice from '../ui/ErrorNotice.vue'
+import PageHeader from '../ui/PageHeader.vue'
+import SectionPanel from '../ui/SectionPanel.vue'
+import StatusBadge from '../ui/StatusBadge.vue'
+import { formatDateTime, formatNumber } from '../../utils/format'
+
+/**
+ * `data` — `{ rows, total }` for the current route filters; null while the
+ * history source is not connected.
+ */
+const props = defineProps({
+  data: { type: Object, default: null },
+  loading: { type: Boolean, default: false },
+  loadError: { type: [String, Object], default: null }
+})
 
 const filterDefaults = {
   search: '',
@@ -16,10 +34,10 @@ const filterDefaults = {
 const route = useRoute()
 const router = useRouter()
 const filters = ref({ ...filterDefaults })
-const rows = ref([])
-const total = ref(0)
-const loading = ref(false)
-const error = ref('Раздел временно недоступен')
+const rows = computed(() => (Array.isArray(props.data?.rows) ? props.data.rows.map(normalizeHistoryRow) : []))
+const total = computed(() => Number(props.data?.total || 0))
+const loading = computed(() => props.loading)
+const unavailable = computed(() => !props.data && !props.loading && !props.loadError)
 
 const totalPages = computed(() => {
   const pages = Math.ceil(total.value / filters.value.pageSize)
@@ -32,11 +50,11 @@ const entityTypeOptions = [
 ]
 
 const changeTypeOptions = [
-  { value: 'merge', label: 'Merge' }
+  { value: 'merge', label: 'Объединение' }
 ]
 
 const quickTabs = [
-  { value: 'merge', label: 'Merge' }
+  { value: 'merge', label: 'Объединения' }
 ]
 
 watch(
@@ -47,16 +65,25 @@ watch(
   { immediate: true }
 )
 
+// changeType has a single default option, so it is not treated as a user filter.
 const hasActiveFilters = computed(() =>
   Boolean(
     filters.value.search ||
     filters.value.entityType ||
-    filters.value.changeType ||
     filters.value.dateFrom ||
     filters.value.dateTo ||
     filters.value.counterpartyId
   )
 )
+
+const rangeLabel = computed(() => {
+  if (!total.value) {
+    return ''
+  }
+  const start = (filters.value.page - 1) * filters.value.pageSize + 1
+  const end = Math.min(filters.value.page * filters.value.pageSize, total.value)
+  return `${formatNumber(start)}–${formatNumber(end)} из ${formatNumber(total.value)}`
+})
 
 function buildRouteQuery() {
   const query = {}
@@ -240,16 +267,9 @@ function fieldLabel(fieldName) {
 function changeTypeLabel(changeType) {
   switch (changeType) {
     case 'merge':
-      return 'Merge'
+      return 'Объединение'
     default:
-      return 'Merge'
-  }
-}
-
-function changeTypeClass(changeType) {
-  return {
-    'counterparty-history__badge': true,
-    'counterparty-history__badge--merge': true
+      return 'Объединение'
   }
 }
 
@@ -308,41 +328,43 @@ function extractReferenceName(value) {
 </script>
 
 <template>
-  <section class="counterparty-history">
-    <header class="counterparty-history__header">
-      <div>
-        <h1>История изменений КА</h1>
-        <p>Поиск по merge-операциям и изменениям карточки контрагента</p>
-      </div>
-      <el-tag type="info" effect="plain">Всего записей: {{ total }}</el-tag>
-    </header>
-
-    <el-tabs
-      class="counterparty-history__tabs"
-      :model-value="filters.changeType"
-      @tab-change="handleQuickTab"
+  <div class="app-page counterparty-history">
+    <PageHeader
+      title="История изменений"
+      subtitle="Как менялись карточки контрагентов при объединениях"
     >
-      <el-tab-pane
-        v-for="tab in quickTabs"
-        :key="tab.value || 'all'"
-        :label="tab.label"
-        :name="tab.value"
-      />
-    </el-tabs>
+      <template v-if="total" #meta>
+        <span class="app-meta app-nums">{{ formatNumber(total) }} записей</span>
+      </template>
+    </PageHeader>
 
-    <el-card class="counterparty-history__filters" shadow="never">
-      <el-form class="counterparty-history__filter-grid" label-position="top" size="small">
+    <SectionPanel class="counterparty-history__panel" flush>
+      <el-tabs
+        class="counterparty-history__tabs"
+        :model-value="filters.changeType"
+        @tab-change="handleQuickTab"
+      >
+        <el-tab-pane
+          v-for="tab in quickTabs"
+          :key="tab.value || 'all'"
+          :label="tab.label"
+          :name="tab.value"
+        />
+      </el-tabs>
+
+      <el-form class="counterparty-history__filters" label-position="top" size="default" @submit.prevent="applyFilters">
         <el-form-item class="counterparty-history__field--wide" label="Поиск">
           <el-input
             v-model="filters.search"
             clearable
-            placeholder="Имя КА, поле, тип изменения"
+            :prefix-icon="Search"
+            placeholder="Контрагент, поле или значение"
             @keydown.enter.prevent="applyFilters"
           />
         </el-form-item>
 
         <el-form-item label="Сущность">
-          <el-select v-model="filters.entityType">
+          <el-select v-model="filters.entityType" placeholder="Все сущности">
             <el-option
               v-for="option in entityTypeOptions"
               :key="option.value"
@@ -363,109 +385,143 @@ function extractReferenceName(value) {
           </el-select>
         </el-form-item>
 
-        <el-form-item label="Дата от">
+        <el-form-item label="С даты">
           <el-date-picker
             v-model="filters.dateFrom"
             type="date"
             value-format="YYYY-MM-DD"
             format="DD.MM.YYYY"
-            placeholder="Выберите дату"
+            placeholder="дд.мм.гггг"
           />
         </el-form-item>
 
-        <el-form-item label="Дата до">
+        <el-form-item label="По дату">
           <el-date-picker
             v-model="filters.dateTo"
             type="date"
             value-format="YYYY-MM-DD"
             format="DD.MM.YYYY"
-            placeholder="Выберите дату"
+            placeholder="дд.мм.гггг"
           />
-        </el-form-item>
-
-        <el-form-item label="На странице">
-          <el-select v-model="filters.pageSize" @change="applyFilters">
-            <el-option :value="25" label="25" />
-            <el-option :value="50" label="50" />
-            <el-option :value="100" label="100" />
-          </el-select>
         </el-form-item>
 
         <div class="counterparty-history__filter-actions">
           <el-button type="primary" @click="applyFilters">Применить</el-button>
-          <el-button plain @click="resetFilters">Сбросить</el-button>
+          <el-button text @click="resetFilters">Сбросить</el-button>
         </div>
       </el-form>
-    </el-card>
 
-    <el-alert
-      v-if="filters.counterpartyId"
-      title="Показана история по выбранному КА"
-      type="info"
-      :closable="false"
-      show-icon
-    >
-      <template #default>
-        <el-button link type="primary" @click="clearCounterpartyFilter">Сбросить фильтр</el-button>
-      </template>
-    </el-alert>
+      <div v-if="filters.counterpartyId" class="counterparty-history__scope">
+        <span>Показана история одного контрагента</span>
+        <el-button link type="primary" @click="clearCounterpartyFilter">Показать всех</el-button>
+      </div>
 
-    <el-skeleton v-if="loading" :rows="4" animated />
-    <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
+      <div v-if="loading" class="counterparty-history__skeleton" aria-busy="true">
+        <el-skeleton :rows="6" animated />
+      </div>
 
-    <el-empty
-      v-if="!loading && !rows.length"
-      :description="hasActiveFilters ? 'По текущим фильтрам записи не найдены' : 'История изменений пока не найдена'"
-      :image-size="80"
-    />
+      <div v-else-if="loadError" class="counterparty-history__state">
+        <ErrorNotice :error="loadError" fallback="Не удалось загрузить историю изменений" />
+      </div>
 
-    <el-table
-      v-else
-      class="counterparty-history__table"
-      :data="rows"
-      border
-      table-layout="auto"
-      empty-text="История изменений пока не найдена"
-    >
-      <el-table-column label="Дата" min-width="140">
-        <template #default="{ row }">{{ displayValue(row.changedAt) }}</template>
-      </el-table-column>
-      <el-table-column label="Контрагент" min-width="180">
-        <template #default="{ row }">
-          <el-button class="counterparty-history__counterparty" link type="primary" @click="openCounterparty(row)">
-            {{ displayValue(row.counterpartyName, 'Контрагент') }}
-          </el-button>
-          <el-tag v-if="row.counterpartyArchived" type="info" size="small">Архивный</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="Поле" min-width="120">
-        <template #default="{ row }">{{ fieldLabel(row.fieldName) }}</template>
-      </el-table-column>
-      <el-table-column label="Тип" width="90">
-        <template #default="{ row }">
-          <el-tag type="primary" size="small" effect="light">{{ changeTypeLabel(row.changeType) }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="Старое значение" min-width="180">
-        <template #default="{ row }">{{ displayHistoryValue(row.oldValue) }}</template>
-      </el-table-column>
-      <el-table-column label="Новое значение" min-width="180">
-        <template #default="{ row }">{{ displayHistoryValue(row.newValue) }}</template>
-      </el-table-column>
-    </el-table>
-
-    <footer class="counterparty-history__pagination">
-      <span>Страница {{ filters.page }} из {{ totalPages }}</span>
-      <el-pagination
-        :current-page="filters.page"
-        :page-size="filters.pageSize"
-        :total="total"
-        layout="prev, next"
-        :disabled="loading"
-        @current-change="goToPage"
+      <EmptyState
+        v-else-if="unavailable"
+        image="unavailable"
+        title="Журнал изменений пока недоступен"
+        description="История правок появится здесь после подключения сервиса журнала."
       />
-    </footer>
-  </section>
+
+      <EmptyState
+        v-else-if="!rows.length && hasActiveFilters"
+        image="search"
+        title="По фильтрам ничего не найдено"
+        description="Измените условия поиска или сбросьте фильтры."
+      >
+        <el-button size="small" @click="resetFilters">Сбросить фильтры</el-button>
+      </EmptyState>
+
+      <EmptyState
+        v-else-if="!rows.length"
+        image="history"
+        title="История пока пуста"
+        description="Здесь появятся изменения карточек после первого объединения контрагентов."
+      >
+        <el-button size="small" @click="router.push({ name: 'moysklad-duplicates' })">Найти дубли</el-button>
+      </EmptyState>
+
+      <el-table
+        v-else
+        class="counterparty-history__table"
+        :data="rows"
+        table-layout="fixed"
+        row-key="id"
+      >
+        <el-table-column label="Дата" width="140">
+          <template #default="{ row }">
+            <span class="app-text-secondary app-nums">{{ formatDateTime(row.changedAt) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Контрагент" min-width="220">
+          <template #default="{ row }">
+            <div class="counterparty-history__counterparty">
+              <el-tooltip :content="displayValue(row.counterpartyName, 'Контрагент')" placement="top" :show-after="500">
+                <button type="button" class="counterparty-history__link app-truncate" @click="openCounterparty(row)">
+                  {{ displayValue(row.counterpartyName, 'Контрагент') }}
+                </button>
+              </el-tooltip>
+              <StatusBadge v-if="row.counterpartyArchived" size="sm" tone="neutral" label="Архивный" />
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="Поле" width="150">
+          <template #default="{ row }">{{ fieldLabel(row.fieldName) }}</template>
+        </el-table-column>
+        <el-table-column label="Было" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="counterparty-history__old" :class="{ 'counterparty-history__empty': !row.oldValue }">
+              {{ displayHistoryValue(row.oldValue) }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column width="28" align="center">
+          <template #default>
+            <el-icon class="counterparty-history__arrow" aria-hidden="true"><Right /></el-icon>
+          </template>
+        </el-table-column>
+        <el-table-column label="Стало" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span :class="{ 'counterparty-history__empty': !row.newValue }">{{ displayHistoryValue(row.newValue) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Тип" width="130">
+          <template #default="{ row }">
+            <StatusBadge size="sm" tone="primary" :label="changeTypeLabel(row.changeType)" />
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <template v-if="rows.length" #footer>
+        <span class="app-meta app-nums">{{ rangeLabel }}</span>
+        <div class="counterparty-history__pagination">
+          <el-select v-model="filters.pageSize" class="counterparty-history__page-size" size="small" @change="applyFilters">
+            <el-option :value="25" label="25 на странице" />
+            <el-option :value="50" label="50 на странице" />
+            <el-option :value="100" label="100 на странице" />
+          </el-select>
+          <el-pagination
+            :current-page="filters.page"
+            :page-size="filters.pageSize"
+            :total="total"
+            layout="prev, pager, next"
+            :pager-count="5"
+            :disabled="loading"
+            size="small"
+            @current-change="goToPage"
+          />
+        </div>
+      </template>
+    </SectionPanel>
+  </div>
 </template>
 
 <style scoped src="../../styles/components/counterparty-change-history-panel.css"></style>

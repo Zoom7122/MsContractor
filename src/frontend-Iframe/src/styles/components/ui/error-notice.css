@@ -1,0 +1,110 @@
+.error-notice {
+  --notice-color: var(--app-color-danger);
+  --notice-bg: var(--app-color-danger-soft);
+  --notice-border: #f3cfcf;
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: var(--app-space-2) var(--app-space-3);
+  padding: var(--app-space-3);
+  background: var(--notice-bg);
+  border: 1px solid var(--notice-border);
+  border-radius: var(--app-radius-md);
+}
+
+.error-notice--warning {
+  --notice-color: var(--app-color-warning);
+  --notice-bg: var(--app-color-warning-soft);
+  --notice-border: #f0dcb4;
+}
+
+.error-notice__icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--notice-color);
+  font-size: 16px;
+}
+
+.error-notice__content {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.error-notice__title {
+  color: var(--app-color-text);
+  font-weight: var(--app-font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.error-notice__description {
+  color: var(--app-color-text-regular);
+  font-size: var(--app-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.error-notice__details {
+  margin-top: var(--app-space-1);
+}
+
+.error-notice__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  color: var(--app-color-text-secondary);
+  background: none;
+  border: 0;
+  font-size: var(--app-font-size-xs);
+  cursor: pointer;
+}
+
+.error-notice__toggle:hover {
+  color: var(--app-color-text);
+}
+
+.error-notice__details-list {
+  display: grid;
+  gap: 2px;
+  margin: var(--app-space-2) 0 0;
+  padding: var(--app-space-2);
+  background: rgb(255 255 255 / 65%);
+  border-radius: var(--app-radius-sm);
+}
+
+.error-notice__details-list div {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: var(--app-space-2);
+}
+
+.error-notice__details-list dt {
+  color: var(--app-color-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.error-notice__details-list dd {
+  margin: 0;
+  color: var(--app-color-text-regular);
+  overflow-wrap: anywhere;
+}
+
+.error-notice__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: var(--app-space-2);
+}
+
+@media (max-width: 560px) {
+  .error-notice {
+    flex-wrap: wrap;
+  }
+
+  .error-notice__actions {
+    width: 100%;
+    padding-left: 28px;
+  }
+}

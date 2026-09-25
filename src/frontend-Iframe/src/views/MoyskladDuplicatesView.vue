@@ -1,7 +1,21 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { Check, Right, Search } from '@element-plus/icons-vue'
+
 import { api } from '../api/http'
+import DuplicateGroupItem from '../components/duplicates/DuplicateGroupItem.vue'
+import MatchCriteria from '../components/duplicates/MatchCriteria.vue'
+import AcceptedNotice from '../components/ui/AcceptedNotice.vue'
+import EmptyState from '../components/ui/EmptyState.vue'
+import ErrorNotice from '../components/ui/ErrorNotice.vue'
+import PageHeader from '../components/ui/PageHeader.vue'
+import SectionPanel from '../components/ui/SectionPanel.vue'
+import StatusBadge from '../components/ui/StatusBadge.vue'
+import { SEARCHABLE_MATCH_FIELDS, groupCriteria, matchFieldLabel } from '../domain/duplicates'
+import { toUserError } from '../utils/errors'
+import { COUNTERPARTY_FORMS, GROUP_FORMS, countLabel, formatDateTimeShort } from '../utils/format'
+import { normalizeQueryValue, parseDelimitedQuery } from '../utils/query'
 
 const props = defineProps({
   duplicatesData: {
@@ -10,11 +24,7 @@ const props = defineProps({
   }
 })
 
-const fieldOptions = [
-  { value: 'name', label: 'Наименование' },
-  { value: 'email', label: 'Email' },
-  { value: 'phone', label: 'Телефон' }
-]
+const fieldOptions = SEARCHABLE_MATCH_FIELDS
 
 const defaultFilters = {
   fields: ['name'],
@@ -25,26 +35,35 @@ const route = useRoute()
 const router = useRouter()
 const filters = ref(readFiltersFromRoute(route.query))
 const loading = ref(false)
-const error = ref(props.duplicatesData ? null : 'Раздел временно недоступен')
-const mergeMessage = ref(readMergeMessageFromRoute(route.query))
+const error = ref(null)
+const mergeAccepted = ref(readMergeAcceptedFromRoute(route.query))
 const groupsTruncated = ref(false)
 const groups = ref([])
+const searchedFields = ref([...filters.value.fields])
 const selectedGroupKey = ref(null)
 const selectedCounterpartyIds = ref([])
 let pendingGroupKeyFromRoute = normalizeQueryValue(route.query.group)
-let preserveMergeMessageOnNextLoad = Boolean(mergeMessage.value)
+let preserveMergeMessageOnNextLoad = Boolean(mergeAccepted.value)
+
+const searchQuery = computed(() => filters.value.search.trim().toLowerCase())
+
+const visibleGroups = computed(() => {
+  if (!searchQuery.value) {
+    return groups.value
+  }
+
+  return groups.value.filter((group) => groupMatchesSearch(group, searchQuery.value))
+})
 
 const selectedGroup = computed(() => groups.value.find((group) => group.key === selectedGroupKey.value) || null)
+const selectedCriteria = computed(() => groupCriteria(selectedGroup.value))
+const matchedFields = computed(() => new Set(selectedCriteria.value.map((item) => item.field)))
 
 const totalCounterpartiesInGroups = computed(() =>
   groups.value.reduce((sum, group) => sum + (group.counterparties?.length || 0), 0)
 )
 
-const selectedFieldsLabel = computed(() =>
-  filters.value.fields
-    .map((field) => fieldOptions.find((item) => item.value === field)?.label || field)
-    .join(', ')
-)
+const searchedFieldsLabel = computed(() => searchedFields.value.map(matchFieldLabel).join(', '))
 
 const canGoToMerge = computed(() => selectedCounterpartyIds.value.length >= 2)
 const selectedGroupCounterpartyIds = computed(() => selectedGroup.value?.counterparties?.map((item) => item.id) || [])
@@ -52,6 +71,21 @@ const allSelectedInGroup = computed(() =>
   selectedGroupCounterpartyIds.value.length > 0 &&
   selectedGroupCounterpartyIds.value.every((id) => selectedCounterpartyIds.value.includes(id))
 )
+const someSelectedInGroup = computed(() => selectedCounterpartyIds.value.length > 0 && !allSelectedInGroup.value)
+const selectedArchivedCount = computed(() =>
+  selectedGroup.value?.counterparties.filter((item) => item.archived).length || 0
+)
+const showSyncedColumn = computed(() => Boolean(selectedGroup.value?.counterparties.some((item) => item.syncedAt)))
+
+const mergeHint = computed(() => {
+  if (!selectedCounterpartyIds.value.length) {
+    return 'Отметьте контрагентов, которых нужно объединить'
+  }
+  if (!canGoToMerge.value) {
+    return 'Для объединения нужно минимум два контрагента'
+  }
+  return 'Основного контрагента и итоговые поля выберете на следующем шаге'
+})
 
 watch(
   () => props.duplicatesData,
@@ -65,9 +99,15 @@ watch(
   { immediate: true }
 )
 
+watch(visibleGroups, (items) => {
+  if (items.length && !items.some((group) => group.key === selectedGroupKey.value)) {
+    selectGroup(items[0].key)
+  }
+})
+
 async function loadDuplicateGroups() {
   if (!preserveMergeMessageOnNextLoad) {
-    mergeMessage.value = null
+    mergeAccepted.value = null
   }
   preserveMergeMessageOnNextLoad = false
 
@@ -84,9 +124,10 @@ async function loadDuplicateGroups() {
     const response = await api.post('/api/merge-preview', null, {
       params
     })
+    searchedFields.value = [...filters.value.fields]
     applyDuplicateResponse(response)
   } catch (requestError) {
-    error.value = requestError?.message || 'Не удалось загрузить дубликаты'
+    error.value = toUserError(requestError, 'Не удалось загрузить дубликаты')
   } finally {
     loading.value = false
   }
@@ -96,14 +137,15 @@ function applyDuplicateResponse(response) {
   groups.value = Array.isArray(response)
     ? response.map((group) => normalizeApiGroup(group))
     : Array.isArray(response?.groups) ? response.groups.map(normalizeGroup) : []
-  groupsTruncated.value = false
+  groupsTruncated.value = Boolean(response?.groupsTruncated)
 
   if (Array.isArray(response?.fields) && response.fields.length) {
     filters.value.fields = response.fields.filter((field) => fieldOptions.some((item) => item.value === field))
+    searchedFields.value = [...filters.value.fields]
   }
 
   selectedCounterpartyIds.value = []
-  selectedGroupKey.value = resolveInitialGroupKey(groups.value)
+  selectedGroupKey.value = resolveInitialGroupKey(visibleGroups.value.length ? visibleGroups.value : groups.value)
   pendingGroupKeyFromRoute = ''
 }
 
@@ -117,7 +159,7 @@ function normalizeApiGroup(group) {
     description: String(item?.description || ''),
     email: String(item?.email || ''),
     phone: String(item?.phone || ''),
-    archived: false,
+    archived: Boolean(item?.archived),
     updatedAt: String(item?.updatedAt || ''),
     syncedAt: ''
   }))
@@ -127,6 +169,7 @@ function normalizeApiGroup(group) {
     itemsTruncated: false,
     matchedBy,
     matchValue,
+    criteria: normalizeCriteria(group?.criteria),
     values: {
       name: matchedBy === 'name' ? matchValue : '',
       email: matchedBy === 'email' ? matchValue : '',
@@ -141,6 +184,7 @@ function normalizeGroup(group) {
     key: String(group?.key || ''),
     matchCount: Number(group?.matchCount || 0),
     itemsTruncated: Boolean(group?.itemsTruncated),
+    criteria: normalizeCriteria(group?.criteria),
     values: {
       name: String(group?.values?.name || ''),
       email: String(group?.values?.email || ''),
@@ -161,26 +205,25 @@ function normalizeGroup(group) {
   }
 }
 
-function buildDuplicateQuery() {
-  const params = {
-    fields: filters.value.fields.join(',')
+function normalizeCriteria(items) {
+  if (!Array.isArray(items)) {
+    return []
   }
 
-  const search = filters.value.search.trim()
-  if (search) {
-    params.search = search
-  }
-
-  return params
+  return items
+    .map((item) => ({ field: String(item?.field || ''), value: String(item?.value || '') }))
+    .filter((item) => item.field)
 }
 
-function toggleField(field) {
-  if (filters.value.fields.includes(field)) {
-    filters.value.fields = filters.value.fields.filter((item) => item !== field)
-    return
-  }
+function groupMatchesSearch(group, query) {
+  const haystack = [
+    group.matchValue,
+    ...Object.values(group.values || {}),
+    ...(group.criteria || []).map((item) => item.value),
+    ...group.counterparties.flatMap((item) => [item.name, item.email, item.phone, item.description])
+  ]
 
-  filters.value.fields = [...filters.value.fields, field]
+  return haystack.some((value) => String(value || '').toLowerCase().includes(query))
 }
 
 function resetFilters() {
@@ -188,10 +231,17 @@ function resetFilters() {
   loadDuplicateGroups()
 }
 
+function clearSearch() {
+  filters.value.search = ''
+}
+
 function selectGroup(groupKey) {
+  if (groupKey === selectedGroupKey.value) {
+    return
+  }
+
   selectedGroupKey.value = groupKey
   selectedCounterpartyIds.value = []
-  mergeMessage.value = null
 }
 
 function toggleCounterparty(counterpartyId) {
@@ -203,12 +253,21 @@ function toggleCounterparty(counterpartyId) {
   selectedCounterpartyIds.value = [...selectedCounterpartyIds.value, counterpartyId]
 }
 
+function toggleAllInGroup() {
+  if (allSelectedInGroup.value) {
+    clearSelectedCounterparties()
+    return
+  }
+
+  handleSelectAllInGroup()
+}
+
 function handleGoToMerge() {
   if (!canGoToMerge.value) {
     return
   }
 
-  mergeMessage.value = null
+  mergeAccepted.value = null
   router.push({
     name: 'moysklad-merge',
     query: {
@@ -224,24 +283,32 @@ function handleSelectAllInGroup() {
   }
 
   selectedCounterpartyIds.value = [...selectedGroupCounterpartyIds.value]
-  mergeMessage.value = null
 }
 
 function clearSelectedCounterparties() {
   selectedCounterpartyIds.value = []
-  mergeMessage.value = null
 }
 
 function groupTitle(group) {
   if (group.matchValue) {
-    const field = fieldOptions.find((item) => item.value === group.matchedBy)
-    return `Дубликаты по ${field?.label || group.matchedBy}: ${group.matchValue}`
+    return group.matchValue
   }
-  return group.values.name || group.values.email || group.values.phone || group.key || 'Группа дублей'
+  return group.values.name || group.values.email || group.values.phone || group.criteria?.[0]?.value || 'Группа дублей'
 }
 
 function displayValue(value) {
   return value || '—'
+}
+
+function rowClassName({ row }) {
+  return selectedCounterpartyIds.value.includes(row.id) ? 'duplicates-table__row--selected' : ''
+}
+
+function handleRowClick(row, column) {
+  if (column?.property === 'selection') {
+    return
+  }
+  toggleCounterparty(row.id)
 }
 
 function buildMergeRouteState() {
@@ -262,34 +329,11 @@ function buildMergeRouteState() {
 }
 
 function readFiltersFromRoute(query) {
-  const routeFields = parseFieldsQuery(query.fields)
+  const routeFields = parseDelimitedQuery(query.fields, fieldOptions.map((item) => item.value))
   return {
     fields: routeFields.length ? routeFields : cloneValue(defaultFilters.fields),
     search: normalizeQueryValue(query.search)
   }
-}
-
-function parseFieldsQuery(rawValue) {
-  const values = Array.isArray(rawValue) ? rawValue : [rawValue]
-  const allowed = new Set(fieldOptions.map((item) => item.value))
-  const result = []
-
-  for (const value of values) {
-    const parts = String(value || '')
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean)
-
-    for (const part of parts) {
-      if (!allowed.has(part) || result.includes(part)) {
-        continue
-      }
-
-      result.push(part)
-    }
-  }
-
-  return result
 }
 
 function resolveInitialGroupKey(items) {
@@ -300,23 +344,12 @@ function resolveInitialGroupKey(items) {
   return items[0]?.key || null
 }
 
-function readMergeMessageFromRoute(query) {
+function readMergeAcceptedFromRoute(query) {
   if (normalizeQueryValue(query.mergeQueued) !== '1') {
     return null
   }
 
-  const jobId = normalizeQueryValue(query.mergeJobId)
-  return jobId
-    ? `Задача #${jobId} на объединение добавлена в очередь`
-    : 'Задача на объединение добавлена в очередь'
-}
-
-function normalizeQueryValue(rawValue) {
-  if (Array.isArray(rawValue)) {
-    return String(rawValue[0] || '').trim()
-  }
-
-  return String(rawValue || '').trim()
+  return { jobId: normalizeQueryValue(query.mergeJobId) }
 }
 
 function cloneValue(value) {
@@ -331,206 +364,260 @@ onMounted(() => {
 </script>
 
 <template>
-  <main class="duplicates-page">
-    <header class="duplicates-page__header">
-      <div>
-        <h1 class="duplicates-page__title">Дубликаты</h1>
-        <p class="duplicates-page__subtitle">Поиск, отбор всей группы одним кликом и быстрый переход к объединению</p>
+  <div class="app-page duplicates-page">
+    <PageHeader
+      title="Дубликаты контрагентов"
+      subtitle="Найдите совпадающих контрагентов, отметьте нужных и объедините их в одну карточку"
+    />
+
+    <AcceptedNotice
+      v-if="mergeAccepted"
+      title="Объединение принято в обработку"
+      description="Задача выполняется в фоне: документы будут перепривязаны, дубликаты — перенесены в архив. Ход выполнения виден в очереди на странице «Обзор»."
+      :operation-id="mergeAccepted.jobId"
+      closable
+      @close="mergeAccepted = null"
+    >
+      <template #actions>
+        <el-button size="small" @click="router.push({ name: 'moysklad-overview' })">Открыть очередь</el-button>
+      </template>
+    </AcceptedNotice>
+
+    <section class="duplicates-toolbar" aria-label="Параметры поиска">
+      <div class="duplicates-toolbar__fields">
+        <span class="duplicates-toolbar__label">Совпадение по</span>
+        <el-checkbox-group v-model="filters.fields" class="duplicates-toolbar__checks" aria-label="Поля поиска дублей">
+          <el-checkbox-button v-for="field in fieldOptions" :key="field.value" :value="field.value">
+            <el-icon class="duplicates-toolbar__field-icon" aria-hidden="true"><component :is="field.icon" /></el-icon>
+            {{ field.label }}
+          </el-checkbox-button>
+        </el-checkbox-group>
       </div>
 
-      <div class="duplicates-page__header-badges">
-        <el-tag type="info" effect="plain">Групп: {{ groups.length }}</el-tag>
-        <el-tag type="primary" effect="light">Выбрано КА: {{ selectedCounterpartyIds.length }}</el-tag>
+      <el-input
+        v-model="filters.search"
+        class="duplicates-toolbar__search"
+        clearable
+        :prefix-icon="Search"
+        placeholder="Фильтр по найденным: имя, email, телефон"
+        aria-label="Фильтр по найденным группам"
+      />
+
+      <div class="duplicates-toolbar__actions">
+        <el-button
+          type="primary"
+          :loading="loading"
+          :disabled="loading || !filters.fields.length"
+          @click="loadDuplicateGroups"
+        >
+          Найти дубли
+        </el-button>
+        <el-button text :disabled="loading" @click="resetFilters">Сбросить</el-button>
       </div>
-    </header>
-
-    <el-card class="duplicates-filters" shadow="never">
-      <el-form class="duplicates-filters__form" label-position="top" size="small">
-        <el-form-item label="Поля поиска дублей">
-          <div class="duplicates-checkboxes">
-            <el-checkbox
-              v-for="field in fieldOptions"
-              :key="field.value"
-              :model-value="filters.fields.includes(field.value)"
-              @change="toggleField(field.value)"
-            >
-              {{ field.label }}
-            </el-checkbox>
-          </div>
-        </el-form-item>
-
-        <el-form-item class="duplicates-field--search" label="Строка поиска">
-          <el-input
-            v-model="filters.search"
-            clearable
-            placeholder="Поиск по группе или контрагенту"
-            @keydown.enter.prevent="loadDuplicateGroups"
-          />
-        </el-form-item>
-
-        <div class="duplicates-filters__actions">
-          <el-button
-            type="primary"
-            :loading="loading"
-            :disabled="loading || !filters.fields.length"
-            @click="loadDuplicateGroups"
-          >
-            Найти дубли
-          </el-button>
-          <el-button plain :disabled="loading" @click="resetFilters">Сбросить фильтры</el-button>
-        </div>
-      </el-form>
-    </el-card>
-
-    <el-skeleton v-if="loading" :rows="3" animated />
-    <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
-
-    <section class="duplicates-summary">
-      <el-card shadow="never">
-        <span>Найдено групп</span>
-        <strong>{{ groups.length }}</strong>
-      </el-card>
-      <el-card shadow="never">
-        <span>Всего контрагентов в группах</span>
-        <strong>{{ totalCounterpartiesInGroups }}</strong>
-      </el-card>
-      <el-card shadow="never">
-        <span>Поиск по полям</span>
-        <strong>{{ selectedFieldsLabel || '—' }}</strong>
-      </el-card>
     </section>
+
+    <ErrorNotice
+      v-if="error"
+      :error="error"
+      retryable
+      :retrying="loading"
+      @retry="loadDuplicateGroups"
+    />
 
     <el-alert
       v-if="groupsTruncated"
-      title="Показаны не все группы. Увеличьте лимит или уточните поиск."
+      title="Показаны не все группы — уточните поиск или увеличьте лимит в настройках."
       type="warning"
       :closable="false"
       show-icon
     />
 
-    <section class="duplicates-layout">
-      <aside class="duplicates-groups">
-        <el-empty v-if="!loading && !groups.length" description="Группы дублей не найдены" :image-size="64" />
+    <p v-if="!loading && groups.length" class="duplicates-summary">
+      Найдено <strong>{{ countLabel(groups.length, GROUP_FORMS) }}</strong>,
+      в них <strong>{{ countLabel(totalCounterpartiesInGroups, COUNTERPARTY_FORMS) }}</strong>
+      <span class="app-text-muted"> · совпадение по: {{ searchedFieldsLabel }}</span>
+      <template v-if="searchQuery">
+        <span class="app-text-muted"> · после фильтра: {{ visibleGroups.length }}</span>
+      </template>
+    </p>
 
-        <el-card
-          v-for="group in groups"
-          :key="group.key"
-          class="duplicates-group"
-          :class="{ 'duplicates-group--active': group.key === selectedGroupKey }"
-          shadow="never"
-          role="button"
-          tabindex="0"
-          @click="selectGroup(group.key)"
-          @keydown.enter.prevent="selectGroup(group.key)"
+    <!-- Loading skeleton keeps the final layout to avoid shifts -->
+    <section v-if="loading" class="duplicates-layout" aria-busy="true">
+      <SectionPanel class="duplicates-groups" title="Группы" flush>
+        <div class="duplicates-skeleton-list">
+          <el-skeleton v-for="index in 6" :key="index" animated>
+            <template #template>
+              <el-skeleton-item variant="text" style="width: 70%" />
+              <el-skeleton-item variant="text" style="width: 45%; margin-top: 8px" />
+            </template>
+          </el-skeleton>
+        </div>
+      </SectionPanel>
+      <SectionPanel class="duplicates-details" title="Контрагенты группы">
+        <el-skeleton :rows="5" animated />
+      </SectionPanel>
+    </section>
+
+    <SectionPanel v-else-if="!groups.length && !error" class="duplicates-empty">
+      <EmptyState
+        image="success"
+        title="Дубликаты не найдены"
+        :description="`Совпадений по полям «${searchedFieldsLabel || '—'}» нет. Попробуйте добавить другие поля или обновите данные синхронизацией на странице «Обзор».`"
+      />
+    </SectionPanel>
+
+    <section v-else-if="groups.length" class="duplicates-layout">
+      <SectionPanel class="duplicates-groups" flush>
+        <template #title>
+          <h2 class="duplicates-groups__title">
+            Группы <span class="app-meta app-nums">{{ visibleGroups.length }}</span>
+          </h2>
+        </template>
+
+        <EmptyState
+          v-if="!visibleGroups.length"
+          size="sm"
+          image="search"
+          title="Ничего не найдено"
+          :description="`Нет групп, где встречается «${filters.search.trim()}».`"
         >
-          <span class="duplicates-group__title">{{ groupTitle(group) }}</span>
-          <span class="duplicates-group__meta">Совпадений: {{ group.matchCount }}</span>
-          <span v-if="group.values.name" class="duplicates-group__value">Наименование: {{ group.values.name }}</span>
-          <span v-if="group.values.email" class="duplicates-group__value">Email: {{ group.values.email }}</span>
-          <span v-if="group.values.phone" class="duplicates-group__value">Телефон: {{ group.values.phone }}</span>
-          <span class="duplicates-group__footer">
-            {{ group.counterparties.length }} контрагентов
-            <el-tag v-if="group.itemsTruncated" type="warning" size="small">Обрезано</el-tag>
-          </span>
-        </el-card>
-      </aside>
+          <el-button size="small" @click="clearSearch">Сбросить фильтр</el-button>
+        </EmptyState>
 
-      <el-card class="duplicates-details" shadow="never">
-        <div class="duplicates-details__header">
-          <div>
-            <h2>Группа дублей</h2>
-            <p>Выберите контрагентов для дальнейшего объединения</p>
-          </div>
-          <div class="duplicates-details__header-side">
-            <el-tag type="info" effect="plain">Выбрано: {{ selectedCounterpartyIds.length }}</el-tag>
-            <div class="duplicates-details__tools">
-              <el-button
-                plain
-                size="small"
-                :disabled="!selectedGroupCounterpartyIds.length || allSelectedInGroup"
-                @click="handleSelectAllInGroup"
-              >
-                Выбрать всю группу
-              </el-button>
-              <el-button
-                text
-                size="small"
-                :disabled="!selectedCounterpartyIds.length"
-                @click="clearSelectedCounterparties"
-              >
-                Снять выбор
-              </el-button>
-            </div>
-          </div>
+        <ul v-else class="duplicates-groups__list">
+          <li v-for="group in visibleGroups" :key="group.key">
+            <DuplicateGroupItem
+              :group="group"
+              :title="groupTitle(group)"
+              :active="group.key === selectedGroupKey"
+              @select="selectGroup"
+            />
+          </li>
+        </ul>
+      </SectionPanel>
+
+      <SectionPanel v-if="selectedGroup" class="duplicates-details" flush>
+        <template #title>
+          <span class="app-meta">Группа дублей</span>
+          <h2 class="duplicates-details__title">{{ groupTitle(selectedGroup) }}</h2>
+        </template>
+        <template #actions>
+          <span class="app-meta">
+            {{ countLabel(selectedGroup.counterparties.length, COUNTERPARTY_FORMS) }}<template v-if="selectedArchivedCount">, архивных: {{ selectedArchivedCount }}</template>
+          </span>
+        </template>
+
+        <div class="duplicates-details__criteria">
+          <span class="duplicates-details__criteria-label">Совпадает</span>
+          <MatchCriteria :criteria="selectedCriteria" show-values />
         </div>
 
-        <el-empty v-if="!selectedGroup" description="Выберите группу дублей" :image-size="72" />
-
-        <el-alert
-          v-else
-          class="duplicates-selection-panel"
-          :title="groupTitle(selectedGroup)"
-          :description="`В группе ${selectedGroup.counterparties.length} КА. ${allSelectedInGroup ? 'Сейчас выбраны все дубликаты из этой группы.' : 'Можно выбрать точечно или забрать всю группу одним действием.'}`"
-          type="info"
-          :closable="false"
-          show-icon
-        />
-
         <el-table
-          v-if="selectedGroup"
           class="duplicates-table"
           :data="selectedGroup.counterparties"
-          border
-          table-layout="auto"
+          :row-class-name="rowClassName"
+          row-key="id"
+          table-layout="fixed"
           empty-text="В группе нет контрагентов"
+          @row-click="handleRowClick"
         >
-          <el-table-column width="46" align="center">
+          <el-table-column width="44" align="center" property="selection">
+            <template #header>
+              <el-checkbox
+                :model-value="allSelectedInGroup"
+                :indeterminate="someSelectedInGroup"
+                aria-label="Выбрать всех в группе"
+                @change="toggleAllInGroup"
+              />
+            </template>
             <template #default="{ row }">
               <el-checkbox
                 :model-value="selectedCounterpartyIds.includes(row.id)"
                 :aria-label="`Выбрать ${displayValue(row.name)}`"
+                @click.stop
                 @change="toggleCounterparty(row.id)"
               />
             </template>
           </el-table-column>
-          <el-table-column label="Наименование" min-width="180">
+
+          <el-table-column label="Контрагент" min-width="220">
             <template #default="{ row }">
               <div class="duplicates-table__name">
-                <strong>{{ displayValue(row.name) }}</strong>
-                <span v-if="row.description">{{ row.description }}</span>
+                <span class="app-clamp-2">
+                  <span :class="{ 'duplicates-table__match': matchedFields.has('name') && row.name }">{{ displayValue(row.name) }}</span>
+                </span>
+                <el-tooltip v-if="row.description" :content="row.description" placement="top" :show-after="400">
+                  <span class="duplicates-table__description app-truncate">{{ row.description }}</span>
+                </el-tooltip>
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="Email" min-width="150">
-            <template #default="{ row }">{{ displayValue(row.email) }}</template>
-          </el-table-column>
-          <el-table-column label="Телефон" min-width="130">
-            <template #default="{ row }">{{ displayValue(row.phone) }}</template>
-          </el-table-column>
-          <el-table-column label="Статус" width="100">
+
+          <el-table-column label="Email" min-width="180">
             <template #default="{ row }">
-              <el-tag :type="row.archived ? 'info' : 'success'" size="small" effect="light">
-                {{ row.archived ? 'Архивный' : 'Активный' }}
-              </el-tag>
+              <span class="duplicates-table__value" :class="{ 'duplicates-table__match': matchedFields.has('email') && row.email }">
+                {{ displayValue(row.email) }}
+              </span>
             </template>
           </el-table-column>
-          <el-table-column label="Обновлён" min-width="140">
-            <template #default="{ row }">{{ displayValue(row.updatedAt) }}</template>
+
+          <el-table-column label="Телефон" min-width="150">
+            <template #default="{ row }">
+              <span class="duplicates-table__value app-nums" :class="{ 'duplicates-table__match': matchedFields.has('phone') && row.phone }">
+                {{ displayValue(row.phone) }}
+              </span>
+            </template>
           </el-table-column>
-          <el-table-column label="Синхронизирован" min-width="140">
-            <template #default="{ row }">{{ displayValue(row.syncedAt) }}</template>
+
+          <el-table-column label="Статус" width="112">
+            <template #default="{ row }">
+              <StatusBadge size="sm" :tone="row.archived ? 'neutral' : 'success'" :label="row.archived ? 'Архивный' : 'Активный'" />
+            </template>
+          </el-table-column>
+
+          <el-table-column label="Обновлён" width="140">
+            <template #default="{ row }">
+              <span class="app-text-secondary app-nums">{{ formatDateTimeShort(row.updatedAt) }}</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column v-if="showSyncedColumn" label="Синхронизирован" width="140">
+            <template #default="{ row }">
+              <span class="app-text-secondary app-nums">{{ formatDateTimeShort(row.syncedAt) }}</span>
+            </template>
           </el-table-column>
         </el-table>
 
-        <div class="duplicates-details__actions">
-          <el-alert v-if="mergeMessage" :title="mergeMessage" type="success" :closable="false" show-icon />
-          <el-button type="primary" :disabled="!canGoToMerge" @click="handleGoToMerge">
-            Перейти к объединению
-          </el-button>
+        <div class="duplicates-actionbar">
+          <div class="duplicates-actionbar__selection">
+            <strong class="app-nums">Выбрано {{ selectedCounterpartyIds.length }} из {{ selectedGroup.counterparties.length }}</strong>
+            <span class="app-meta">{{ mergeHint }}</span>
+          </div>
+          <div class="duplicates-actionbar__buttons">
+            <el-button
+              text
+              :icon="Check"
+              :disabled="!selectedGroupCounterpartyIds.length || allSelectedInGroup"
+              @click="handleSelectAllInGroup"
+            >
+              Выбрать всех
+            </el-button>
+            <el-button text :disabled="!selectedCounterpartyIds.length" @click="clearSelectedCounterparties">
+              Снять выбор
+            </el-button>
+            <el-button type="primary" :disabled="!canGoToMerge" @click="handleGoToMerge">
+              Объединить выбранных
+              <el-icon class="el-icon--right"><Right /></el-icon>
+            </el-button>
+          </div>
         </div>
-      </el-card>
+      </SectionPanel>
+
+      <SectionPanel v-else class="duplicates-details">
+        <EmptyState image="select" title="Выберите группу" description="Слева — найденные группы дублей. Откройте любую, чтобы увидеть контрагентов." />
+      </SectionPanel>
     </section>
-  </main>
+  </div>
 </template>
 
 <style scoped src="../styles/pages/duplicates.css"></style>

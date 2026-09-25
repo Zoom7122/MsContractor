@@ -13,6 +13,8 @@ export const setupVue3 = defineSetupVue3(({ app }) => {
     history: createMemoryHistory(),
     routes: [
       { path: '/', name: 'histoire-home', component: { render: () => null } },
+      { path: '/app', name: 'moysklad-overview', component: { render: () => null } },
+      { path: '/settings', name: 'moysklad-settings', component: { render: () => null } },
       { path: '/duplicates', name: 'moysklad-duplicates', component: { render: () => null } },
       { path: '/merge', name: 'moysklad-merge', component: { render: () => null } },
       { path: '/history', name: 'moysklad-history-counterparties', component: { render: () => null } },

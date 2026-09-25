@@ -1,0 +1,100 @@
+.duplicate-group {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px var(--app-space-4) 10px var(--app-space-4);
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: background var(--app-transition-fast);
+}
+
+.duplicate-group::before {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 0;
+  width: 3px;
+  background: transparent;
+  border-radius: 0 3px 3px 0;
+  content: '';
+}
+
+.duplicate-group:hover {
+  background: var(--app-color-surface-hover);
+}
+
+.duplicate-group--active,
+.duplicate-group--active:hover {
+  background: var(--app-color-surface-selected);
+}
+
+.duplicate-group--active::before {
+  background: var(--app-color-primary);
+}
+
+.duplicate-group__head {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--app-space-2);
+}
+
+.duplicate-group__title {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--app-font-weight-semibold);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.duplicate-group__count {
+  display: inline-grid;
+  min-width: 24px;
+  height: 20px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0 6px;
+  color: var(--app-color-text-regular);
+  background: var(--el-fill-color);
+  border-radius: var(--app-radius-pill);
+  font-size: var(--app-font-size-xs);
+  font-weight: var(--app-font-weight-semibold);
+}
+
+.duplicate-group--active .duplicate-group__count {
+  color: #fff;
+  background: var(--app-color-primary);
+}
+
+.duplicate-group__names {
+  color: var(--app-color-text-secondary);
+  font-size: var(--app-font-size-xs);
+}
+
+.duplicate-group__footer {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px var(--app-space-2);
+  margin-top: 2px;
+}
+
+.duplicate-group__meta {
+  color: var(--app-color-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.duplicate-group__meta--warning {
+  color: #97600a;
+}

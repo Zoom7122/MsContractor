@@ -1,9 +1,25 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { Close, Plus } from '@element-plus/icons-vue'
+
+import EmptyState from '../components/ui/EmptyState.vue'
+import ErrorNotice from '../components/ui/ErrorNotice.vue'
+import PageHeader from '../components/ui/PageHeader.vue'
+import SectionPanel from '../components/ui/SectionPanel.vue'
+import StatusBadge from '../components/ui/StatusBadge.vue'
+import { matchFieldMeta } from '../domain/duplicates'
 
 const props = defineProps({
   settingsData: {
     type: Object,
+    default: null
+  },
+  loading: {
+    type: Boolean,
+    default: false
+  },
+  loadError: {
+    type: [String, Object],
     default: null
   }
 })
@@ -32,8 +48,7 @@ const exclusionFieldOptions = [
 
 const initialSettings = ref(cloneSettings(defaultSettings))
 const form = ref(cloneSettings(defaultSettings))
-const loading = ref(false)
-const loadError = ref(props.settingsData ? null : 'Раздел временно недоступен')
+const unavailable = computed(() => !props.settingsData && !props.loading)
 const saving = ref(false)
 const message = ref(null)
 const saveError = ref(null)
@@ -46,6 +61,8 @@ const newExclusion = ref({
 
 const hasExclusions = computed(() => form.value.duplicateExclusions.length > 0)
 const hasMergeAttributes = computed(() => form.value.mergeAttributes.length > 0)
+const isDirty = computed(() => JSON.stringify(form.value) !== JSON.stringify(initialSettings.value))
+const exclusionsPreview = computed(() => form.value.duplicateExclusions.slice(0, 4))
 const enabledMergeAttributesCount = computed(() =>
   form.value.mergeAttributes.filter((item) => item.enabled).length
 )
@@ -139,6 +156,10 @@ function clampLimit(value, fallback) {
   return Math.min(1000, Math.max(1, Math.trunc(numeric)))
 }
 
+function exclusionFieldIcon(field) {
+  return matchFieldMeta(field).icon
+}
+
 function exclusionFieldLabel(field) {
   return exclusionFieldOptions.find((item) => item.value === field)?.label || field
 }
@@ -193,183 +214,247 @@ function saveSettings() {
 </script>
 
 <template>
-  <main class="settings-page">
-    <header class="settings-page__header">
-      <h1 class="settings-page__title">Настройки</h1>
-      <p class="settings-page__subtitle">Управление подключением, merge-логикой и параметрами работы MS Contractor</p>
-    </header>
+  <div class="app-page settings-page">
+    <PageHeader title="Настройки" subtitle="Поиск дублей, объединение и расписание синхронизации">
+      <template v-if="isDirty" #meta>
+        <StatusBadge tone="warning" label="Есть несохранённые изменения" />
+      </template>
+    </PageHeader>
 
-    <el-skeleton v-if="loading" :rows="4" animated />
-    <el-alert v-if="loadError" title="Не удалось загрузить настройки" type="error" :closable="false" show-icon />
+    <ErrorNotice
+      v-if="loadError"
+      :error="loadError"
+      fallback="Не удалось загрузить настройки"
+      description="Показаны значения по умолчанию. Сохранение станет доступно после загрузки."
+    />
+    <ErrorNotice
+      v-else-if="unavailable"
+      tone="warning"
+      title="Настройки пока не загружены с сервера"
+      description="Показаны значения по умолчанию — их можно просмотреть, но сохранить пока нельзя."
+    />
 
-    <el-card class="settings-card" shadow="never">
-      <div class="settings-card__main">
-        <h2 class="settings-card__title">Исключения</h2>
-        <p class="settings-card__description">
-          Email, телефоны или имена, которые не должны попадать в дубликаты.
-        </p>
-      </div>
-      <div class="settings-card__controls">
-        <el-tag type="info" effect="plain">Всего: {{ form.duplicateExclusions.length }}</el-tag>
-        <el-button plain @click="exclusionsOpen = true">Открыть исключения</el-button>
-      </div>
-    </el-card>
+    <el-skeleton v-if="loading" :rows="8" animated class="settings-skeleton" />
 
-    <el-card class="settings-card" shadow="never">
-      <div class="settings-card__main">
-        <h2 class="settings-card__title">Доп. поля в объединении</h2>
-        <p class="settings-card__description">
-          Поля контрагентов, которые отображаются при выборе итоговых значений merge.
-        </p>
-      </div>
-      <div class="settings-card__controls">
-        <el-tag type="info" effect="plain">Выбрано: {{ enabledMergeAttributesCount }}</el-tag>
-        <el-button plain @click="mergeAttributesOpen = !mergeAttributesOpen">
-          {{ mergeAttributesOpen ? 'Скрыть доп. поля' : 'Открыть доп. поля' }}
-        </el-button>
-
-        <el-collapse-transition>
-          <div v-if="mergeAttributesOpen" class="merge-attributes-list">
-            <el-empty v-if="!hasMergeAttributes" description="Дополнительные поля не найдены" :image-size="64" />
-            <div v-for="item in form.mergeAttributes" :key="item.attributeId" class="merge-attribute">
-              <el-checkbox
-                :model-value="item.enabled"
-                @change="toggleMergeAttribute(item.attributeId)"
-              >
-                <span class="merge-attribute__main">
-                  <strong>{{ item.name }}</strong>
-                  <span>{{ item.type || 'unknown' }}<span v-if="item.required"> · обязательное</span></span>
-                </span>
-              </el-checkbox>
-              <el-tag :type="item.enabled ? 'success' : 'info'" size="small" effect="light">
-                {{ item.enabled ? 'Показывать в merge' : 'Скрыто из merge' }}
-              </el-tag>
-            </div>
+    <template v-else>
+      <SectionPanel title="Поиск дублей" subtitle="Что считается дублем и сколько групп показывать" flush>
+        <div class="settings-row">
+          <div class="settings-row__text">
+            <h3 class="settings-row__title">Исключения</h3>
+            <p class="settings-row__description">
+              Значения, которые не должны склеивать контрагентов в дубли: общие email, телефоны call-центра,
+              «Розничный покупатель».
+            </p>
           </div>
-        </el-collapse-transition>
-      </div>
-    </el-card>
+          <div class="settings-row__control settings-row__control--stack">
+            <ul v-if="hasExclusions" class="settings-chips">
+              <li v-for="(item, index) in exclusionsPreview" :key="`${item.field}-${index}`" class="settings-chip">
+                <el-icon aria-hidden="true"><component :is="exclusionFieldIcon(item.field)" /></el-icon>
+                <span class="settings-chip__value">{{ item.value }}</span>
+              </li>
+              <li v-if="form.duplicateExclusions.length > exclusionsPreview.length" class="settings-chip settings-chip--more">
+                ещё {{ form.duplicateExclusions.length - exclusionsPreview.length }}
+              </li>
+            </ul>
+            <span v-else class="app-meta">Исключений нет</span>
+            <el-button size="small" @click="exclusionsOpen = true">
+              {{ hasExclusions ? `Изменить (${form.duplicateExclusions.length})` : 'Добавить исключения' }}
+            </el-button>
+          </div>
+        </div>
 
-    <el-card class="settings-card" shadow="never">
-      <div class="settings-card__main">
-        <h2 class="settings-card__title">Архивные КА в поиске дублей</h2>
-        <p class="settings-card__description">
-          Учитывать архивных контрагентов с документами для переноса.
-        </p>
-      </div>
-      <div class="settings-card__controls">
-        <el-switch v-model="form.duplicateSearchOptions.includeArchivedWithDocuments" />
-      </div>
-    </el-card>
+        <div class="settings-row">
+          <div class="settings-row__text">
+            <h3 class="settings-row__title">Архивные контрагенты</h3>
+            <p class="settings-row__description">
+              Учитывать архивных контрагентов, у которых есть документы: их документы тоже перейдут к основному.
+            </p>
+          </div>
+          <div class="settings-row__control">
+            <el-switch
+              v-model="form.duplicateSearchOptions.includeArchivedWithDocuments"
+              aria-label="Учитывать архивных контрагентов с документами"
+            />
+          </div>
+        </div>
 
-    <el-card class="settings-card" shadow="never">
-      <div class="settings-card__main">
-        <h2 class="settings-card__title">Лимиты поиска</h2>
-        <p class="settings-card__description">
-          Максимальное количество групп дублей и записей внутри группы.
-        </p>
-      </div>
-      <el-form class="settings-card__controls settings-card__controls--fields" label-position="top" size="small">
-        <el-form-item label="Максимальные группы">
-          <el-input-number
-            v-model="form.searchLimits.groupLimit"
-            :min="1"
-            :max="1000"
-            controls-position="right"
-            @change="form.searchLimits.groupLimit = clampLimit(form.searchLimits.groupLimit, defaultSettings.searchLimits.groupLimit)"
-          />
-        </el-form-item>
-        <el-form-item label="Максимальная запись в группе">
-          <el-input-number
-            v-model="form.searchLimits.itemLimit"
-            :min="1"
-            :max="1000"
-            controls-position="right"
-            @change="form.searchLimits.itemLimit = clampLimit(form.searchLimits.itemLimit, defaultSettings.searchLimits.itemLimit)"
-          />
-        </el-form-item>
-      </el-form>
-    </el-card>
+        <div class="settings-row">
+          <div class="settings-row__text">
+            <h3 class="settings-row__title">Лимиты поиска</h3>
+            <p class="settings-row__description">
+              Ограничивают объём выдачи на больших базах. Значения от 1 до 1000.
+            </p>
+          </div>
+          <el-form class="settings-row__control settings-limits" label-position="top" size="small">
+            <el-form-item label="Групп дублей, не более">
+              <el-input-number
+                v-model="form.searchLimits.groupLimit"
+                :min="1"
+                :max="1000"
+                controls-position="right"
+                @change="form.searchLimits.groupLimit = clampLimit(form.searchLimits.groupLimit, defaultSettings.searchLimits.groupLimit)"
+              />
+            </el-form-item>
+            <el-form-item label="Контрагентов в группе, не более">
+              <el-input-number
+                v-model="form.searchLimits.itemLimit"
+                :min="1"
+                :max="1000"
+                controls-position="right"
+                @change="form.searchLimits.itemLimit = clampLimit(form.searchLimits.itemLimit, defaultSettings.searchLimits.itemLimit)"
+              />
+            </el-form-item>
+          </el-form>
+        </div>
+      </SectionPanel>
 
-    <el-card class="settings-card" shadow="never">
-      <div class="settings-card__main">
-        <h2 class="settings-card__title">Автоматическая синхронизация</h2>
-        <p class="settings-card__description">Расписание автоматической полной синхронизации данных.</p>
-      </div>
-      <div class="settings-card__controls settings-card__controls--inline">
-        <el-switch v-model="form.fullSyncTimer.enabled" />
-        <el-time-picker
-          v-model="form.fullSyncTimer.runAt"
-          value-format="HH:mm"
-          format="HH:mm"
-          placeholder="Время запуска"
-        />
-      </div>
-    </el-card>
+      <SectionPanel title="Объединение" subtitle="Какие данные показывать при выборе итоговой карточки" flush>
+        <div class="settings-row settings-row--wrap">
+          <div class="settings-row__text">
+            <h3 class="settings-row__title">Дополнительные поля</h3>
+            <p class="settings-row__description">
+              Поля контрагентов МоегоСклада, которые появятся в шаге «Итоговые поля» при объединении.
+            </p>
+          </div>
+          <div class="settings-row__control">
+            <span class="app-meta app-nums">Выбрано {{ enabledMergeAttributesCount }} из {{ form.mergeAttributes.length }}</span>
+            <el-button size="small" :aria-expanded="mergeAttributesOpen" @click="mergeAttributesOpen = !mergeAttributesOpen">
+              {{ mergeAttributesOpen ? 'Свернуть' : 'Выбрать поля' }}
+            </el-button>
+          </div>
+
+          <el-collapse-transition>
+            <div v-if="mergeAttributesOpen" class="settings-attributes">
+              <EmptyState
+                v-if="!hasMergeAttributes"
+                size="sm"
+                image="documents"
+                title="Дополнительных полей нет"
+                description="В МоёмСкладе у контрагентов не создано дополнительных полей, или они ещё не загружены."
+              />
+              <label
+                v-for="item in form.mergeAttributes"
+                :key="item.attributeId"
+                class="settings-attribute"
+                :class="{ 'settings-attribute--enabled': item.enabled }"
+              >
+                <el-checkbox :model-value="item.enabled" @change="toggleMergeAttribute(item.attributeId)" />
+                <span class="settings-attribute__text">
+                  <span class="settings-attribute__name">{{ item.name }}</span>
+                  <span class="app-meta">{{ item.type || 'тип не указан' }}<template v-if="item.required"> · обязательное</template></span>
+                </span>
+              </label>
+            </div>
+          </el-collapse-transition>
+        </div>
+      </SectionPanel>
+
+      <SectionPanel title="Синхронизация" subtitle="Автоматическое обновление данных из МоегоСклада" flush>
+        <div class="settings-row">
+          <div class="settings-row__text">
+            <h3 class="settings-row__title">Ежедневная полная синхронизация</h3>
+            <p class="settings-row__description">
+              Запускается раз в сутки в указанное время. Ручной запуск доступен на странице «Обзор».
+            </p>
+          </div>
+          <div class="settings-row__control">
+            <el-switch v-model="form.fullSyncTimer.enabled" aria-label="Включить ежедневную синхронизацию" />
+            <el-time-picker
+              v-model="form.fullSyncTimer.runAt"
+              class="settings-time"
+              value-format="HH:mm"
+              format="HH:mm"
+              placeholder="Время"
+              :disabled="!form.fullSyncTimer.enabled"
+              :clearable="false"
+              aria-label="Время запуска"
+            />
+          </div>
+        </div>
+      </SectionPanel>
+    </template>
 
     <el-alert v-if="message" :title="message" type="success" :closable="false" show-icon />
-    <el-alert v-if="saveError" :title="saveError" type="error" :closable="false" show-icon />
+    <ErrorNotice v-if="saveError" :error="saveError" />
 
     <footer class="settings-actions">
-      <el-button type="danger" plain @click="resetSettings">Сбросить настройки</el-button>
+      <el-button text type="danger" @click="resetSettings">Сбросить к умолчаниям</el-button>
       <div class="settings-actions__right">
-        <el-button plain @click="cancelChanges">Отменить изменения</el-button>
-        <el-button type="primary" disabled>Сохранить настройки</el-button>
+        <el-button :disabled="!isDirty" @click="cancelChanges">Отменить изменения</el-button>
+        <el-tooltip content="Сохранение станет доступно после подключения сервиса настроек" placement="top">
+          <span>
+            <el-button type="primary" :loading="saving" disabled>Сохранить</el-button>
+          </span>
+        </el-tooltip>
       </div>
     </footer>
 
     <el-dialog
       v-model="exclusionsOpen"
       class="settings-modal"
-      title="Исключения"
-      width="min(680px, calc(100vw - 32px))"
+      title="Исключения из поиска дублей"
+      width="min(640px, calc(100vw - 32px))"
       :close-on-press-escape="false"
+      append-to-body
     >
       <p class="settings-modal__description">
-        Значения, которые не должны попадать в поиск дублей.
+        Контрагенты с этими значениями не будут объединяться в группы дублей по соответствующему полю.
       </p>
 
-      <el-form class="exclusion-form" inline size="small" @submit.prevent="addExclusion">
-        <el-form-item>
-          <el-select v-model="newExclusion.field" aria-label="Поле исключения">
-            <el-option
-              v-for="item in exclusionFieldOptions"
-              :key="item.value"
-              :label="item.label"
-              :value="item.value"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item class="exclusion-form__value">
-          <el-input
-            v-model="newExclusion.value"
-            placeholder="Значение"
-            @keydown.enter.prevent="addExclusion"
+      <el-form class="exclusion-form" size="default" @submit.prevent="addExclusion">
+        <el-select v-model="newExclusion.field" class="exclusion-form__field" aria-label="Поле исключения">
+          <el-option
+            v-for="item in exclusionFieldOptions"
+            :key="item.value"
+            :label="item.label"
+            :value="item.value"
           />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="addExclusion">Добавить</el-button>
-        </el-form-item>
+        </el-select>
+        <el-input
+          v-model="newExclusion.value"
+          class="exclusion-form__value"
+          placeholder="Значение, например test@example.com"
+          @keydown.enter.prevent="addExclusion"
+        />
+        <el-button type="primary" :icon="Plus" :disabled="!newExclusion.value.trim()" @click="addExclusion">
+          Добавить
+        </el-button>
       </el-form>
 
-      <el-empty v-if="!hasExclusions" description="Исключений нет" :image-size="64" />
-      <div v-else class="exclusion-list">
-        <div
+      <EmptyState
+        v-if="!hasExclusions"
+        size="sm"
+        image="search"
+        title="Исключений пока нет"
+        description="Добавьте значение выше — например, общий email отдела продаж."
+      />
+      <ul v-else class="exclusion-list">
+        <li
           v-for="(item, index) in form.duplicateExclusions"
           :key="`${item.field}-${item.value}-${index}`"
           class="exclusion-item"
         >
-          <el-tag type="info" size="small">{{ exclusionFieldLabel(item.field) }}</el-tag>
-          <strong>{{ item.value }}</strong>
-          <el-button link type="danger" @click="removeExclusion(index)">Удалить</el-button>
-        </div>
-      </div>
+          <span class="exclusion-item__field">
+            <el-icon aria-hidden="true"><component :is="exclusionFieldIcon(item.field)" /></el-icon>
+            {{ exclusionFieldLabel(item.field) }}
+          </span>
+          <span class="exclusion-item__value">{{ item.value }}</span>
+          <el-button
+            text
+            circle
+            size="small"
+            :icon="Close"
+            :aria-label="`Удалить исключение ${item.value}`"
+            @click="removeExclusion(index)"
+          />
+        </li>
+      </ul>
 
       <template #footer>
-        <el-button @click="exclusionsOpen = false">Закрыть</el-button>
+        <el-button type="primary" @click="exclusionsOpen = false">Готово</el-button>
       </template>
     </el-dialog>
-  </main>
+  </div>
 </template>
 
 <style scoped src="../styles/pages/settings.css"></style>

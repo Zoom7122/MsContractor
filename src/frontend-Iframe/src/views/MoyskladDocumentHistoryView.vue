@@ -1,12 +1,18 @@
-<template>
-  <section class="documents-history-placeholder">
-    <el-card class="documents-history-placeholder__panel" shadow="never">
-      <span class="documents-history-placeholder__kicker">История документов</span>
-      <el-empty description="Раздел готовится" :image-size="80">
-        <p>Здесь будет отдельный журнал изменений документов с фильтрами и деталями по связям.</p>
-      </el-empty>
-    </el-card>
-  </section>
-</template>
+<script setup>
+import EmptyState from '../components/ui/EmptyState.vue'
+import PageHeader from '../components/ui/PageHeader.vue'
+import SectionPanel from '../components/ui/SectionPanel.vue'
+</script>
 
-<style scoped src="../styles/pages/document-history.css"></style>
+<template>
+  <div class="app-page">
+    <PageHeader title="История документов" subtitle="Журнал изменений документов при объединениях" />
+    <SectionPanel>
+      <EmptyState
+        image="documents"
+        title="Раздел готовится"
+        description="Здесь будет отдельный журнал изменений документов с фильтрами и деталями по связям."
+      />
+    </SectionPanel>
+  </div>
+</template>

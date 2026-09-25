@@ -1,0 +1,229 @@
+/* Compact: segmented bar */
+.job-progress {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.job-progress__bar {
+  display: grid;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
+  gap: 3px;
+}
+
+.job-progress__segment {
+  height: 6px;
+  background: var(--el-fill-color);
+  border-radius: var(--app-radius-pill);
+}
+
+.job-progress__segment--completed {
+  background: var(--app-color-success);
+}
+
+.job-progress__segment--skipped {
+  background: #cfd5dc;
+}
+
+.job-progress__segment--running {
+  background: linear-gradient(90deg, var(--app-color-primary) 0 50%, #a9cbef 50% 100%);
+  background-size: 200% 100%;
+  animation: job-progress-flow 1.4s linear infinite;
+}
+
+.job-progress__segment--partial {
+  background: var(--app-color-warning);
+}
+
+.job-progress__segment--failed {
+  background: var(--app-color-danger);
+}
+
+.job-progress__caption {
+  overflow: hidden;
+  color: var(--app-color-text-secondary);
+  font-size: var(--app-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-progress__caption--partial {
+  color: #97600a;
+}
+
+.job-progress__caption--failed {
+  color: #b53434;
+}
+
+@keyframes job-progress-flow {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* Steps: vertical stepper */
+.job-steps {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.job-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: var(--app-space-3);
+  padding-bottom: var(--app-space-4);
+}
+
+.job-step:last-child {
+  padding-bottom: 0;
+}
+
+.job-step::before {
+  position: absolute;
+  top: 26px;
+  bottom: 2px;
+  left: 11px;
+  width: 2px;
+  background: var(--app-color-border-light);
+  border-radius: 2px;
+  content: '';
+}
+
+.job-step:last-child::before {
+  display: none;
+}
+
+.job-step--completed::before {
+  background: #bfdfcc;
+}
+
+.job-step__marker {
+  position: relative;
+  z-index: 1;
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  color: var(--app-color-text-secondary);
+  background: var(--app-color-surface);
+  border: 1.5px solid var(--app-color-border-strong);
+  border-radius: 50%;
+  font-size: var(--app-font-size-xs);
+  font-weight: var(--app-font-weight-semibold);
+}
+
+.job-step__marker .el-icon {
+  font-size: 16px;
+}
+
+.job-step--completed .job-step__marker {
+  color: var(--app-color-success);
+  border-color: transparent;
+}
+
+.job-step--running .job-step__marker {
+  color: var(--app-color-primary);
+  border-color: var(--app-color-primary);
+}
+
+.job-step--running .job-step__marker .el-icon {
+  font-size: 13px;
+}
+
+.job-step--failed .job-step__marker {
+  color: var(--app-color-danger);
+  border-color: transparent;
+}
+
+.job-step--partial .job-step__marker {
+  color: var(--app-color-warning);
+  border-color: transparent;
+}
+
+.job-step--skipped .job-step__marker {
+  color: var(--app-color-text-muted);
+  border-style: dashed;
+}
+
+.job-step__body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 2px;
+}
+
+.job-step__head {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--app-space-2);
+}
+
+.job-step__title {
+  font-weight: var(--app-font-weight-semibold);
+}
+
+.job-step--pending .job-step__title,
+.job-step--skipped .job-step__title {
+  color: var(--app-color-text-secondary);
+}
+
+.job-step__count {
+  color: var(--app-color-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.job-step__hint {
+  color: var(--app-color-text-muted);
+  font-size: var(--app-font-size-sm);
+}
+
+.job-step__operations {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: var(--app-space-2) 0 0;
+  padding: var(--app-space-2) var(--app-space-3);
+  list-style: none;
+  background: var(--app-color-surface-muted);
+  border: 1px solid var(--app-color-border-light);
+  border-radius: var(--app-radius-md);
+}
+
+.job-step__operation {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.job-step__operation-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-2);
+  font-size: var(--app-font-size-sm);
+}
+
+.job-step__operation-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.job-step__error {
+  padding: var(--app-space-2) var(--app-space-3);
+}

@@ -1,96 +1,31 @@
 <script setup>
 import MoyskladDuplicatesView from './MoyskladDuplicatesView.vue'
+import { buildDuplicateGroups } from '../mocks/fixtures/counterparties'
 
-const mockDuplicatesData = {
-  fields: ['name', 'email', 'phone'],
-  groupLimit: 30,
-  itemLimit: 30,
-  groupsTruncated: false,
-  groups: [
-    {
-      key: 'ooo-romashka',
-      matchCount: 3,
-      itemsTruncated: false,
-      values: {
-        name: 'ООО Ромашка',
-        email: 'info@romashka.ru',
-        phone: '+79990000000'
-      },
-      counterparties: [
-        {
-          id: 'cp-1',
-          name: 'ООО Ромашка',
-          description: 'Основной контрагент',
-          email: 'info@romashka.ru',
-          phone: '+79990000000',
-          archived: false,
-          updatedAt: '2026-06-13 12:00:00',
-          syncedAt: '2026-06-13 12:05:00'
-        },
-        {
-          id: 'cp-2',
-          name: 'ООО Ромашка дубль',
-          description: '',
-          email: 'info@romashka.ru',
-          phone: '+79990000000',
-          archived: true,
-          updatedAt: '2026-06-10 09:30:00',
-          syncedAt: '2026-06-13 12:05:00'
-        },
-        {
-          id: 'cp-3',
-          name: 'Ромашка ООО',
-          description: '',
-          email: 'info@romashka.ru',
-          phone: '+79990000000',
-          archived: false,
-          updatedAt: '2026-06-09 17:10:00',
-          syncedAt: '2026-06-13 12:05:00'
-        }
-      ]
-    },
-    {
-      key: 'ivanov-phone',
-      matchCount: 2,
-      itemsTruncated: false,
-      values: {
-        name: '',
-        email: '',
-        phone: '+78880000000'
-      },
-      counterparties: [
-        {
-          id: 'cp-4',
-          name: 'Иванов ИП',
-          description: '',
-          email: 'ivanov@example.com',
-          phone: '+78880000000',
-          archived: false,
-          updatedAt: '2026-06-11 10:00:00',
-          syncedAt: '2026-06-13 12:05:00'
-        },
-        {
-          id: 'cp-5',
-          name: 'ИП Иванов',
-          description: '',
-          email: '',
-          phone: '+78880000000',
-          archived: false,
-          updatedAt: '2026-06-12 08:00:00',
-          syncedAt: '2026-06-13 12:05:00'
-        }
-      ]
-    }
-  ]
-}
+// API shape of POST /api/merge-preview: [{ matchedBy, matchValue, counterparties }]
+const normal = buildDuplicateGroups('normal')
+const criteria = buildDuplicateGroups('criteria')
+const longStrings = buildDuplicateGroups('long')
+const many = buildDuplicateGroups('many')
+const empty = []
 </script>
 
 <template>
   <Story title="МойСклад/Дубликаты">
     <Variant title="Список дублей">
-      <div class="story-page">
-        <MoyskladDuplicatesView :duplicates-data="mockDuplicatesData" />
-      </div>
+      <div class="story-page"><MoyskladDuplicatesView :duplicates-data="normal" /></div>
+    </Variant>
+    <Variant title="Много критериев совпадения">
+      <div class="story-page"><MoyskladDuplicatesView :duplicates-data="criteria" /></div>
+    </Variant>
+    <Variant title="Длинные строки">
+      <div class="story-page"><MoyskladDuplicatesView :duplicates-data="longStrings" /></div>
+    </Variant>
+    <Variant title="Много групп">
+      <div class="story-page"><MoyskladDuplicatesView :duplicates-data="many" /></div>
+    </Variant>
+    <Variant title="Дублей не найдено">
+      <div class="story-page"><MoyskladDuplicatesView :duplicates-data="empty" /></div>
     </Variant>
   </Story>
 </template>

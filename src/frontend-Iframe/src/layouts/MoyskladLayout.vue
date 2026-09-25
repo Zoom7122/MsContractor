@@ -1,26 +1,14 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { RouterView, useRoute } from 'vue-router'
-import { Loading } from '@element-plus/icons-vue'
+import { RouterView } from 'vue-router'
 
-import AppSidebar from '../components/layout/AppSidebar.vue'
+import AppNavbar from '../components/layout/AppNavbar.vue'
+import BrandMark from '../components/layout/BrandMark.vue'
+import ErrorNotice from '../components/ui/ErrorNotice.vue'
 import { useMoyskladSession } from '../composables/useMoyskladSession'
 
-const route = useRoute()
-const sidebarCollapsed = ref(false)
 const initialized = ref(false)
 
-const pageTitle = computed(() => route.meta?.title || 'MS Contractor')
-const pageSubtitle = computed(() => route.meta?.subtitle || 'Интерфейс решения внутри iframe МоегоСклада')
-const pageSection = computed(() => {
-  if (route.path.startsWith('/moysklad/history')) {
-    return 'Журнал изменений'
-  }
-  if (route.path.startsWith('/moysklad/counterparties/')) {
-    return 'Карточка контрагента'
-  }
-  return 'Рабочая область'
-})
 const { loading, error, isAuthenticated, initMoyskladSession } = useMoyskladSession()
 const showLoading = computed(() => loading.value || !initialized.value)
 
@@ -36,32 +24,41 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div v-if="showLoading" class="session-state">
-    <el-card class="session-state__panel" shadow="never">
-      <el-icon class="session-state__spinner is-loading" :size="28"><Loading /></el-icon>
-      <h1>Открываем решение</h1>
-      <p>Проверяем iframe-сессию МоегоСклада.</p>
-    </el-card>
+  <div v-if="showLoading" class="session-state" aria-busy="true">
+    <div class="session-state__panel">
+      <BrandMark class="session-state__brand" />
+      <h1 class="session-state__title">Открываем MS Contractor</h1>
+      <p class="session-state__text">Проверяем сессию МоегоСклада…</p>
+      <div class="session-state__progress" aria-hidden="true" />
+    </div>
   </div>
 
-  <div v-else-if="error || !isAuthenticated" class="session-state session-state--error">
-    <el-card class="session-state__panel" shadow="never">
-      <h1>Не удалось открыть решение</h1>
-      <el-alert
-        :title="error || 'Откройте решение из МоегоСклада'"
-        type="error"
-        :closable="false"
-        show-icon
+  <div v-else-if="error || !isAuthenticated" class="session-state">
+    <div class="session-state__panel">
+      <BrandMark class="session-state__brand" />
+      <h1 class="session-state__title">Не удалось открыть решение</h1>
+      <p class="session-state__text">
+        Решение работает только внутри МоегоСклада — сессия создаётся при открытии из интерфейса.
+      </p>
+      <ol class="session-state__steps">
+        <li>Откройте МойСклад в соседней вкладке.</li>
+        <li>Перейдите в раздел решения MS Contractor.</li>
+        <li>Если ошибка повторяется — обновите страницу МоегоСклада.</li>
+      </ol>
+      <ErrorNotice
+        class="session-state__error"
+        tone="warning"
+        :error="error || 'Откройте решение из МоегоСклада'"
       />
-    </el-card>
+    </div>
   </div>
 
   <div v-else class="moysklad-layout">
-    <AppSidebar v-model:collapsed="sidebarCollapsed" />
+    <AppNavbar />
     <main class="layout-main">
-      <section class="layout-content">
+      <div class="layout-content">
         <RouterView />
-      </section>
+      </div>
     </main>
   </div>
 </template>

@@ -1,0 +1,61 @@
+.empty-state {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--app-space-3);
+  padding: var(--app-space-6) var(--app-space-4);
+  text-align: center;
+}
+
+.empty-state--bordered {
+  background: var(--app-color-surface);
+  border: 1px dashed var(--app-color-border);
+  border-radius: var(--app-radius-md);
+}
+
+.empty-state__image {
+  width: 120px;
+  height: 90px;
+}
+
+.empty-state--sm {
+  gap: var(--app-space-2);
+  padding: var(--app-space-5) var(--app-space-3);
+}
+
+.empty-state--sm .empty-state__image {
+  width: 88px;
+  height: 66px;
+}
+
+.empty-state__text {
+  display: flex;
+  max-width: 420px;
+  flex-direction: column;
+  gap: var(--app-space-1);
+}
+
+.empty-state__title {
+  color: var(--app-color-text);
+  font-size: var(--app-font-size-md);
+  font-weight: var(--app-font-weight-semibold);
+}
+
+.empty-state__description {
+  color: var(--app-color-text-secondary);
+  font-size: var(--app-font-size-sm);
+  line-height: 1.5;
+}
+
+.empty-state__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--app-space-2);
+}
+
+.empty-state__actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}

@@ -1,0 +1,98 @@
+.stat-tile {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--app-space-2);
+  padding: var(--app-space-3) var(--app-space-4);
+}
+
+.stat-tile__head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--app-space-2);
+}
+
+.stat-tile__icon {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  place-items: center;
+  border-radius: var(--app-radius-sm);
+  font-size: 14px;
+}
+
+.stat-tile__icon--primary {
+  color: var(--app-color-primary);
+  background: var(--app-color-primary-soft);
+}
+
+.stat-tile__icon--success {
+  color: var(--app-color-success);
+  background: var(--app-color-success-soft);
+}
+
+.stat-tile__icon--warning {
+  color: var(--app-color-warning);
+  background: var(--app-color-warning-soft);
+}
+
+.stat-tile__icon--danger {
+  color: var(--app-color-danger);
+  background: var(--app-color-danger-soft);
+}
+
+.stat-tile__icon--neutral {
+  color: var(--app-color-info);
+  background: var(--app-color-info-soft);
+}
+
+.stat-tile__label {
+  overflow: hidden;
+  color: var(--app-color-text-secondary);
+  font-size: var(--app-font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat-tile__value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-color-text);
+  font-size: var(--app-font-size-kpi);
+  font-weight: var(--app-font-weight-semibold);
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat-tile__footer {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-1) var(--app-space-2);
+}
+
+.stat-tile__hint {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-color-text-muted);
+  font-size: var(--app-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat-tile__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--app-font-size-xs);
+  font-weight: var(--app-font-weight-medium);
+}
+
+.stat-tile__skeleton {
+  min-height: 44px;
+}

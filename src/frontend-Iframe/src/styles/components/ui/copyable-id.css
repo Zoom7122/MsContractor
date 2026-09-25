@@ -1,0 +1,31 @@
+.copyable-id {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  color: var(--app-color-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.copyable-id__button {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 4px;
+  color: var(--app-color-text-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  cursor: pointer;
+}
+
+.copyable-id__button:hover {
+  color: var(--app-color-primary);
+  background: var(--app-color-primary-soft);
+}
+
+.copyable-id__button .el-icon {
+  font-size: 11px;
+  opacity: 0.7;
+}

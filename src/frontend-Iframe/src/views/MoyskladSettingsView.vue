@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { Close, Plus } from '@element-plus/icons-vue'
 
+import { saveCatalogSettings } from '../api/catalog'
 import EmptyState from '../components/ui/EmptyState.vue'
 import ErrorNotice from '../components/ui/ErrorNotice.vue'
 import PageHeader from '../components/ui/PageHeader.vue'
@@ -48,7 +49,6 @@ const exclusionFieldOptions = [
 
 const initialSettings = ref(cloneSettings(defaultSettings))
 const form = ref(cloneSettings(defaultSettings))
-const unavailable = computed(() => !props.settingsData && !props.loading)
 const saving = ref(false)
 const message = ref(null)
 const saveError = ref(null)
@@ -61,7 +61,9 @@ const newExclusion = ref({
 
 const hasExclusions = computed(() => form.value.duplicateExclusions.length > 0)
 const hasMergeAttributes = computed(() => form.value.mergeAttributes.length > 0)
-const isDirty = computed(() => JSON.stringify(form.value) !== JSON.stringify(initialSettings.value))
+const isDirty = computed(() =>
+  JSON.stringify(toCatalogSettings(form.value)) !== JSON.stringify(toCatalogSettings(initialSettings.value))
+)
 const exclusionsPreview = computed(() => form.value.duplicateExclusions.slice(0, 4))
 const enabledMergeAttributesCount = computed(() =>
   form.value.mergeAttributes.filter((item) => item.enabled).length
@@ -137,6 +139,19 @@ function cloneSettings(value) {
   return JSON.parse(JSON.stringify(value))
 }
 
+function toCatalogSettings(source) {
+  return {
+    duplicateExclusions: source.duplicateExclusions.map(({ field, value }) => ({ field, value })),
+    duplicateSearchOptions: {
+      includeArchivedWithDocuments: Boolean(source.duplicateSearchOptions.includeArchivedWithDocuments)
+    },
+    searchLimits: {
+      groupLimit: clampLimit(source.searchLimits.groupLimit, defaultSettings.searchLimits.groupLimit),
+      itemLimit: clampLimit(source.searchLimits.itemLimit, defaultSettings.searchLimits.itemLimit)
+    }
+  }
+}
+
 function normalizeExclusionField(value) {
   const normalized = String(value || '').trim()
   return exclusionFieldOptions.some((item) => item.value === normalized) ? normalized : ''
@@ -196,7 +211,12 @@ function toggleMergeAttribute(attributeId) {
 }
 
 function resetSettings() {
-  form.value = cloneSettings(defaultSettings)
+  form.value = {
+    ...form.value,
+    duplicateExclusions: [],
+    duplicateSearchOptions: cloneSettings(defaultSettings.duplicateSearchOptions),
+    searchLimits: cloneSettings(defaultSettings.searchLimits)
+  }
   message.value = null
   saveError.value = null
 }
@@ -207,9 +227,26 @@ function cancelChanges() {
   saveError.value = null
 }
 
-function saveSettings() {
+async function saveSettings() {
   message.value = null
-  saveError.value = 'Раздел временно недоступен'
+  saveError.value = null
+  saving.value = true
+
+  const settings = toCatalogSettings(form.value)
+  try {
+    await saveCatalogSettings(settings)
+    initialSettings.value = {
+      ...initialSettings.value,
+      duplicateExclusions: cloneSettings(settings.duplicateExclusions),
+      duplicateSearchOptions: cloneSettings(settings.duplicateSearchOptions),
+      searchLimits: cloneSettings(settings.searchLimits)
+    }
+    message.value = 'Настройки поиска сохранены. Они пока не меняют выдачу поиска.'
+  } catch (error) {
+    saveError.value = error
+  } finally {
+    saving.value = false
+  }
 }
 </script>
 
@@ -225,19 +262,18 @@ function saveSettings() {
       v-if="loadError"
       :error="loadError"
       fallback="Не удалось загрузить настройки"
-      description="Показаны значения по умолчанию. Сохранение станет доступно после загрузки."
+      description="Показаны значения по умолчанию. Их можно сохранить; загрузка ранее сохранённых значений пока не подключена."
     />
-    <ErrorNotice
-      v-else-if="unavailable"
-      tone="warning"
-      title="Настройки пока не загружены с сервера"
-      description="Показаны значения по умолчанию — их можно просмотреть, но сохранить пока нельзя."
-    />
-
     <el-skeleton v-if="loading" :rows="8" animated class="settings-skeleton" />
 
     <template v-else>
-      <SectionPanel title="Поиск дублей" subtitle="Что считается дублем и сколько групп показывать" flush>
+      <el-alert
+        title="При повторном открытии страницы пока показываются значения по умолчанию: загрузка сохранённых настроек ещё не подключена."
+        type="info"
+        :closable="false"
+        show-icon
+      />
+      <SectionPanel title="Поиск дублей" subtitle="Исключения, архивные контрагенты и лимиты выдачи" flush>
         <div class="settings-row">
           <div class="settings-row__text">
             <h3 class="settings-row__title">Исключения</h3>
@@ -308,7 +344,7 @@ function saveSettings() {
         </div>
       </SectionPanel>
 
-      <SectionPanel title="Объединение" subtitle="Какие данные показывать при выборе итоговой карточки" flush>
+      <SectionPanel title="Объединение" subtitle="Пока нельзя сохранить через API настроек" flush>
         <div class="settings-row settings-row--wrap">
           <div class="settings-row__text">
             <h3 class="settings-row__title">Дополнительные поля</h3>
@@ -318,7 +354,7 @@ function saveSettings() {
           </div>
           <div class="settings-row__control">
             <span class="app-meta app-nums">Выбрано {{ enabledMergeAttributesCount }} из {{ form.mergeAttributes.length }}</span>
-            <el-button size="small" :aria-expanded="mergeAttributesOpen" @click="mergeAttributesOpen = !mergeAttributesOpen">
+            <el-button size="small" disabled :aria-expanded="mergeAttributesOpen" @click="mergeAttributesOpen = !mergeAttributesOpen">
               {{ mergeAttributesOpen ? 'Свернуть' : 'Выбрать поля' }}
             </el-button>
           </div>
@@ -338,7 +374,7 @@ function saveSettings() {
                 class="settings-attribute"
                 :class="{ 'settings-attribute--enabled': item.enabled }"
               >
-                <el-checkbox :model-value="item.enabled" @change="toggleMergeAttribute(item.attributeId)" />
+                <el-checkbox :model-value="item.enabled" disabled @change="toggleMergeAttribute(item.attributeId)" />
                 <span class="settings-attribute__text">
                   <span class="settings-attribute__name">{{ item.name }}</span>
                   <span class="app-meta">{{ item.type || 'тип не указан' }}<template v-if="item.required"> · обязательное</template></span>
@@ -349,7 +385,7 @@ function saveSettings() {
         </div>
       </SectionPanel>
 
-      <SectionPanel title="Синхронизация" subtitle="Автоматическое обновление данных из МоегоСклада" flush>
+      <SectionPanel title="Синхронизация" subtitle="Пока нельзя сохранить через API настроек" flush>
         <div class="settings-row">
           <div class="settings-row__text">
             <h3 class="settings-row__title">Ежедневная полная синхронизация</h3>
@@ -358,14 +394,14 @@ function saveSettings() {
             </p>
           </div>
           <div class="settings-row__control">
-            <el-switch v-model="form.fullSyncTimer.enabled" aria-label="Включить ежедневную синхронизацию" />
+            <el-switch v-model="form.fullSyncTimer.enabled" disabled aria-label="Включить ежедневную синхронизацию" />
             <el-time-picker
               v-model="form.fullSyncTimer.runAt"
               class="settings-time"
               value-format="HH:mm"
               format="HH:mm"
               placeholder="Время"
-              :disabled="!form.fullSyncTimer.enabled"
+              disabled
               :clearable="false"
               aria-label="Время запуска"
             />
@@ -380,12 +416,13 @@ function saveSettings() {
     <footer class="settings-actions">
       <el-button text type="danger" @click="resetSettings">Сбросить к умолчаниям</el-button>
       <div class="settings-actions__right">
-        <el-button :disabled="!isDirty" @click="cancelChanges">Отменить изменения</el-button>
-        <el-tooltip content="Сохранение станет доступно после подключения сервиса настроек" placement="top">
-          <span>
-            <el-button type="primary" :loading="saving" disabled>Сохранить</el-button>
-          </span>
-        </el-tooltip>
+        <el-button :disabled="!isDirty || saving" @click="cancelChanges">Отменить изменения</el-button>
+        <el-button
+          type="primary"
+          :loading="saving"
+          :disabled="!isDirty || saving"
+          @click="saveSettings"
+        >Сохранить</el-button>
       </div>
     </footer>
 

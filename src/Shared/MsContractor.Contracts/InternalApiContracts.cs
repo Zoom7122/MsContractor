@@ -17,6 +17,8 @@ public sealed record InternalAccessTokenResponse(string AccessToken);
 
 public sealed record InternalErrorResponse(string Code, string Message);
 
+public sealed record MoySkladConnectionCheckResponse(bool Connected);
+
 public sealed record InternalCounterpartyUpdateRequest(
     string Name,
     string? Email,

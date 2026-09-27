@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using MsContractor.CatalogSyncService.Services;
 using MsContractor.Contracts.Sync;
+using MsContractor.Contracts.Internal;
 
 namespace MsContractor.Sync.Tests;
 
@@ -582,6 +583,12 @@ public sealed class SyncProcessorTests
     private sealed class FakeEgressClient(Func<PageRequest, string> responder) : IMoySkladEgressClient
     {
         public List<PageRequest> Requests { get; } = [];
+
+        public Task<MoySkladConnectionCheckResponse> CheckConnectionAsync(
+            Guid accountId,
+            string correlationId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new MoySkladConnectionCheckResponse(true));
 
         public Task<MoySkladRawResponse> GetCounterpartiesAsync(
             Guid accountId,

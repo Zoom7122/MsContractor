@@ -3,6 +3,7 @@ using MsContractor.MoySkladEgressService.Clients;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using MsContractor.Contracts.Internal;
 using MsContractor.MoySkladEgressService.RateLimiting;
 using MsContractor.MoySkladEgressService.ResponseHandling;
@@ -11,6 +12,11 @@ namespace MsContractor.MoySkladEgressService.Gateways.Counterparties;
 
 public interface IMoySkladCounterpartyGateway
 {
+    Task<MoySkladConnectionCheckResponse> CheckConnectionAsync(
+        Guid accountId,
+        string correlationId,
+        CancellationToken cancellationToken);
+
     Task<MoySkladRawResponse> GetAsync(
         Guid accountId,
         bool archived,
@@ -180,6 +186,90 @@ public sealed class MoySkladCounterpartyGateway : IMoySkladCounterpartyGateway
                 responseBody.HttpStatus,
                 response.Content.Headers.ContentType?.MediaType,
                 SafeHeaders(response));
+        }
+    }
+
+    public async Task<MoySkladConnectionCheckResponse> CheckConnectionAsync(
+        Guid accountId,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        var accessToken = await _tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
+        await _rateLimiter.WaitAsync(accountId, cancellationToken);
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            "entity/counterparty?limit=1&offset=0");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        request.Headers.TryAddWithoutValidation("Accept", "application/json;charset=utf-8");
+        request.Headers.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
+
+        var context = new MoySkladRequestContext(
+            accountId,
+            correlationId,
+            null,
+            null,
+            "GET",
+            "entity/counterparty?limit=1&offset=0",
+            "counterparty",
+            null);
+        var stopwatch = Stopwatch.StartNew();
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+        }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw _responseHandler.TransportFailure(
+                context, "MoySklad request timed out.", stopwatch.Elapsed, exception);
+        }
+        catch (HttpRequestException exception)
+        {
+            throw _responseHandler.TransportFailure(
+                context, "MoySklad is unavailable.", stopwatch.Elapsed, exception);
+        }
+
+        using (response)
+        {
+            var observation = MoySkladRateLimitObservationParser.Parse(response);
+            await _rateLimiter.ObserveAsync(accountId, observation, cancellationToken);
+            var responseBody = await _responseHandler.ReadAsync(
+                response,
+                context,
+                stopwatch.Elapsed,
+                cancellationToken);
+
+            try
+            {
+                using var document = JsonDocument.Parse(responseBody.Body);
+                if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                    !document.RootElement.TryGetProperty("rows", out var rows) ||
+                    rows.ValueKind != JsonValueKind.Array)
+                {
+                    throw new JsonException("MoySklad response does not contain a rows array.");
+                }
+            }
+            catch (JsonException)
+            {
+                throw _responseHandler.ValidationFailure(
+                    context,
+                    responseBody.HttpStatus,
+                    "MoySklad returned an invalid counterparty response.",
+                    responseBody.Body,
+                    stopwatch.Elapsed);
+            }
+
+            _logger.LogInformation(
+                "MoySklad connection check completed: account_id={AccountId}, status={StatusCode}, correlation_id={CorrelationId}, duration_ms={DurationMs}",
+                accountId,
+                responseBody.HttpStatus,
+                correlationId,
+                stopwatch.Elapsed.TotalMilliseconds);
+            return new MoySkladConnectionCheckResponse(true);
         }
     }
 

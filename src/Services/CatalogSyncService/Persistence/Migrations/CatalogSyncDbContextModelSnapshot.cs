@@ -23,14 +23,41 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.CatalogSettingExclusion", b =>
+                {
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Field")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("AccountId", "Field", "Value");
+
+                    b.ToTable("catalog_setting_exclusions", "catalog_sync", t =>
+                        {
+                            t.HasCheckConstraint("CK_catalog_setting_exclusions_Field", "\"Field\" IN ('name', 'email', 'phone')");
+                        });
+                });
+
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.CatalogSettings", b =>
                 {
                     b.Property<Guid>("AccountId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("Payload")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
+                    b.Property<int>("GroupLimit")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IncludeArchivedWithDocuments")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("ItemLimit")
+                        .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -38,6 +65,15 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.HasKey("AccountId");
 
                     b.ToTable("catalog_settings", "catalog_sync");
+                });
+
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.CatalogSettingExclusion", b =>
+                {
+                    b.HasOne("MsContractor.CatalogSyncService.Models.CatalogSettings", null)
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.Counterparty", b =>

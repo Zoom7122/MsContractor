@@ -20,6 +20,7 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
     public DbSet<CounterpartyDocument> CounterpartyDocuments => Set<CounterpartyDocument>();
     public DbSet<DocumentAdditionalCommission> DocumentAdditionalCommissions => Set<DocumentAdditionalCommission>();
     public DbSet<CatalogSettings> CatalogSettings => Set<CatalogSettings>();
+    public DbSet<CatalogSettingExclusion> CatalogSettingExclusions => Set<CatalogSettingExclusion>();
     internal Guid? TenantAccountId => _tenantAccountId;
 
     public Task SetTenantAsync(Guid accountId, CancellationToken cancellationToken)
@@ -195,7 +196,21 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
         {
             entity.ToTable("catalog_settings");
             entity.HasKey(item => item.AccountId);
-            entity.Property(item => item.Payload).HasColumnType("jsonb").IsRequired();
+        });
+
+        modelBuilder.Entity<CatalogSettingExclusion>(entity =>
+        {
+            entity.ToTable("catalog_setting_exclusions", table =>
+                table.HasCheckConstraint(
+                    "CK_catalog_setting_exclusions_Field",
+                    "\"Field\" IN ('name', 'email', 'phone')"));
+            entity.HasKey(item => new { item.AccountId, item.Field, item.Value });
+            entity.Property(item => item.Field).HasMaxLength(16).IsRequired();
+            entity.Property(item => item.Value).IsRequired();
+            entity.HasOne<CatalogSettings>()
+                .WithMany()
+                .HasForeignKey(item => item.AccountId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
     }

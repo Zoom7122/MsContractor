@@ -1,4 +1,3 @@
-using System.Text.Json;
 using MsContractor.CatalogSyncService.Repositories;
 using MsContractor.Contracts.Internal;
 
@@ -22,7 +21,6 @@ public sealed class CatalogSettingsValidationException(
 
 public sealed class CatalogSettingsService : ICatalogSettingsService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly HashSet<string> AllowedFields = new(StringComparer.Ordinal)
     {
         "name",
@@ -43,11 +41,16 @@ public sealed class CatalogSettingsService : ICatalogSettingsService
         CancellationToken cancellationToken)
     {
         var normalized = NormalizeAndValidate(request);
-        var payload = JsonSerializer.Serialize(normalized, JsonOptions);
-        await _repository.SaveAsync(accountId, payload, cancellationToken);
+        await _repository.SaveAsync(
+            accountId,
+            normalized.IncludeArchivedWithDocuments,
+            normalized.GroupLimit,
+            normalized.ItemLimit,
+            normalized.Exclusions,
+            cancellationToken);
     }
 
-    private static CatalogSettingsRequest NormalizeAndValidate(CatalogSettingsRequest? request)
+    private static ValidatedSettings NormalizeAndValidate(CatalogSettingsRequest? request)
     {
         if (request?.DuplicateExclusions is null ||
             request.DuplicateSearchOptions is null ||
@@ -59,6 +62,7 @@ public sealed class CatalogSettingsService : ICatalogSettingsService
         }
 
         var exclusions = new List<CatalogDuplicateExclusionSetting>(request.DuplicateExclusions.Count);
+        var distinctExclusions = new HashSet<(string Field, string Value)>();
         foreach (var exclusion in request.DuplicateExclusions)
         {
             var field = exclusion.Field?.Trim().ToLowerInvariant();
@@ -69,6 +73,9 @@ public sealed class CatalogSettingsService : ICatalogSettingsService
                     "INVALID_DUPLICATE_EXCLUSION",
                     "Each exclusion must have a field of name, email, or phone and a non-empty value.");
             }
+
+            if (!distinctExclusions.Add((field, value)))
+                continue;
 
             exclusions.Add(new CatalogDuplicateExclusionSetting(field, value));
         }
@@ -81,9 +88,16 @@ public sealed class CatalogSettingsService : ICatalogSettingsService
                 "groupLimit and itemLimit must be between 1 and 1000.");
         }
 
-        return new CatalogSettingsRequest(
+        return new ValidatedSettings(
             exclusions,
-            request.DuplicateSearchOptions,
-            limits);
+            request.DuplicateSearchOptions.IncludeArchivedWithDocuments,
+            limits.GroupLimit,
+            limits.ItemLimit);
     }
+
+    private sealed record ValidatedSettings(
+        IReadOnlyList<CatalogDuplicateExclusionSetting> Exclusions,
+        bool IncludeArchivedWithDocuments,
+        int GroupLimit,
+        int ItemLimit);
 }

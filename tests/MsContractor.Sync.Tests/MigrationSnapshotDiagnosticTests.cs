@@ -92,7 +92,7 @@ public sealed class MigrationSnapshotDiagnosticTests
             "20260914120000_RemoveSalesReturnRecreationRequest",
             "20260916120000_RemoveDocumentAdditionalData"
         ];
-        Assert.Equal([.. expected, "20260924120000_AddMergeCounterpartyLocks", "20260927120000_AddCounterpartySyncStaging", "20260927130000_AddCatalogSettings"],
+        Assert.Equal([.. expected, "20260924120000_AddMergeCounterpartyLocks", "20260927120000_AddCounterpartySyncStaging", "20260927130000_AddCatalogSettings", "20260927140000_ReworkCatalogSettings"],
             context.GetService<IMigrationsAssembly>().Migrations.Keys);
     }
 
@@ -118,6 +118,52 @@ public sealed class MigrationSnapshotDiagnosticTests
         Assert.Contains("FORCE ROW LEVEL SECURITY", sql);
         Assert.Contains("CREATE POLICY account_isolation", sql);
         Assert.Contains("current_setting('app.account_id', true)", sql);
+    }
+
+    [Fact]
+    public void CatalogSettingsRelationalMigration_ReplacesJsonAndCreatesTenantScopedExclusions()
+    {
+        using var context = new CatalogSyncDbContext(new DbContextOptionsBuilder<CatalogSyncDbContext>()
+            .UseNpgsql("Host=localhost;Database=test;Username=postgres;Password=postgres").Options);
+        var migrationsAssembly = context.GetService<IMigrationsAssembly>();
+        var migration = migrationsAssembly.CreateMigration(
+            migrationsAssembly.Migrations["20260927140000_ReworkCatalogSettings"],
+            context.Database.ProviderName!);
+
+        var droppedTable = Assert.Single(migration.UpOperations.OfType<DropTableOperation>());
+        Assert.Equal("catalog_sync", droppedTable.Schema);
+        Assert.Equal("catalog_settings", droppedTable.Name);
+
+        var tables = migration.UpOperations.OfType<CreateTableOperation>()
+            .ToDictionary(operation => operation.Name);
+        var settings = tables["catalog_settings"];
+        Assert.Equal(["AccountId"], settings.PrimaryKey!.Columns);
+        Assert.Contains(settings.Columns, column => column.Name == "IncludeArchivedWithDocuments");
+        Assert.Contains(settings.Columns, column => column.Name == "GroupLimit");
+        Assert.Contains(settings.Columns, column => column.Name == "ItemLimit");
+        Assert.DoesNotContain(settings.Columns, column => column.Name == "Payload");
+
+        var exclusions = tables["catalog_setting_exclusions"];
+        Assert.Equal(["AccountId", "Field", "Value"], exclusions.PrimaryKey!.Columns);
+        var foreignKey = Assert.Single(exclusions.ForeignKeys);
+        Assert.Equal(["AccountId"], foreignKey.Columns!);
+        Assert.Equal("catalog_settings", foreignKey.PrincipalTable);
+        Assert.Equal(["AccountId"], foreignKey.PrincipalColumns!);
+        Assert.Equal(ReferentialAction.Cascade, foreignKey.OnDelete);
+
+        var sql = string.Join(Environment.NewLine,
+            migration.UpOperations.OfType<SqlOperation>().Select(operation => operation.Sql));
+        foreach (var table in new[] { "catalog_settings", "catalog_setting_exclusions" })
+        {
+            Assert.Contains($"ALTER TABLE catalog_sync.{table} ENABLE ROW LEVEL SECURITY", sql);
+            Assert.Contains($"ALTER TABLE catalog_sync.{table} FORCE ROW LEVEL SECURITY", sql);
+            Assert.Contains($"CREATE POLICY account_isolation ON catalog_sync.{table}", sql);
+        }
+        Assert.Contains("current_setting('app.account_id', true)", sql);
+
+        var downSql = string.Join(Environment.NewLine,
+            migration.DownOperations.OfType<SqlOperation>().Select(operation => operation.Sql));
+        Assert.Contains("jsonb_build_object", downSql);
     }
 
     [Fact]

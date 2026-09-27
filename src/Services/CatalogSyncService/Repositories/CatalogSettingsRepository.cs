@@ -1,12 +1,19 @@
 using Microsoft.EntityFrameworkCore;
 using MsContractor.CatalogSyncService.Models;
 using MsContractor.CatalogSyncService.Persistence;
+using MsContractor.Contracts.Internal;
 
 namespace MsContractor.CatalogSyncService.Repositories;
 
 public interface ICatalogSettingsRepository
 {
-    Task SaveAsync(Guid accountId, string payload, CancellationToken cancellationToken);
+    Task SaveAsync(
+        Guid accountId,
+        bool includeArchivedWithDocuments,
+        int groupLimit,
+        int itemLimit,
+        IReadOnlyList<CatalogDuplicateExclusionSetting> exclusions,
+        CancellationToken cancellationToken);
 }
 
 public sealed class CatalogSettingsRepository : ICatalogSettingsRepository
@@ -24,7 +31,10 @@ public sealed class CatalogSettingsRepository : ICatalogSettingsRepository
 
     public async Task SaveAsync(
         Guid accountId,
-        string payload,
+        bool includeArchivedWithDocuments,
+        int groupLimit,
+        int itemLimit,
+        IReadOnlyList<CatalogDuplicateExclusionSetting> exclusions,
         CancellationToken cancellationToken)
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
@@ -38,8 +48,37 @@ public sealed class CatalogSettingsRepository : ICatalogSettingsRepository
             _dbContext.CatalogSettings.Add(settings);
         }
 
-        settings.Payload = payload;
+        settings.IncludeArchivedWithDocuments = includeArchivedWithDocuments;
+        settings.GroupLimit = groupLimit;
+        settings.ItemLimit = itemLimit;
         settings.UpdatedAt = _timeProvider.GetUtcNow();
+
+        var desiredExclusions = exclusions
+            .DistinctBy(item => (item.Field, item.Value))
+            .ToDictionary(item => (item.Field!, item.Value!));
+        var existingExclusions = await _dbContext.CatalogSettingExclusions
+            .Where(item => item.AccountId == accountId)
+            .ToListAsync(cancellationToken);
+        var existingKeys = existingExclusions
+            .Select(item => (item.Field, item.Value))
+            .ToHashSet();
+
+        _dbContext.CatalogSettingExclusions.RemoveRange(
+            existingExclusions.Where(item => !desiredExclusions.ContainsKey((item.Field, item.Value))));
+
+        foreach (var exclusion in desiredExclusions.Values)
+        {
+            if (existingKeys.Contains((exclusion.Field!, exclusion.Value!)))
+                continue;
+
+            _dbContext.CatalogSettingExclusions.Add(new CatalogSettingExclusion
+            {
+                AccountId = accountId,
+                Field = exclusion.Field!,
+                Value = exclusion.Value!
+            });
+        }
+
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 }

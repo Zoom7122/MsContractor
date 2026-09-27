@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using MsContractor.CatalogSyncService.Persistence;
@@ -18,19 +17,21 @@ public sealed class CatalogSettingsServiceTests
         var accountId = Guid.NewGuid();
 
         await service.SaveAsync(accountId, Settings(
-            [new CatalogDuplicateExclusionSetting(" EMAIL ", " shared@example.com ")],
+            [
+                new CatalogDuplicateExclusionSetting(" EMAIL ", " shared@example.com "),
+                new CatalogDuplicateExclusionSetting("email", "SHARED@example.com")
+            ],
             groupLimit: 25,
             itemLimit: 10), CancellationToken.None);
 
+        Assert.True(repository.WasCalled);
         Assert.Equal(accountId, repository.AccountId);
-        using var payload = JsonDocument.Parse(repository.Payload!);
-        var exclusion = Assert.Single(payload.RootElement.GetProperty("duplicateExclusions").EnumerateArray());
-        Assert.Equal("email", exclusion.GetProperty("field").GetString());
-        Assert.Equal("shared@example.com", exclusion.GetProperty("value").GetString());
-        Assert.Equal(25, payload.RootElement.GetProperty("searchLimits").GetProperty("groupLimit").GetInt32());
-        Assert.Equal(10, payload.RootElement.GetProperty("searchLimits").GetProperty("itemLimit").GetInt32());
-        Assert.True(payload.RootElement.GetProperty("duplicateSearchOptions")
-            .GetProperty("includeArchivedWithDocuments").GetBoolean());
+        Assert.True(repository.IncludeArchivedWithDocuments);
+        Assert.Equal(25, repository.GroupLimit);
+        Assert.Equal(10, repository.ItemLimit);
+        var exclusion = Assert.Single(repository.Exclusions!);
+        Assert.Equal("email", exclusion.Field);
+        Assert.Equal("shared@example.com", exclusion.Value);
     }
 
     [Fact]
@@ -41,8 +42,8 @@ public sealed class CatalogSettingsServiceTests
 
         await service.SaveAsync(Guid.NewGuid(), Settings([]), CancellationToken.None);
 
-        using var payload = JsonDocument.Parse(repository.Payload!);
-        Assert.Empty(payload.RootElement.GetProperty("duplicateExclusions").EnumerateArray());
+        Assert.True(repository.WasCalled);
+        Assert.Empty(repository.Exclusions!);
     }
 
     [Theory]
@@ -67,11 +68,11 @@ public sealed class CatalogSettingsServiceTests
                 itemLimit), CancellationToken.None));
 
         Assert.Equal(expectedCode, exception.Code);
-        Assert.Null(repository.Payload);
+        Assert.False(repository.WasCalled);
     }
 
     [Fact]
-    public async Task SaveAsync_UpsertsSettingsAndKeepsAccountsSeparate()
+    public async Task SaveAsync_ReplacesSettingsAndExclusionsPerAccount()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -86,21 +87,58 @@ public sealed class CatalogSettingsServiceTests
         await using (var firstContext = new CatalogSyncDbContext(options))
         {
             var repository = new CatalogSettingsRepository(firstContext, TimeProvider.System);
-            await repository.SaveAsync(firstAccount, "{\"revision\":1}", CancellationToken.None);
-            await repository.SaveAsync(firstAccount, "{\"revision\":2}", CancellationToken.None);
+            await repository.SaveAsync(
+                firstAccount,
+                true,
+                25,
+                10,
+                [new CatalogDuplicateExclusionSetting("email", "shared@example.com"),
+                 new CatalogDuplicateExclusionSetting("phone", "+70000000000")],
+                CancellationToken.None);
+            await repository.SaveAsync(
+                firstAccount,
+                false,
+                30,
+                12,
+                [new CatalogDuplicateExclusionSetting("name", "acme"),
+                 new CatalogDuplicateExclusionSetting("email", "shared@example.com"),
+                 new CatalogDuplicateExclusionSetting("email", "shared@example.com")],
+                CancellationToken.None);
         }
 
         await using (var secondContext = new CatalogSyncDbContext(options))
         {
             var repository = new CatalogSettingsRepository(secondContext, TimeProvider.System);
-            await repository.SaveAsync(secondAccount, "{\"revision\":3}", CancellationToken.None);
+            await repository.SaveAsync(
+                secondAccount,
+                true,
+                40,
+                20,
+                [new CatalogDuplicateExclusionSetting("email", "second@example.com")],
+                CancellationToken.None);
         }
 
         var rows = await setupContext.CatalogSettings.AsNoTracking()
-            .ToDictionaryAsync(item => item.AccountId, item => item.Payload);
+            .ToDictionaryAsync(item => item.AccountId);
         Assert.Equal(2, rows.Count);
-        Assert.Equal("{\"revision\":2}", rows[firstAccount]);
-        Assert.Equal("{\"revision\":3}", rows[secondAccount]);
+        Assert.False(rows[firstAccount].IncludeArchivedWithDocuments);
+        Assert.Equal(30, rows[firstAccount].GroupLimit);
+        Assert.Equal(12, rows[firstAccount].ItemLimit);
+        Assert.Equal(40, rows[secondAccount].GroupLimit);
+
+        var exclusions = await setupContext.CatalogSettingExclusions.AsNoTracking()
+            .OrderBy(item => item.AccountId)
+            .ThenBy(item => item.Field)
+            .ToListAsync();
+        Assert.Equal(3, exclusions.Count);
+        Assert.Equal(
+            [("email", "shared@example.com"), ("name", "acme")],
+            exclusions.Where(item => item.AccountId == firstAccount)
+                .Select(item => (item.Field, item.Value))
+                .OrderBy(item => item.Field)
+                .ToArray());
+        var secondAccountExclusion = Assert.Single(exclusions, item => item.AccountId == secondAccount);
+        Assert.Equal("second@example.com", secondAccountExclusion.Value);
     }
 
     private static CatalogSettingsRequest Settings(
@@ -114,12 +152,26 @@ public sealed class CatalogSettingsServiceTests
     private sealed class CapturingRepository : ICatalogSettingsRepository
     {
         public Guid? AccountId { get; private set; }
-        public string? Payload { get; private set; }
+        public bool IncludeArchivedWithDocuments { get; private set; }
+        public int GroupLimit { get; private set; }
+        public int ItemLimit { get; private set; }
+        public IReadOnlyList<CatalogDuplicateExclusionSetting>? Exclusions { get; private set; }
+        public bool WasCalled { get; private set; }
 
-        public Task SaveAsync(Guid accountId, string payload, CancellationToken cancellationToken)
+        public Task SaveAsync(
+            Guid accountId,
+            bool includeArchivedWithDocuments,
+            int groupLimit,
+            int itemLimit,
+            IReadOnlyList<CatalogDuplicateExclusionSetting> exclusions,
+            CancellationToken cancellationToken)
         {
+            WasCalled = true;
             AccountId = accountId;
-            Payload = payload;
+            IncludeArchivedWithDocuments = includeArchivedWithDocuments;
+            GroupLimit = groupLimit;
+            ItemLimit = itemLimit;
+            Exclusions = exclusions.ToArray();
             return Task.CompletedTask;
         }
     }

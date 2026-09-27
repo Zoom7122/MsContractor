@@ -1118,6 +1118,12 @@ public sealed class SyncProcessorTests
     {
         public List<PageRequest> Requests { get; } = [];
 
+        public Task<MoySkladConnectionCheckResponse> CheckConnectionAsync(
+            Guid accountId,
+            string correlationId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new MoySkladConnectionCheckResponse(true));
+
         public Task<MoySkladRawResponse> GetCounterpartiesAsync(
             Guid accountId,
             bool archived,

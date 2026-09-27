@@ -6,6 +6,8 @@ public static class CatalogRepositoryRegistration
     {
         services.AddScoped<ISyncRepository, SyncRepository>();
         services.AddScoped<ISyncOutboxRepository, SyncOutboxRepository>();
+        services.AddScoped<ISyncRunStateRepository, SyncRunStateRepository>();
+        services.AddScoped<IMergeJobStateRepository, MergeJobStateRepository>();
         return services;
     }
 }

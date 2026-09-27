@@ -1,8 +1,36 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using MergeVerifier.Documents;
 using MergeVerifier.Models;
 using MergeVerifier.Normalization;
 
 namespace MergeVerifier.Comparison;
+
+/// <summary>
+/// A reference to a recreated document carries the full semantic hash of that document. When only the linked
+/// document changed, every referencing document would otherwise be reported as changed too. The linked view drops
+/// <c>semanticHash</c> from references that keep their <c>linkKey</c> (same counterpart before and after); the linked
+/// document itself is still compared in full under its own type.
+/// </summary>
+public static class LinkedView
+{
+    public static JsonElement Of(JsonElement data) => JsonSerializer.SerializeToElement(Strip(JsonNode.Parse(data.GetRawText())));
+
+    private static JsonNode? Strip(JsonNode? node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                if (obj["$ref"] is JsonObject reference && reference.ContainsKey("linkKey")) reference.Remove("semanticHash");
+                foreach (var (_, value) in obj.ToArray()) Strip(value);
+                break;
+            case JsonArray array:
+                foreach (var item in array) Strip(item);
+                break;
+        }
+        return node;
+    }
+}
 
 public interface IDocumentComparer
 {
@@ -22,10 +50,18 @@ public sealed class PutAgentDocumentComparer(DocumentRule rule) : IDocumentCompa
         {
             if (!mainDocuments.TryGetValue(doc.StableDocumentId!, out var target))
                 results.Add(Result(VerificationStatus.Missing, doc, StructuredDiff.Compare(doc.Data, null)));
+            else if (StructuredDiff.Compare(doc.Data, target.Data).Count == 0)
+                results.Add(Result(VerificationStatus.Matched, doc));
             else
             {
-                var diff = StructuredDiff.Compare(doc.Data, target.Data);
-                results.Add(Result(diff.Count == 0 ? VerificationStatus.Matched : VerificationStatus.Changed, doc, diff));
+                // Differences that remain after removing linked-document hashes belong to this document.
+                var own = StructuredDiff.Compare(LinkedView.Of(doc.Data), LinkedView.Of(target.Data));
+                results.Add(own.Count == 0
+                    ? Result(VerificationStatus.Matched, doc) with
+                    {
+                        Note = "Only linked recreated documents differ; they are reported under their own types."
+                    }
+                    : Result(VerificationStatus.Changed, doc, own));
             }
         }
         foreach (var doc in mainDocuments.Values.Where(x => !beforeIds.Contains(x.StableDocumentId!)))
@@ -50,8 +86,9 @@ public class RecreatedDocumentComparer(DocumentRule rule) : IDocumentComparer
     {
         var mainDocuments = after.Where(x => x.SourceCounterpartyId == main).ToArray();
         // Canonical keys additionally avoid treating a theoretical hash collision as a match.
-        var left = before.GroupBy(x => JsonCanonicalizer.Canonicalize(x.Data)).ToDictionary(x => x.Key, x => x.ToArray());
-        var right = mainDocuments.GroupBy(x => JsonCanonicalizer.Canonicalize(x.Data)).ToDictionary(x => x.Key, x => x.ToArray());
+        // Grouped by the linked view: a change of a linked recreated document is reported under that document only.
+        var left = before.GroupBy(Key).ToDictionary(x => x.Key, x => x.ToArray());
+        var right = mainDocuments.GroupBy(Key).ToDictionary(x => x.Key, x => x.ToArray());
         var results = new List<DocumentComparisonResult>();
         foreach (var key in left.Keys.Union(right.Keys).Order(StringComparer.Ordinal))
         {
@@ -65,7 +102,7 @@ public class RecreatedDocumentComparer(DocumentRule rule) : IDocumentComparer
                 results.Add(Result(VerificationStatus.Unexpected, target[0], target.Length - matched));
         }
         foreach (var group in after.Where(x => x.SourceCounterpartyId != main)
-                     .GroupBy(x => (x.SourceCounterpartyId, Canonical: JsonCanonicalizer.Canonicalize(x.Data))))
+                     .GroupBy(x => (x.SourceCounterpartyId, Canonical: Key(x))))
             results.Add(Result(VerificationStatus.StillOnDuplicate, group.First(), group.Count()));
         // A sole unmatched pair is a useful diagnostic candidate, never an inferred oldId -> newId mapping.
         var missing = results.Where(x => x.Status == VerificationStatus.Missing).ToArray();
@@ -75,12 +112,14 @@ public class RecreatedDocumentComparer(DocumentRule rule) : IDocumentComparer
             var index = results.IndexOf(missing[0]);
             results[index] = missing[0] with
             {
-                Differences = StructuredDiff.Compare(missing[0].Data, unexpected[0].Data),
+                Differences = StructuredDiff.Compare(LinkedView.Of(missing[0].Data!.Value), LinkedView.Of(unexpected[0].Data!.Value)),
                 Note = "Difference against the sole unexpected semantic variant; diagnostic candidate, not an identity match."
             };
         }
         return new(EntityType, rule.TransferMode, before.Count, mainDocuments.Length, results);
     }
+
+    private static string Key(DocumentSnapshot document) => JsonCanonicalizer.Canonicalize(LinkedView.Of(document.Data));
 
     private static DocumentComparisonResult Result(VerificationStatus status, DocumentSnapshot doc, int count) => new()
     {

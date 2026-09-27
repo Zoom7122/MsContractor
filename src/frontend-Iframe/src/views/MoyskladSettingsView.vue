@@ -15,11 +15,6 @@ const defaultSettings = {
   duplicateSearchOptions: {
     includeArchivedWithDocuments: true
   },
-  fullSyncTimer: {
-    enabled: false,
-    runAt: '03:00'
-  },
-  mergeAttributes: [],
   searchLimits: {
     groupLimit: 200,
     itemLimit: 200
@@ -40,21 +35,16 @@ const saving = ref(false)
 const message = ref(null)
 const saveError = ref(null)
 const exclusionsOpen = ref(false)
-const mergeAttributesOpen = ref(false)
 const newExclusion = ref({
   field: 'email',
   value: ''
 })
 
 const hasExclusions = computed(() => form.value.duplicateExclusions.length > 0)
-const hasMergeAttributes = computed(() => form.value.mergeAttributes.length > 0)
 const isDirty = computed(() =>
   JSON.stringify(toCatalogSettings(form.value)) !== JSON.stringify(toCatalogSettings(initialSettings.value))
 )
 const exclusionsPreview = computed(() => form.value.duplicateExclusions.slice(0, 4))
-const enabledMergeAttributesCount = computed(() =>
-  form.value.mergeAttributes.filter((item) => item.enabled).length
-)
 
 onMounted(loadSettings)
 
@@ -91,11 +81,6 @@ function normalizeSettings(source) {
         source?.duplicateSearchOptions?.includeArchivedWithDocuments ??
         defaultSettings.duplicateSearchOptions.includeArchivedWithDocuments
     },
-    fullSyncTimer: {
-      enabled: Boolean(source?.fullSyncTimer?.enabled ?? defaultSettings.fullSyncTimer.enabled),
-      runAt: normalizeTimeValue(source?.fullSyncTimer?.runAt, defaultSettings.fullSyncTimer.runAt)
-    },
-    mergeAttributes: normalizeMergeAttributes(source?.mergeAttributes),
     searchLimits: {
       groupLimit: clampLimit(
         source?.searchLimits?.groupLimit ?? source?.duplicateSearchOptions?.groupLimit,
@@ -107,23 +92,6 @@ function normalizeSettings(source) {
       )
     }
   }
-}
-
-function normalizeMergeAttributes(items) {
-  if (!Array.isArray(items)) {
-    return []
-  }
-
-  return items
-    .map((item) => ({
-      attributeId: String(item?.id || item?.attributeId || '').trim(),
-      name: String(item?.name || '').trim(),
-      type: String(item?.type || '').trim(),
-      required: Boolean(item?.required),
-      enabled: Boolean(item?.enabled)
-    }))
-    .filter((item) => item.attributeId && item.name)
-    .sort((left, right) => left.name.localeCompare(right.name, 'ru'))
 }
 
 function cloneSettings(value) {
@@ -146,11 +114,6 @@ function toCatalogSettings(source) {
 function normalizeExclusionField(value) {
   const normalized = String(value || '').trim()
   return exclusionFieldOptions.some((item) => item.value === normalized) ? normalized : ''
-}
-
-function normalizeTimeValue(value, fallback) {
-  const normalized = String(value || '').trim()
-  return /^\d{2}:\d{2}$/.test(normalized) ? normalized : fallback
 }
 
 function clampLimit(value, fallback) {
@@ -188,22 +151,8 @@ function removeExclusion(index) {
   form.value.duplicateExclusions.splice(index, 1)
 }
 
-function toggleMergeAttribute(attributeId) {
-  form.value.mergeAttributes = form.value.mergeAttributes.map((item) => {
-    if (item.attributeId !== attributeId) {
-      return item
-    }
-
-    return {
-      ...item,
-      enabled: !item.enabled
-    }
-  })
-}
-
 function resetSettings() {
   form.value = {
-    ...form.value,
     duplicateExclusions: [],
     duplicateSearchOptions: cloneSettings(defaultSettings.duplicateSearchOptions),
     searchLimits: cloneSettings(defaultSettings.searchLimits)
@@ -243,7 +192,7 @@ async function saveSettings() {
 
 <template>
   <div class="app-page settings-page">
-    <PageHeader title="Настройки" subtitle="Поиск дублей, объединение и расписание синхронизации">
+    <PageHeader title="Настройки" subtitle="Настройки поиска дублей">
       <template v-if="isDirty" #meta>
         <StatusBadge tone="warning" label="Есть несохранённые изменения" />
       </template>
@@ -329,70 +278,6 @@ async function saveSettings() {
         </div>
       </SectionPanel>
 
-      <SectionPanel title="Объединение" subtitle="Пока нельзя сохранить через API настроек" flush>
-        <div class="settings-row settings-row--wrap">
-          <div class="settings-row__text">
-            <h3 class="settings-row__title">Дополнительные поля</h3>
-            <p class="settings-row__description">
-              Поля контрагентов МоегоСклада, которые появятся в шаге «Итоговые поля» при объединении.
-            </p>
-          </div>
-          <div class="settings-row__control">
-            <span class="app-meta app-nums">Выбрано {{ enabledMergeAttributesCount }} из {{ form.mergeAttributes.length }}</span>
-            <el-button size="small" disabled :aria-expanded="mergeAttributesOpen" @click="mergeAttributesOpen = !mergeAttributesOpen">
-              {{ mergeAttributesOpen ? 'Свернуть' : 'Выбрать поля' }}
-            </el-button>
-          </div>
-
-          <el-collapse-transition>
-            <div v-if="mergeAttributesOpen" class="settings-attributes">
-              <EmptyState
-                v-if="!hasMergeAttributes"
-                size="sm"
-                image="documents"
-                title="Дополнительных полей нет"
-                description="В МоёмСкладе у контрагентов не создано дополнительных полей, или они ещё не загружены."
-              />
-              <label
-                v-for="item in form.mergeAttributes"
-                :key="item.attributeId"
-                class="settings-attribute"
-                :class="{ 'settings-attribute--enabled': item.enabled }"
-              >
-                <el-checkbox :model-value="item.enabled" disabled @change="toggleMergeAttribute(item.attributeId)" />
-                <span class="settings-attribute__text">
-                  <span class="settings-attribute__name">{{ item.name }}</span>
-                  <span class="app-meta">{{ item.type || 'тип не указан' }}<template v-if="item.required"> · обязательное</template></span>
-                </span>
-              </label>
-            </div>
-          </el-collapse-transition>
-        </div>
-      </SectionPanel>
-
-      <SectionPanel title="Синхронизация" subtitle="Пока нельзя сохранить через API настроек" flush>
-        <div class="settings-row">
-          <div class="settings-row__text">
-            <h3 class="settings-row__title">Ежедневная полная синхронизация</h3>
-            <p class="settings-row__description">
-              Запускается раз в сутки в указанное время. Ручной запуск доступен на странице «Обзор».
-            </p>
-          </div>
-          <div class="settings-row__control">
-            <el-switch v-model="form.fullSyncTimer.enabled" disabled aria-label="Включить ежедневную синхронизацию" />
-            <el-time-picker
-              v-model="form.fullSyncTimer.runAt"
-              class="settings-time"
-              value-format="HH:mm"
-              format="HH:mm"
-              placeholder="Время"
-              disabled
-              :clearable="false"
-              aria-label="Время запуска"
-            />
-          </div>
-        </div>
-      </SectionPanel>
     </template>
 
     <el-alert v-if="message" :title="message" type="success" :closable="false" show-icon />

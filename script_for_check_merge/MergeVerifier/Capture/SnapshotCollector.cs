@@ -149,10 +149,11 @@ public sealed class SnapshotCollector(IMoySkladClient client, TextWriter progres
             var rule = DocumentRegistry.Get(type);
             var doc = await LoadDocument(rule, id, ct);
             var data = await DocumentNormalizer.For(rule).NormalizeAsync(doc,
-                async (relatedType, relatedId, token) =>
+                async (relatedType, relatedId, token) => new RecreatedReference(
                     await IsMarkedSideOfMutualLink(type, id, relatedType, relatedId, token)
-                        ? DocumentNormalizer.MutualLink
-                        : SemanticHasher.Hash(await Normalize(relatedType, relatedId, token)), ct);
+                        ? null
+                        : SemanticHasher.Hash(await Normalize(relatedType, relatedId, token)),
+                    LinkKey(relatedType, await LoadDocument(DocumentRegistry.Get(relatedType), relatedId, token))), ct);
             normalized[key] = data;
             return data;
         }
@@ -170,6 +171,18 @@ public sealed class SnapshotCollector(IMoySkladClient client, TextWriter progres
         var related = await LoadDocument(DocumentRegistry.Get(relatedType), relatedId, ct);
         return References(related, $"/entity/{type}/{id:D}");
     }
+
+    /// <summary>
+    /// Fields a recreation keeps (Egress copies name, externalCode and moment into the new document). Two references
+    /// with the same key point to the same document before and after recreation.
+    /// </summary>
+    public static string LinkKey(string type, JsonObject document) => SemanticHasher.Hash(new JsonObject
+    {
+        ["type"] = type,
+        ["name"] = document["name"]?.DeepClone(),
+        ["externalCode"] = document["externalCode"]?.DeepClone(),
+        ["moment"] = document["moment"]?.DeepClone()
+    });
 
     private static bool References(JsonNode? node, string path) => node switch
     {

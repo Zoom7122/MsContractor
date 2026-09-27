@@ -3,7 +3,14 @@ using MergeVerifier.Documents;
 
 namespace MergeVerifier.Normalization;
 
-public delegate Task<string> RecreatedReferenceResolver(string entityType, Guid id, CancellationToken ct);
+/// <summary>
+/// How a reference to a recreated document is written. <see cref="SemanticHash"/> covers the whole content of the
+/// linked document; <see cref="LinkKey"/> covers only what recreation keeps (type, name, externalCode, moment) and tells
+/// whether the reference still points to the counterpart of the same document. Null hash marks a mutual link.
+/// </summary>
+public sealed record RecreatedReference(string? SemanticHash, string LinkKey);
+
+public delegate Task<RecreatedReference> RecreatedReferenceResolver(string entityType, Guid id, CancellationToken ct);
 
 public interface IDocumentNormalizer
 {
@@ -22,12 +29,6 @@ public class DocumentNormalizer(DocumentRule rule) : IDocumentNormalizer
     /// </summary>
     public static readonly string[] RecreatedTechnicalFields = ["created", "syncId"];
 
-    /// <summary>
-    /// Resolver answer for one side of a link between two recreated documents that reference each other
-    /// (purchasereturn.factureOut and factureout.returns). Hashing both sides would be circular; the link is still
-    /// verified because the other side carries the full semantic hash.
-    /// </summary>
-    public const string MutualLink = "\u0000mutual-link";
 
     public static IDocumentNormalizer For(DocumentRule rule) => rule.EntityType switch
     {
@@ -137,9 +138,11 @@ public class DocumentNormalizer(DocumentRule rule) : IDocumentNormalizer
                 if (segments[0] != type || !Guid.TryParse(segments[1], out var id))
                     throw new VerifierException("Invalid recreated document reference.");
                 var resolved = await resolver(type, id, ct);
-                output["$ref"] = resolved == MutualLink
-                    ? new JsonObject { ["type"] = type, ["mutualLink"] = true }
-                    : new JsonObject { ["type"] = type, ["semanticHash"] = resolved };
+                // A null hash is one side of a link between two recreated documents that reference each other
+                // (purchasereturn.factureOut and factureout.returns): hashing both sides would be circular.
+                output["$ref"] = resolved.SemanticHash is null
+                    ? new JsonObject { ["type"] = type, ["linkKey"] = resolved.LinkKey, ["mutualLink"] = true }
+                    : new JsonObject { ["type"] = type, ["linkKey"] = resolved.LinkKey, ["semanticHash"] = resolved.SemanticHash };
             }
             else output["$ref"] = new JsonObject { ["type"] = type, ["key"] = key };
         }

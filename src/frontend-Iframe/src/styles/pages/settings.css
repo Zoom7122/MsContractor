@@ -108,57 +108,6 @@
   width: 100%;
 }
 
-.settings-row__control :deep(.el-date-editor.el-input) {
-  width: 110px;
-}
-
-.settings-attributes {
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: var(--app-space-2);
-}
-
-.settings-attributes :deep(.empty-state) {
-  grid-column: 1 / -1;
-}
-
-.settings-attribute {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: var(--app-space-2);
-  padding: var(--app-space-2) var(--app-space-3);
-  background: var(--app-color-surface);
-  border: 1px solid var(--app-color-border-light);
-  border-radius: var(--app-radius-md);
-  cursor: pointer;
-  transition: border-color var(--app-transition-fast), background var(--app-transition-fast);
-}
-
-.settings-attribute:hover {
-  border-color: var(--app-color-primary-border);
-}
-
-.settings-attribute--enabled {
-  background: var(--app-color-surface-selected);
-  border-color: var(--app-color-primary-border);
-}
-
-.settings-attribute :deep(.el-checkbox) {
-  height: 20px;
-}
-
-.settings-attribute__text {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.settings-attribute__name {
-  overflow-wrap: anywhere;
-}
-
 /* Sticky action bar */
 .settings-actions {
   position: sticky;

@@ -1,6 +1,6 @@
 <script setup>
 import { RouterLink, useRoute } from 'vue-router'
-import { Clock, CopyDocument, House, Setting } from '@element-plus/icons-vue'
+import { CopyDocument, House, Setting } from '@element-plus/icons-vue'
 
 import BrandMark from './BrandMark.vue'
 
@@ -13,7 +13,6 @@ const route = useRoute()
 const navItems = [
   { label: 'Обзор', to: '/moysklad/app', icon: House, match: ['/moysklad/app'] },
   { label: 'Дубликаты', to: '/moysklad/duplicates', icon: CopyDocument, match: ['/moysklad/duplicates', '/moysklad/merge'] },
-  { label: 'История', to: '/moysklad/history', icon: Clock, match: ['/moysklad/history', '/moysklad/counterparties'] },
   { label: 'Настройки', to: '/moysklad/settings', icon: Setting, match: ['/moysklad/settings'] }
 ]
 

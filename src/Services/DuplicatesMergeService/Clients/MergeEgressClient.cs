@@ -49,7 +49,13 @@ public sealed class MergeEgressClient : IMergeEgressClient
         CancellationToken cancellationToken) => SendAsync(
             HttpMethod.Put,
             $"internal/accounts/{accountId:D}/counterparties/{counterpartyId:D}",
-            new InternalCounterpartyUpdateRequest(update.Name, update.Email, update.Phone, update.Description),
+            new InternalCounterpartyUpdateRequest(
+                update.Name,
+                update.Email,
+                update.Phone,
+                update.Description,
+                update.Attributes?.Select(attribute => new InternalCounterpartyAttributeUpdate(
+                    attribute.Id, attribute.Type, attribute.Value, attribute.File)).ToArray()),
             mergeJobId, operationId, userId, correlationId, cancellationToken);
 
 /// <summary>

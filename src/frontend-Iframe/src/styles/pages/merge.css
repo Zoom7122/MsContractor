@@ -175,6 +175,12 @@
   flex-direction: column;
 }
 
+.merge-attributes {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--app-color-border-light);
+}
+
 .merge-field {
   position: relative;
   display: grid;
@@ -208,6 +214,12 @@
 
 .merge-field__name {
   font-weight: var(--app-font-weight-medium);
+}
+
+.merge-field__type {
+  color: var(--app-color-text-muted);
+  font-size: var(--app-font-size-xs);
+  overflow-wrap: anywhere;
 }
 
 .merge-field__required {

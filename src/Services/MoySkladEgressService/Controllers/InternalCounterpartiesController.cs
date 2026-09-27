@@ -92,7 +92,10 @@ public sealed class InternalCounterpartiesController : ControllerBase
     {
         if (!InternalApiKeyAuthentication.IsAuthorized(Request, _configuration))
             return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
-        if (counterpartyId == Guid.Empty || string.IsNullOrWhiteSpace(request.Name))
+        if (counterpartyId == Guid.Empty || string.IsNullOrWhiteSpace(request.Name) ||
+            request.Attributes is not null &&
+            (request.Attributes.Any(attribute => attribute.Id == Guid.Empty || string.IsNullOrWhiteSpace(attribute.Type)) ||
+             request.Attributes.Select(attribute => attribute.Id).Distinct().Count() != request.Attributes.Count))
             return BadRequest(new InternalErrorResponse("INVALID_COUNTERPARTY_UPDATE", "Counterparty update is invalid."));
         if (!TryOperationContext(out var mergeJobId, out var operationId, out var userId))
             return BadRequest(new InternalErrorResponse("INVALID_INTERNAL_CONTEXT", "Merge job, operation, and user headers are required."));

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace MsContractor.Contracts.Merge;
@@ -12,7 +13,27 @@ public sealed record MergeMainCounterpartyDto(
     string Name,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Email,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Phone,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description,
+    IReadOnlyList<MergeMainCounterpartyAttributeDto>? Attributes = null);
+
+public sealed record MergeMainCounterpartyAttributeDto(
+    Guid Id,
+    string Type,
+    Guid SourceCounterpartyId,
+    JsonElement? Value,
+    JsonElement? File = null,
+    bool Clear = false,
+    string? ValueJson = null,
+    string? FileJson = null);
+
+public sealed record CounterpartyAttributeDto(
+    Guid Id,
+    string? Name,
+    string? Type,
+    JsonElement? Value,
+    JsonElement? File,
+    string ValueJson,
+    string FileJson);
 
 public sealed record CreateMergeJobRequest(
     Guid MainCounterpartyId,
@@ -29,7 +50,8 @@ public sealed record MergeSelectionCounterpartyDto(
     string? Email,
     string? Phone,
     bool Archived,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    IReadOnlyList<CounterpartyAttributeDto> Attributes);
 
 public sealed record MergeSelectionPreviewResponse(
     IReadOnlyList<MergeSelectionCounterpartyDto> Counterparties);

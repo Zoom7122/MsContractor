@@ -50,7 +50,8 @@ public sealed class MergeSelectionPreviewService : IMergeSelectionPreviewService
         }
 
         var byId = counterparties.ToDictionary(item => item.Id, item => new MergeSelectionCounterpartyDto(
-            item.Id, item.Name, item.Description, item.Email, item.Phone, item.Archived, item.UpdatedAt));
+            item.Id, item.Name, item.Description, item.Email, item.Phone, item.Archived, item.UpdatedAt,
+            MergeCounterpartyAttributesParser.Parse(item.RawJson)));
         return new MergeSelectionPreviewResponse(ids.Select(id => byId[id]).ToArray());
     }
 

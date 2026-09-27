@@ -4,6 +4,7 @@ using MsContractor.Contracts.Merge;
 using MsContractor.DuplicatesMergeService.Clients;
 using MsContractor.DuplicatesMergeService.Models.Exceptions;
 using MsContractor.DuplicatesMergeService.Repositories;
+using MsContractor.DuplicatesMergeService.Services;
 
 namespace MsContractor.DuplicatesMergeService.Services.Merge.Counterparties;
 
@@ -27,6 +28,7 @@ public sealed class MergeMainCounterpartyUpdateService(
             operation.Id, job.RequestedByUserId, job.CorrelationId, cancellationToken);
         var parsed = parser.ParseOne(response.Json);
         EnsureResponse(operation.CounterpartyId, parsed, archivedRequired: false);
+        EnsureAttributesResponse(snapshot.Attributes, response.Json);
         var local = await FindLocalAsync(job.AccountId, operation.CounterpartyId, cancellationToken);
         normalizer.Apply(local, parsed, timeProvider.GetUtcNow());
     }
@@ -39,5 +41,49 @@ public sealed class MergeMainCounterpartyUpdateService(
     {
         if (parsed.Value.Id != expectedId || (archivedRequired && !parsed.Value.Archived))
             throw new MergeEgressException("EGRESS_INVALID_RESPONSE", "Egress returned an inconsistent counterparty.", 502);
+    }
+
+    private static void EnsureAttributesResponse(
+        IReadOnlyList<MergeMainCounterpartyAttributeDto>? requestedAttributes,
+        string responseJson)
+    {
+        if (requestedAttributes is null or { Count: 0 })
+            return;
+
+        var returnedAttributes = MergeCounterpartyAttributesParser.Parse(responseJson);
+        foreach (var requested in requestedAttributes)
+        {
+            var returned = returnedAttributes.FirstOrDefault(attribute => attribute.Id == requested.Id);
+            var requestedValue = string.Equals(requested.Type, "file", StringComparison.OrdinalIgnoreCase)
+                ? requested.File
+                : requested.Value;
+            var returnedValue = returned is null
+                ? null
+                : string.Equals(requested.Type, "file", StringComparison.OrdinalIgnoreCase)
+                    ? returned.File
+                    : returned.Value;
+
+            if (string.Equals(requested.Type, "file", StringComparison.OrdinalIgnoreCase) &&
+                requestedValue is not null && requestedValue.Value.ValueKind != System.Text.Json.JsonValueKind.Null)
+            {
+                if (returnedValue is null || returnedValue.Value.ValueKind == System.Text.Json.JsonValueKind.Null)
+                {
+                    throw new MergeEgressException(
+                        "EGRESS_INVALID_RESPONSE",
+                        "Egress did not return the selected counterparty attributes.",
+                        502);
+                }
+
+                continue;
+            }
+
+            if (!MergeCounterpartyAttributesParser.ValuesEqual(requestedValue, returnedValue))
+            {
+                throw new MergeEgressException(
+                    "EGRESS_INVALID_RESPONSE",
+                    "Egress did not return the selected counterparty attributes.",
+                    502);
+            }
+        }
     }
 }

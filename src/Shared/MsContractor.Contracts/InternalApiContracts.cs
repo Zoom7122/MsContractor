@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace MsContractor.Contracts.Internal;
@@ -23,7 +24,14 @@ public sealed record InternalCounterpartyUpdateRequest(
     string Name,
     string? Email,
     string? Phone,
-    string? Description);
+    string? Description,
+    IReadOnlyList<InternalCounterpartyAttributeUpdate>? Attributes = null);
+
+public sealed record InternalCounterpartyAttributeUpdate(
+    Guid Id,
+    string Type,
+    JsonElement? Value,
+    JsonElement? File = null);
 
 public sealed record InternalCounterpartyBatchArchiveRequest(
     IReadOnlyList<Guid> CounterpartyIds);

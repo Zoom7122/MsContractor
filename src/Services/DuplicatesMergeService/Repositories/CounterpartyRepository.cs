@@ -44,7 +44,7 @@ public sealed class CounterpartyRepository : ICounterpartyRepository
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
         return await _dbContext.Counterparties.AsNoTracking().Where(x => x.AccountId == accountId && ids.Contains(x.Id))
-            .Select(x => new CounterpartySelectionItem(x.Id, x.Name, x.Description, x.Email, x.Phone, x.Archived, x.UpdatedAt)).ToListAsync(cancellationToken);
+            .Select(x => new CounterpartySelectionItem(x.Id, x.Name, x.Description, x.Email, x.Phone, x.Archived, x.RawJson, x.UpdatedAt)).ToListAsync(cancellationToken);
     }
     public async Task<IReadOnlyList<CounterpartyAvailability>> GetAvailabilityAsync(Guid accountId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
     {

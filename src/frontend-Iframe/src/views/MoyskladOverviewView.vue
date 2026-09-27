@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Connection,
@@ -16,9 +16,10 @@ import PageHeader from '../components/ui/PageHeader.vue'
 import SectionPanel from '../components/ui/SectionPanel.vue'
 import StatTile from '../components/ui/StatTile.vue'
 import StatusBadge from '../components/ui/StatusBadge.vue'
+import { getCatalogState } from '../api/catalog'
 import { startFullSync, startIncrementalSync } from '../api/sync'
 import { readAccepted, toUserError } from '../utils/errors'
-import { formatNumber } from '../utils/format'
+import { formatDateTime, formatNumber } from '../utils/format'
 
 const props = defineProps({
   overviewData: {
@@ -41,6 +42,10 @@ const props = defineProps({
     type: [String, Object],
     default: null,
   },
+  autoLoad: {
+    type: Boolean,
+    default: true,
+  },
 })
 
 const router = useRouter()
@@ -49,6 +54,11 @@ const dashboardStatus = ref(createEmptyDashboardStatus())
 const syncActionMode = ref('')
 const syncAccepted = ref(null)
 const syncActionError = ref(null)
+const catalogState = ref(null)
+const queueData = ref(props.mergeQueueData)
+const stateLoading = ref(false)
+const stateLoadError = ref(null)
+let stateRefreshTimer = null
 
 watch(
   () => props.overviewData,
@@ -70,11 +80,37 @@ watch(
   { immediate: true }
 )
 
-const hasOverviewData = computed(() => Boolean(props.overviewData))
-const hasStatusData = computed(() => Boolean(props.dashboardStatusData) || Boolean(syncAccepted.value))
+watch(
+  () => props.mergeQueueData,
+  (value) => {
+    if (value) {
+      queueData.value = value
+    }
+  },
+  { immediate: true }
+)
+
+const hasOverviewData = computed(() => Boolean(props.overviewData) || Boolean(catalogState.value))
+const hasStatusData = computed(() => Boolean(props.dashboardStatusData) || Boolean(catalogState.value) || Boolean(syncAccepted.value))
 const syncActionLoading = computed(() => Boolean(syncActionMode.value))
-const syncProgressPercent = computed(() => calculateSyncProgress(overviewData.value))
+const isLoading = computed(() => props.loading || stateLoading.value)
+const currentLoadError = computed(() => props.loadError || stateLoadError.value)
+const syncProgressPercent = computed(() => normalizedDashboardStatus.value.progressPercent)
 const normalizedDashboardStatus = computed(() => dashboardStatus.value)
+const syncProgressAvailable = computed(() => normalizedDashboardStatus.value.progressAvailable)
+const syncProgressCaption = computed(() => {
+  const status = normalizedDashboardStatus.value
+  if (status.status === 'running' || status.status === 'queued') {
+    return 'Статистика обработки появится после завершения запуска'
+  }
+  if (status.status === 'failed') {
+    return 'Итоговая статистика недоступна: запуск завершился с ошибкой'
+  }
+  if (status.status === 'completed') {
+    return `${formatNumber(status.processedCounterparties)} из ${formatNumber(status.totalCounterparties)} обработано за запуск`
+  }
+  return 'Синхронизация ещё не выполнялась'
+})
 
 const connectionBadge = computed(() => {
   const status = overviewData.value.connection.ok
@@ -98,7 +134,6 @@ const connectionHint = computed(() => {
 const tiles = computed(() => {
   const data = overviewData.value
   const known = hasOverviewData.value
-  const total = data.connection.counterpartyTotal
 
   return [
     {
@@ -106,7 +141,7 @@ const tiles = computed(() => {
       label: 'Контрагентов в базе',
       icon: User,
       value: known ? formatNumber(data.local.counterpartiesCount) : '—',
-      hint: !known ? 'Нет данных' : total > 0 ? `из ${formatNumber(total)} в МоёмСкладе` : 'Синхронизация не выполнялась',
+      hint: known ? 'В каталоге' : 'Нет данных',
     },
     {
       key: 'lastSync',
@@ -121,11 +156,18 @@ const tiles = computed(() => {
 
 const syncState = computed(() => {
   const status = normalizedDashboardStatus.value
-  if (status.running && ['queued', 'pending', 'accepted'].includes(String(status.status))) {
+  const normalizedStatus = String(status.status || '').toLowerCase()
+  if (status.running && ['queued', 'pending', 'accepted'].includes(normalizedStatus)) {
     return { label: 'В очереди', tone: 'neutral' }
   }
   if (status.running) {
     return { label: 'Выполняется', tone: 'primary', spinning: true }
+  }
+  if (normalizedStatus === 'completed') {
+    return { label: 'Завершена', tone: 'success' }
+  }
+  if (normalizedStatus === 'failed') {
+    return { label: 'Ошибка', tone: 'danger' }
   }
   if (!hasStatusData.value) {
     return { label: 'Нет данных', tone: 'neutral' }
@@ -142,7 +184,7 @@ const needsFirstSync = computed(() =>
 const syncStats = computed(() => {
   const status = normalizedDashboardStatus.value
   const known = hasStatusData.value
-  const value = (number) => (known ? formatNumber(number) : '—')
+  const value = (number) => (known && number !== null && number !== undefined ? formatNumber(number) : '—')
   return [
     { key: 'processed', label: 'Обработано', value: value(status.processedCounterparties) },
     { key: 'new', label: 'Новых', value: value(status.newCounterparties) },
@@ -178,11 +220,12 @@ function createEmptyOverviewData() {
 function createEmptyDashboardStatus() {
   return {
     totalCounterparties: 0,
-    processedCounterparties: 0,
-    newCounterparties: 0,
-    updatedCounterparties: 0,
-    errorsCount: 0,
+    processedCounterparties: null,
+    newCounterparties: null,
+    updatedCounterparties: null,
+    errorsCount: null,
     progressPercent: 0,
+    progressAvailable: false,
     currentStep: null,
     currentPage: null,
     totalPages: null,
@@ -236,27 +279,25 @@ function normalizeDashboardStatus(source) {
     source?.totalCounterparties ?? source?.counterpartiesCount ?? lastRun.totalCounterparties,
     empty.totalCounterparties
   )
-  const processedCounterparties = toNumber(
-    source?.processedCounterparties ?? status.processed ?? lastRun.totalCounterparties,
-    empty.processedCounterparties
+  const processedCounterparties = toOptionalNumber(
+    source?.processedCounterparties ?? status.processed ?? lastRun.totalCounterparties
   )
-  const updatedCounterparties = toNumber(
-    source?.updatedCounterparties ?? status.upserted ?? lastRun.upsertedCounterparties,
-    empty.updatedCounterparties
+  const updatedCounterparties = toOptionalNumber(
+    source?.updatedCounterparties ?? status.upserted ?? lastRun.upsertedCounterparties
   )
-  const errorsCount = toNumber(
+  const errorsCount = toOptionalNumber(
     source?.errorsCount ?? source?.lastRunErrorsCount ?? (Array.isArray(source?.lastRunErrors) ? source.lastRunErrors.length : undefined),
-    empty.errorsCount
   )
   const progressSource = source?.progressPercent ?? status.progressPercent
 
   return {
     totalCounterparties,
     processedCounterparties,
-    newCounterparties: toNumber(source?.newCounterparties, empty.newCounterparties),
+    newCounterparties: toOptionalNumber(source?.newCounterparties),
     updatedCounterparties,
     errorsCount,
     progressPercent: normalizeProgressPercent(progressSource, processedCounterparties, totalCounterparties),
+    progressAvailable: Boolean(source?.progressAvailable ?? (progressSource !== null && progressSource !== undefined)),
     currentStep: source?.currentStep ?? status.currentStep ?? null,
     currentPage: normalizeOptionalNumber(source?.currentPage ?? status.currentPage),
     totalPages: normalizeOptionalNumber(source?.totalPages ?? status.totalPages),
@@ -265,32 +306,183 @@ function normalizeDashboardStatus(source) {
   }
 }
 
-function calculateSyncProgress(source) {
-  const total = Number(source?.connection?.counterpartyTotal || 0)
-  const localCount = Number(source?.local?.counterpartiesCount || 0)
-
-  if (total <= 0 || localCount <= 0) {
-    return 0
-  }
-
-  const percent = Math.round((localCount / total) * 100)
-
-  return Math.min(100, Math.max(0, percent))
-}
-
 function normalizeOptionalNumber(value) {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) && numberValue > 0 ? numberValue : null
 }
 
 function normalizeProgressPercent(progressPercent, processedCounterparties, totalCounterparties) {
-  let percent = Number(progressPercent)
+  let percent = progressPercent === null || progressPercent === undefined || progressPercent === ''
+    ? Number.NaN
+    : Number(progressPercent)
   if (!Number.isFinite(percent)) {
-    percent = totalCounterparties > 0 ? (processedCounterparties / totalCounterparties) * 100 : 0
+    percent = totalCounterparties > 0 && processedCounterparties !== null
+      ? (processedCounterparties / totalCounterparties) * 100
+      : 0
   }
 
   return Math.round(Math.min(100, Math.max(0, percent)))
 }
+
+function toOptionalNumber(value) {
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : null
+}
+
+function mapCatalogState(state) {
+  const run = state?.latestSyncRun || null
+  const acceptedRunPending = Boolean(syncAccepted.value) && String(run?.id || '').toLowerCase() !== String(syncAccepted.value.id || '').toLowerCase()
+  const connected = state?.moySklad?.connected
+  const mode = String(run?.executionMode || '').toLowerCase()
+  const totalCount = toNumber(run?.totalCount, 0)
+  const startedAt = run?.startedAt || run?.createdAt || null
+  const connectionDescription = state?.moySklad?.errorMessage || (
+    connected
+      ? 'Подключение к МоемуСкладу доступно'
+      : 'Проверьте подключение к МоемуСкладу'
+  )
+  const jobs = Array.isArray(state?.latestMergeJobs) ? state.latestMergeJobs : []
+  const mappedJobs = jobs.map((job) => {
+    const operations = Array.isArray(job?.operations) ? job.operations : []
+    const mainCounterparty = readJobPayload(job?.payload)
+    const duplicateCounterpartyIds = operations
+      .filter((operation) => String(operation?.type || '').toLowerCase() === 'archive_duplicate')
+      .map((operation) => String(operation?.counterpartyId || ''))
+      .filter(Boolean)
+
+    return {
+      id: job?.id,
+      status: job?.status,
+      primaryCounterpartyId: job?.mainCounterpartyId,
+      primaryCounterpartyName: mainCounterparty?.name || '',
+      secondaryCounterpartyIds: duplicateCounterpartyIds,
+      correlationId: job?.correlationId,
+      createdAt: job?.createdAt,
+      startedAt: job?.startedAt,
+      finishedAt: job?.completedAt,
+      operations: operations.map((operation) => ({
+        id: operation?.id,
+        type: operation?.type,
+        status: operation?.status,
+        counterpartyId: operation?.counterpartyId,
+        attemptCount: operation?.attemptCount,
+        errorCode: operation?.errorCode,
+        errorMessage: operation?.errorMessage,
+        startedAt: operation?.startedAt,
+        completedAt: operation?.completedAt
+      })),
+      documents: []
+    }
+  })
+  const activeStatuses = ['pending', 'queued', 'accepted', 'running']
+  const busyCounterpartyIds = mappedJobs
+    .filter((job) => activeStatuses.includes(String(job.status || '').toLowerCase()))
+    .flatMap((job) => [job.primaryCounterpartyId, ...job.secondaryCounterpartyIds])
+    .filter(Boolean)
+  const isSyncRunning = acceptedRunPending || activeStatuses.includes(String(run?.status || '').toLowerCase())
+
+  return {
+    overviewData: {
+      connection: {
+        ok: typeof connected === 'boolean' ? connected : null,
+        label: connected ? 'Подключено' : 'Не подключено',
+        description: connectionDescription,
+        counterpartyTotal: 0
+      },
+      local: { counterpartiesCount: toNumber(state?.counterpartyCount, 0) },
+      duplicates: { groupsCount: 0 },
+      mergeQueue: { jobsCount: mappedJobs.filter((job) => activeStatuses.includes(String(job.status || '').toLowerCase())).length },
+      lastSync: {
+        startedAtLabel: startedAt ? formatDateTime(startedAt) : null,
+        modeLabel: run ? `${mode === 'incremental' ? 'Инкрементная' : 'Полная'} синхронизация` : 'Ещё не запускалась'
+      }
+    },
+    dashboardStatusData: {
+      totalCounterparties: totalCount,
+      processedCounterparties: run?.status === 'completed' ? toOptionalNumber(run.processedCount) : null,
+      newCounterparties: null,
+      updatedCounterparties: null,
+      errorsCount: null,
+      progressPercent: run?.status === 'completed' ? normalizeProgressPercent(null, toOptionalNumber(run.processedCount), totalCount) : 0,
+      progressAvailable: run?.status === 'completed' && totalCount > 0,
+      currentStep: acceptedRunPending || run?.status === 'queued'
+        ? 'Ожидание запуска синхронизации'
+        : run?.status === 'running' ? 'Синхронизация контрагентов' : null,
+      currentPage: null,
+      totalPages: null,
+      running: isSyncRunning,
+      status: acceptedRunPending ? 'queued' : run?.status || 'idle'
+    },
+    mergeQueueData: { jobs: mappedJobs, busyCounterpartyIds }
+  }
+}
+
+function readJobPayload(payload) {
+  if (!payload || typeof payload !== 'string') {
+    return {}
+  }
+
+  try {
+    return JSON.parse(payload)
+  } catch {
+    return {}
+  }
+}
+
+function hasInjectedData() {
+  return Boolean(props.overviewData || props.dashboardStatusData || props.mergeQueueData)
+}
+
+async function loadCatalogState() {
+  stateLoading.value = true
+  stateLoadError.value = null
+  try {
+    const state = await getCatalogState()
+    catalogState.value = state
+    const mapped = mapCatalogState(state)
+    overviewData.value = normalizeOverviewData(mapped.overviewData)
+    dashboardStatus.value = normalizeDashboardStatus(mapped.dashboardStatusData)
+    queueData.value = mapped.mergeQueueData
+  } catch (error) {
+    stateLoadError.value = toUserError(error, 'Не удалось загрузить сводку')
+  } finally {
+    stateLoading.value = false
+    scheduleStateRefresh()
+  }
+}
+
+function scheduleStateRefresh() {
+  if (stateRefreshTimer) {
+    window.clearTimeout(stateRefreshTimer)
+    stateRefreshTimer = null
+  }
+
+  const syncIsRunning = normalizedDashboardStatus.value.running
+  const mergeIsRunning = queueData.value?.jobs?.some((job) => ['pending', 'queued', 'accepted', 'running'].includes(String(job?.status || '').toLowerCase()))
+  if (!syncIsRunning && !mergeIsRunning) {
+    return
+  }
+
+  stateRefreshTimer = window.setTimeout(() => {
+    void loadCatalogState()
+  }, 10_000)
+}
+
+onMounted(() => {
+  if (props.autoLoad && !hasInjectedData()) {
+    void loadCatalogState()
+  }
+})
+
+onBeforeUnmount(() => {
+  if (stateRefreshTimer) {
+    window.clearTimeout(stateRefreshTimer)
+  }
+})
 
 async function runSync(mode) {
   syncAccepted.value = null
@@ -311,6 +503,7 @@ async function runSync(mode) {
       status: accepted.status || 'queued',
       currentStep: 'Ожидание запуска синхронизации',
     }
+    void loadCatalogState()
   } catch (error) {
     syncActionError.value = toUserError(
       error,
@@ -351,7 +544,7 @@ function displayValue(value) {
       </template>
     </PageHeader>
 
-    <ErrorNotice v-if="loadError" :error="loadError" fallback="Не удалось загрузить сводку" />
+    <ErrorNotice v-if="currentLoadError" :error="currentLoadError" fallback="Не удалось загрузить сводку" />
 
     <section class="overview-kpis" aria-label="Сводка">
       <div class="overview-kpis__connection">
@@ -361,7 +554,7 @@ function displayValue(value) {
           </span>
           <span class="overview-kpis__label">МойСклад</span>
         </div>
-        <el-skeleton v-if="loading" animated :rows="1" />
+        <el-skeleton v-if="isLoading" animated :rows="1" />
         <template v-else>
           <StatusBadge :label="connectionBadge.label" :tone="connectionBadge.tone" />
           <span class="overview-kpis__hint">{{ connectionHint }}</span>
@@ -379,22 +572,22 @@ function displayValue(value) {
         :tone="tile.tone"
         :to="tile.to"
         :link-label="tile.linkLabel"
-        :loading="loading"
+        :loading="isLoading"
       />
     </section>
 
     <div class="overview-grid">
       <MergeQueuePanel
         class="overview-grid__queue"
-        :data="mergeQueueData"
-        :loading="loading"
-        :load-error="loadError ? 'Очередь объединений недоступна' : null"
+        :data="queueData"
+        :loading="isLoading"
+        :load-error="currentLoadError ? 'Очередь объединений недоступна' : null"
       />
 
       <SectionPanel class="sync-panel" title="Синхронизация" subtitle="Загрузка контрагентов из МоегоСклада">
         <template #actions>
           <StatusBadge
-            v-if="!loading"
+            v-if="!isLoading"
             :label="syncState.label"
             :tone="syncState.tone"
             :spinning="syncState.spinning"
@@ -402,7 +595,7 @@ function displayValue(value) {
           />
         </template>
 
-        <el-skeleton v-if="loading" :rows="5" animated />
+        <el-skeleton v-if="isLoading" :rows="5" animated />
 
         <div v-else class="sync-panel__body">
           <p v-if="needsFirstSync" class="sync-panel__hint">
@@ -411,21 +604,17 @@ function displayValue(value) {
 
           <div class="sync-panel__progress">
             <div class="sync-panel__progress-head">
-              <span class="sync-panel__progress-label">Загружено в базу</span>
-              <span class="sync-panel__progress-value app-nums">{{ syncProgressPercent }}%</span>
+              <span class="sync-panel__progress-label">Обработка последнего запуска</span>
+              <span v-if="syncProgressAvailable" class="sync-panel__progress-value app-nums">{{ syncProgressPercent }}%</span>
             </div>
             <el-progress
+              v-if="syncProgressAvailable"
               :percentage="syncProgressPercent"
               :stroke-width="8"
               :show-text="false"
               :status="syncProgressPercent === 100 ? 'success' : undefined"
             />
-            <span class="sync-panel__progress-caption app-nums">
-              <template v-if="hasOverviewData && overviewData.connection.counterpartyTotal > 0">
-                {{ formatNumber(overviewData.local.counterpartiesCount) }} из {{ formatNumber(overviewData.connection.counterpartyTotal) }} контрагентов
-              </template>
-              <template v-else>Нет данных о количестве контрагентов</template>
-            </span>
+            <span class="sync-panel__progress-caption app-nums">{{ syncProgressCaption }}</span>
           </div>
 
           <dl class="sync-panel__stats">
@@ -463,20 +652,20 @@ function displayValue(value) {
             <el-button
               type="primary"
               :loading="syncActionMode === 'full'"
-              :disabled="syncActionLoading || loading"
+              :disabled="syncActionLoading || isLoading"
               @click="handleFullSync"
             >
               Полная синхронизация
             </el-button>
             <el-button
               :loading="syncActionMode === 'incremental'"
-              :disabled="syncActionLoading || loading"
+              :disabled="syncActionLoading || isLoading"
               @click="handleIncrementalSync"
             >
               Инкрементная
             </el-button>
           </div>
-          <el-tooltip v-if="normalizedDashboardStatus.running && !loading" content="Остановка синхронизации пока недоступна" placement="top">
+          <el-tooltip v-if="normalizedDashboardStatus.running && !isLoading" content="Остановка синхронизации пока недоступна" placement="top">
             <span>
               <el-button text type="danger" :icon="VideoPause" disabled>Остановить</el-button>
             </span>

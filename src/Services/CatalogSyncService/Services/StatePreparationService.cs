@@ -2,6 +2,7 @@ using MsContractor.CatalogSyncService.Clients;
 using MsContractor.CatalogSyncService.Models;
 using MsContractor.CatalogSyncService.Models.Exceptions;
 using MsContractor.CatalogSyncService.Repositories;
+using MsContractor.Contracts.Internal;
 
 namespace MsContractor.CatalogSyncService.Services;
 
@@ -38,6 +39,7 @@ public sealed class StatePreparationService : IStatePreparationService
         CancellationToken cancellationToken)
     {
         var latestSyncRun = await _syncRunRepository.GetLatestAsync(accountId, cancellationToken);
+        var counterpartyCount = await _syncRunRepository.GetCounterpartyCountAsync(accountId, cancellationToken);
         var latestMergeJobs = await _mergeJobRepository.GetLatestAsync(accountId, cancellationToken);
 
         MoySkladConnectionState moySkladState;
@@ -61,6 +63,7 @@ public sealed class StatePreparationService : IStatePreparationService
             accountId,
             _timeProvider.GetUtcNow(),
             DatabaseConnected: true,
+            counterpartyCount,
             latestSyncRun,
             latestMergeJobs,
             moySkladState);

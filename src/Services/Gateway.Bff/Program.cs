@@ -47,6 +47,12 @@ builder.Services.AddHttpClient<ICatalogSyncClient, CatalogSyncClient>(client =>
         catalogSyncBaseUrl.EndsWith('/') ? catalogSyncBaseUrl : $"{catalogSyncBaseUrl}/");
     client.Timeout = TimeSpan.FromSeconds(15);
 });
+builder.Services.AddHttpClient<ICatalogSyncStateClient, CatalogSyncClient>(client =>
+{
+    client.BaseAddress = new Uri(
+        catalogSyncBaseUrl.EndsWith('/') ? catalogSyncBaseUrl : $"{catalogSyncBaseUrl}/");
+    client.Timeout = TimeSpan.FromSeconds(50);
+});
 builder.Services.AddHttpClient<ICatalogSettingsClient, CatalogSyncClient>(client =>
 {
     client.BaseAddress = new Uri(

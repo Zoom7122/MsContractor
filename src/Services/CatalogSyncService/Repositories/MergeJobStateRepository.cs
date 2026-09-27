@@ -1,5 +1,5 @@
 using Microsoft.EntityFrameworkCore;
-using MsContractor.CatalogSyncService.Models;
+using MsContractor.Contracts.Internal;
 using MsContractor.CatalogSyncService.Persistence;
 
 namespace MsContractor.CatalogSyncService.Repositories;
@@ -25,13 +25,16 @@ public sealed class MergeJobStateRepository : IMergeJobStateRepository
         CancellationToken cancellationToken)
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
-        return await _dbContext.MergeJobs
+        var jobs = await _dbContext.MergeJobs
             .AsNoTracking()
             .Where(job => job.AccountId == accountId)
+            .Include(job => job.Operations)
             .OrderByDescending(job => job.CreatedAt)
             .ThenByDescending(job => job.Id)
             .Take(100)
-            .Select(job => new MergeJobState(
+            .ToListAsync(cancellationToken);
+
+        return jobs.Select(job => new MergeJobState(
                 job.Id,
                 job.MessageId,
                 job.CorrelationId,
@@ -44,7 +47,20 @@ public sealed class MergeJobStateRepository : IMergeJobStateRepository
                 job.CreatedAt,
                 job.StartedAt,
                 job.CompletedAt,
-                job.UpdatedAt))
-            .ToListAsync(cancellationToken);
+                job.UpdatedAt,
+                job.Operations
+                    .OrderBy(operation => operation.Sequence)
+                    .Select(operation => new MergeOperationState(
+                        operation.Id,
+                        operation.OperationType,
+                        operation.CounterpartyId,
+                        operation.Status,
+                        operation.AttemptCount,
+                        operation.ErrorCode,
+                        operation.ErrorMessage,
+                        operation.StartedAt,
+                        operation.CompletedAt))
+                    .ToArray()))
+            .ToArray();
     }
 }

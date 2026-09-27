@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
 using MsContractor.BuildingBlocks.Security;
-using MsContractor.CatalogSyncService.Models;
 using MsContractor.CatalogSyncService.Services;
 using MsContractor.Contracts.Internal;
 

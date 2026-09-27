@@ -32,13 +32,13 @@ const empty = variant('empty')
       <div class="story-page"><MoyskladOverviewView v-bind="empty" /></div>
     </Variant>
     <Variant title="Загрузка">
-      <div class="story-page"><MoyskladOverviewView loading /></div>
+      <div class="story-page"><MoyskladOverviewView loading :auto-load="false" /></div>
     </Variant>
     <Variant title="Ошибка">
-      <div class="story-page"><MoyskladOverviewView load-error="Сервис временно недоступен" /></div>
+      <div class="story-page"><MoyskladOverviewView load-error="Сервис временно недоступен" :auto-load="false" /></div>
     </Variant>
     <Variant title="Источник данных не подключён">
-      <div class="story-page"><MoyskladOverviewView /></div>
+      <div class="story-page"><MoyskladOverviewView :auto-load="false" /></div>
     </Variant>
   </Story>
 </template>

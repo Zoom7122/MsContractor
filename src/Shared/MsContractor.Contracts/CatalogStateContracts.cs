@@ -1,13 +1,27 @@
-namespace MsContractor.CatalogSyncService.Models;
+namespace MsContractor.Contracts.Internal;
 
 public sealed record SyncRunState(
+    Guid Id,
     string Status,
+    int ProcessedCount,
     int TotalCount,
     DateTimeOffset CreatedAt,
+    DateTimeOffset? StartedAt,
     DateTimeOffset UpdatedAt,
     string ExecutionMode,
     string? ErrorCode,
     string? ErrorMessage);
+
+public sealed record MergeOperationState(
+    Guid Id,
+    string Type,
+    Guid CounterpartyId,
+    string Status,
+    int AttemptCount,
+    string? ErrorCode,
+    string? ErrorMessage,
+    DateTimeOffset? StartedAt,
+    DateTimeOffset? CompletedAt);
 
 public sealed record MergeJobState(
     Guid Id,
@@ -22,7 +36,8 @@ public sealed record MergeJobState(
     DateTimeOffset CreatedAt,
     DateTimeOffset? StartedAt,
     DateTimeOffset? CompletedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    IReadOnlyList<MergeOperationState> Operations);
 
 public sealed record MoySkladConnectionState(
     bool Connected,
@@ -33,6 +48,7 @@ public sealed record CatalogStateResponse(
     Guid AccountId,
     DateTimeOffset CheckedAt,
     bool DatabaseConnected,
+    int CounterpartyCount,
     SyncRunState? LatestSyncRun,
     IReadOnlyList<MergeJobState> LatestMergeJobs,
     MoySkladConnectionState MoySklad);

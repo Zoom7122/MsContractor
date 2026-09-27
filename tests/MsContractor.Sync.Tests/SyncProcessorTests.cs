@@ -1145,6 +1145,12 @@ public sealed class SyncProcessorTests
     private sealed class BlockingEgressClient(
         Func<PageRequest, CancellationToken, Task<string>> responder) : IMoySkladEgressClient
     {
+        public Task<MoySkladConnectionCheckResponse> CheckConnectionAsync(
+            Guid accountId,
+            string correlationId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new MoySkladConnectionCheckResponse(true));
+
         public async Task<MoySkladRawResponse> GetCounterpartiesAsync(
             Guid accountId,
             bool archived,

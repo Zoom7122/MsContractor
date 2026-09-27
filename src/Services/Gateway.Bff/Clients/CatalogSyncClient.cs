@@ -9,6 +9,14 @@ public interface ICatalogSyncClient
     Task<SyncAccepted> StartAsync(SyncStartRequest request, CancellationToken cancellationToken);
 }
 
+public interface ICatalogSyncStateClient
+{
+    Task<CatalogStateResponse> GetStateAsync(
+        Guid accountId,
+        string correlationId,
+        CancellationToken cancellationToken);
+}
+
 public interface ICatalogSettingsClient
 {
     Task SaveSettingsAsync(
@@ -17,7 +25,7 @@ public interface ICatalogSettingsClient
         CancellationToken cancellationToken);
 }
 
-public sealed class CatalogSyncClient : ICatalogSyncClient, ICatalogSettingsClient
+public sealed class CatalogSyncClient : ICatalogSyncClient, ICatalogSyncStateClient, ICatalogSettingsClient
 {
     private readonly HttpClient _httpClient;
     private readonly IConfiguration _configuration;
@@ -65,6 +73,52 @@ public sealed class CatalogSyncClient : ICatalogSyncClient, ICatalogSettingsClie
             return accepted ?? throw new CatalogSyncUnavailableException("CatalogSyncService returned an invalid response.");
         }
     }
+
+    public async Task<CatalogStateResponse> GetStateAsync(
+        Guid accountId,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"internal/accounts/{accountId:D}/state");
+        request.Headers.TryAddWithoutValidation(
+            InternalApiHeaders.ApiKey,
+            _configuration["InternalApi:Key"]);
+        request.Headers.TryAddWithoutValidation(
+            InternalApiHeaders.CorrelationId,
+            correlationId);
+
+        try
+        {
+            using var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                throw new CatalogSyncUnavailableException("CatalogSyncService rejected the state request.");
+
+            return await response.Content.ReadFromJsonAsync<CatalogStateResponse>(cancellationToken)
+                ?? throw new CatalogSyncUnavailableException("CatalogSyncService returned an invalid state response.");
+        }
+        catch (CatalogSyncUnavailableException)
+        {
+            throw;
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new CatalogSyncUnavailableException("CatalogSyncService is unavailable.", exception);
+        }
+        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new CatalogSyncUnavailableException("CatalogSyncService timed out.", exception);
+        }
+        catch (System.Text.Json.JsonException exception)
+        {
+            throw new CatalogSyncUnavailableException("CatalogSyncService returned an invalid state response.", exception);
+        }
+    }
+
     public async Task SaveSettingsAsync(
         Guid accountId,
         CatalogSettingsRequest settings,

@@ -420,7 +420,7 @@ async function saveSettings() {
         <el-button
           type="primary"
           :loading="saving"
-          :disabled="!isDirty || saving"
+          :disabled="loading || saving"
           @click="saveSettings"
         >Сохранить</el-button>
       </div>

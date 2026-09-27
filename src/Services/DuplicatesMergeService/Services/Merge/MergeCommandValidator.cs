@@ -3,6 +3,7 @@ using MsContractor.CatalogSyncService.Models;
 using MsContractor.Contracts.Merge;
 using MsContractor.DuplicatesMergeService.Models.Exceptions;
 using MsContractor.DuplicatesMergeService.Repositories;
+using MsContractor.DuplicatesMergeService.Services;
 
 namespace MsContractor.DuplicatesMergeService.Services.Merge;
 
@@ -85,13 +86,35 @@ public sealed class MergeCommandValidator(
             job.CorrelationId != command.CorrelationId ||
             job.MainCounterpartyId != command.MainCounterpartyId ||
             job.RequestedByUserId != command.RequestedByUserId ||
-            snapshot != command.MainCounterparty ||
+            !SnapshotsEqual(snapshot, command.MainCounterparty) ||
             !archiveIds.SequenceEqual(command.DuplicateCounterpartyIds))
         {
             throw new MergeCommandRejectedException("Merge command does not match its durable job.");
         }
 
         return snapshot;
+    }
+
+    private static bool SnapshotsEqual(MergeMainCounterpartyDto left, MergeMainCounterpartyDto right)
+    {
+        if (left.Name != right.Name || left.Email != right.Email || left.Phone != right.Phone ||
+            left.Description != right.Description)
+        {
+            return false;
+        }
+
+        var leftAttributes = left.Attributes ?? [];
+        var rightAttributes = right.Attributes ?? [];
+        return leftAttributes.Count == rightAttributes.Count &&
+               leftAttributes.Zip(rightAttributes).All(pair =>
+                   pair.First.Id == pair.Second.Id &&
+                   pair.First.Type == pair.Second.Type &&
+                   pair.First.SourceCounterpartyId == pair.Second.SourceCounterpartyId &&
+                   pair.First.Clear == pair.Second.Clear &&
+                   pair.First.ValueJson == pair.Second.ValueJson &&
+                   pair.First.FileJson == pair.Second.FileJson &&
+                   MergeCounterpartyAttributesParser.ValuesEqual(pair.First.Value, pair.Second.Value) &&
+                   MergeCounterpartyAttributesParser.ValuesEqual(pair.First.File, pair.Second.File));
     }
 
     private static InboxMessage NewInbox(Guid messageId, DateTimeOffset now) => new()

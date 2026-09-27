@@ -39,6 +39,7 @@ const submitError = ref(null)
 const counterparties = ref([])
 const primaryCounterpartyId = ref('')
 const fieldSelections = ref(createEmptyFieldSelections())
+const attributeSelections = ref({})
 
 let previewRequestToken = 0
 
@@ -58,6 +59,29 @@ const fieldRows = computed(() => [
   { key: 'email', label: 'Email' },
   { key: 'phone', label: 'Телефон' }
 ])
+
+const attributeRows = computed(() => {
+  const attributesById = new Map()
+  for (const counterparty of counterparties.value) {
+    for (const attribute of counterparty.attributes) {
+      if (!attribute.id) {
+        continue
+      }
+      const current = attributesById.get(attribute.id)
+      if (!current) {
+        attributesById.set(attribute.id, {
+          id: attribute.id,
+          name: attribute.name,
+          type: attribute.type
+        })
+      } else {
+        current.name ||= attribute.name
+        current.type ||= attribute.type
+      }
+    }
+  }
+  return [...attributesById.values()].sort((left, right) => (left.name || left.id).localeCompare(right.name || right.id, 'ru'))
+})
 
 const steps = [
   { id: 'merge-step-primary', label: 'Основной контрагент' },
@@ -98,13 +122,30 @@ const changedFields = computed(() => {
     return []
   }
 
-  return fieldRows.value
+  const standardChanges = fieldRows.value
     .filter((field) => (fieldSelections.value[field.key].value || '') !== (primary[field.key] || ''))
     .map((field) => ({
       ...field,
       before: primary[field.key] || '',
       after: fieldSelections.value[field.key].value || ''
     }))
+
+  const attributeChanges = attributeRows.value
+    .filter(attribute => isAttributeChanged(attribute))
+    .map(attribute => {
+      const current = attributeValue(primary, attribute)
+      const selection = attributeSelections.value[attribute.id]
+      return {
+        key: `attribute-${attribute.id}`,
+        label: attribute.name || `Дополнительное поле ${attribute.id}`,
+        before: formatAttributeValue(attribute, current, attributeValueJson(primary, attribute)),
+        after: selection.clear
+          ? 'пусто'
+          : formatAttributeValue(attribute, selectedAttributeValue(attribute, selection), selectedAttributeValueJson(attribute, selection))
+      }
+    })
+
+  return [...standardChanges, ...attributeChanges]
 })
 
 /** Non-empty duplicate values that will not reach the final card. */
@@ -120,6 +161,25 @@ const droppedValues = computed(() => {
       }
       seen.add(value)
       result.push({ field: field.label, value, source: counterparty.name || 'Контрагент' })
+    }
+  }
+
+  for (const attribute of attributeRows.value) {
+    const selection = attributeSelections.value[attribute.id]
+    const finalKey = selection?.clear ? 'null' : selectedAttributeValueJson(attribute, selection)
+    const seen = new Set()
+    for (const counterparty of duplicateCounterparties.value) {
+      const value = attributeValue(counterparty, attribute)
+      const valueKey = attributeValueJson(counterparty, attribute)
+      if (isEmptyAttributeValue(value) || valueKey === finalKey || seen.has(valueKey)) {
+        continue
+      }
+      seen.add(valueKey)
+      result.push({
+        field: attribute.name || 'Дополнительное поле',
+        value: formatAttributeValue(attribute, value, valueKey),
+        source: counterparty.name || 'Контрагент'
+      })
     }
   }
   return result
@@ -167,6 +227,13 @@ watch(primaryCounterpartyId, (nextId) => {
       applyFieldSelection(fieldKey, nextId)
     }
   }
+
+  for (const attribute of attributeRows.value) {
+    const currentSelection = attributeSelections.value[attribute.id]
+    if (!currentSelection?.sourceCounterpartyId || !counterpartyExists(currentSelection.sourceCounterpartyId)) {
+      applyAttributeSelection(attribute, nextId)
+    }
+  }
 })
 
 watch(
@@ -186,6 +253,7 @@ async function loadPreview() {
     counterparties.value = []
     primaryCounterpartyId.value = ''
     fieldSelections.value = createEmptyFieldSelections()
+    attributeSelections.value = {}
     return
   }
 
@@ -205,6 +273,7 @@ async function loadPreview() {
     counterparties.value = normalizeCounterparties(response?.counterparties)
     primaryCounterpartyId.value = counterparties.value.find((item) => !item.archived)?.id || ''
     initializeFieldSelections()
+    initializeAttributeSelections()
   } catch (requestError) {
     if (requestToken !== previewRequestToken) {
       return
@@ -213,6 +282,7 @@ async function loadPreview() {
     counterparties.value = []
     primaryCounterpartyId.value = ''
     fieldSelections.value = createEmptyFieldSelections()
+    attributeSelections.value = {}
   } finally {
     if (requestToken === previewRequestToken) {
       loading.value = false
@@ -232,6 +302,15 @@ function initializeFieldSelections() {
   }
 
   fieldSelections.value = nextSelections
+}
+
+function initializeAttributeSelections() {
+  const primaryId = primaryCounterpartyId.value
+  const nextSelections = {}
+  for (const attribute of attributeRows.value) {
+    nextSelections[attribute.id] = buildAttributeSelection(attribute, primaryId)
+  }
+  attributeSelections.value = nextSelections
 }
 
 function handlePrimaryChange(counterpartyId) {
@@ -282,6 +361,28 @@ function fieldOptions(fieldKey) {
   return options.sort((left, right) => Number(left.value === '') - Number(right.value === ''))
 }
 
+function attributeOptions(attribute) {
+  const optionsByValue = new Map()
+  for (const counterparty of counterparties.value) {
+    const value = attributeValue(counterparty, attribute)
+    const valueJson = attributeValueJson(counterparty, attribute)
+    const key = valueJson
+    const current = optionsByValue.get(key)
+    if (current) {
+      current.sources.push(counterparty)
+    } else {
+      optionsByValue.set(key, { key, value, valueJson, sources: [counterparty], clear: false })
+    }
+  }
+
+  const options = [...optionsByValue.values()]
+    .sort((left, right) => Number(isEmptyAttributeValue(left.value)) - Number(isEmptyAttributeValue(right.value)))
+  if (options.some(option => option.value !== null && option.value !== undefined)) {
+    options.push({ key: '__clear__', value: null, sources: [], clear: true })
+  }
+  return options
+}
+
 function isOptionSelected(fieldKey, option) {
   return (fieldSelections.value[fieldKey].value || '') === option.value
 }
@@ -289,6 +390,114 @@ function isOptionSelected(fieldKey, option) {
 function selectOption(fieldKey, option) {
   const source = option.sources.find((item) => item.id === primaryCounterpartyId.value) || option.sources[0]
   handleFieldSelection(fieldKey, source.id)
+}
+
+function attributeValue(counterparty, attribute) {
+  const source = counterparty?.attributes?.find(item => item.id === attribute.id)
+  return source ? (attribute.type === 'file' ? source.file ?? null : source.value ?? null) : null
+}
+
+function attributeValueJson(counterparty, attribute) {
+  const source = counterparty?.attributes?.find(item => item.id === attribute.id)
+  return source ? (attribute.type === 'file' ? source.fileJson : source.valueJson) || 'null' : 'null'
+}
+
+function selectedAttributeValue(attribute, selection) {
+  if (!selection || selection.clear) {
+    return null
+  }
+  return attribute.type === 'file' ? selection.file ?? null : selection.value ?? null
+}
+
+function selectedAttributeValueJson(attribute, selection) {
+  if (!selection || selection.clear) {
+    return 'null'
+  }
+  return attribute.type === 'file' ? selection.fileJson : selection.valueJson
+}
+
+function buildAttributeSelection(attribute, counterpartyId) {
+  const source = counterparties.value.find(item => item.id === counterpartyId)
+  const rawAttribute = source?.attributes?.find(item => item.id === attribute.id)
+  return {
+    sourceCounterpartyId: counterpartyId,
+    value: rawAttribute?.value ?? null,
+    file: rawAttribute?.file ?? null,
+    valueJson: rawAttribute?.valueJson ?? 'null',
+    fileJson: rawAttribute?.fileJson ?? 'null',
+    clear: false
+  }
+}
+
+function applyAttributeSelection(attribute, counterpartyId) {
+  const source = counterparties.value.find(item => item.id === counterpartyId)
+  if (!source) {
+    return
+  }
+  attributeSelections.value[attribute.id] = buildAttributeSelection(attribute, counterpartyId)
+}
+
+function selectAttributeOption(attribute, option) {
+  if (option.clear) {
+    attributeSelections.value[attribute.id] = {
+      sourceCounterpartyId: primaryCounterpartyId.value,
+      value: null,
+      file: null,
+      valueJson: 'null',
+      fileJson: 'null',
+      clear: true
+    }
+    return
+  }
+
+  const source = option.sources.find(item => item.id === primaryCounterpartyId.value) || option.sources[0]
+  if (source) {
+    applyAttributeSelection(attribute, source.id)
+  }
+}
+
+function isAttributeOptionSelected(attribute, option) {
+  const selection = attributeSelections.value[attribute.id]
+  if (option.clear) {
+    return Boolean(selection?.clear)
+  }
+  return Boolean(selection) && !selection.clear &&
+    selectedAttributeValueJson(attribute, selection) === option.valueJson
+}
+
+function isAttributeChanged(attribute) {
+  const primary = primaryCounterparty.value
+  const selection = attributeSelections.value[attribute.id]
+  if (!primary || !selection) {
+    return false
+  }
+  return attributeValueJson(primary, attribute) !== selectedAttributeValueJson(attribute, selection)
+}
+
+function isEmptyAttributeValue(value) {
+  return value === null || value === undefined || value === ''
+}
+
+function formatAttributeValue(attribute, value, valueJson = null) {
+  if (value === null || value === undefined) {
+    return 'Не задано'
+  }
+  if (value === '') {
+    return 'Пустая строка'
+  }
+  if (['long', 'double'].includes(attribute.type) && valueJson) {
+    return valueJson
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'Да' : 'Нет'
+  }
+  if (attribute.type === 'file' && value && typeof value === 'object') {
+    return String(value.filename || 'Файл')
+  }
+  if (value && typeof value === 'object') {
+    return String(value.filename || value.name || value.meta?.href || JSON.stringify(value))
+  }
+  return String(value)
 }
 
 function optionSourcesLabel(option) {
@@ -315,7 +524,22 @@ function buildMergeJobRequest() {
       name: fieldSelections.value.name.value || '',
       description: fieldSelections.value.description.value || '',
       email: fieldSelections.value.email.value || '',
-      phone: fieldSelections.value.phone.value || ''
+      phone: fieldSelections.value.phone.value || '',
+      attributes: attributeRows.value
+        .filter(attribute => isAttributeChanged(attribute))
+        .map(attribute => {
+          const selection = attributeSelections.value[attribute.id]
+          return {
+            id: attribute.id,
+            type: attribute.type,
+            sourceCounterpartyId: selection.sourceCounterpartyId,
+            value: selection.value,
+            file: selection.file,
+            valueJson: selection.valueJson,
+            fileJson: selection.fileJson,
+            clear: Boolean(selection.clear)
+          }
+        })
     }
   }
 }
@@ -393,7 +617,18 @@ function normalizeCounterparties(rows) {
       email: String(row?.email || ''),
       phone: String(row?.phone || ''),
       archived: Boolean(row?.archived),
-      updatedAt: String(row?.updatedAt || '')
+      updatedAt: String(row?.updatedAt || ''),
+      attributes: Array.isArray(row?.attributes)
+        ? row.attributes.map(attribute => ({
+            id: String(attribute?.id || ''),
+            name: String(attribute?.name || ''),
+            type: String(attribute?.type || ''),
+            value: attribute?.value ?? null,
+            file: attribute?.file ?? null,
+            valueJson: String(attribute?.valueJson ?? 'null'),
+            fileJson: String(attribute?.fileJson ?? 'null')
+          })).filter(attribute => attribute.id)
+        : []
     }
   }).filter((row) => row.id)
 }
@@ -630,6 +865,43 @@ function createEmptyFieldSelections() {
                   <span class="merge-option__source">{{ optionSourcesLabel(option) }}</span>
                   <el-icon v-if="isOptionSelected(field.key, option)" class="merge-option__check" aria-hidden="true"><Check /></el-icon>
                 </button>
+              </div>
+            </div>
+
+            <div v-if="attributeRows.length" class="merge-attributes">
+              <div
+                v-for="attribute in attributeRows"
+                :key="attribute.id"
+                class="merge-field"
+                :class="{ 'merge-field--changed': isAttributeChanged(attribute) }"
+              >
+                <div class="merge-field__label">
+                  <span class="merge-field__name">{{ attribute.name || `Дополнительное поле ${attribute.id}` }}</span>
+                  <span class="merge-field__type">{{ attribute.type }}</span>
+                  <span v-if="isAttributeChanged(attribute)" class="merge-field__state merge-field__state--changed">изменится</span>
+                  <span v-else class="merge-field__state">без изменений</span>
+                </div>
+
+                <div class="merge-field__options" role="radiogroup" :aria-label="attribute.name || attribute.id">
+                  <button
+                    v-for="option in attributeOptions(attribute)"
+                    :key="option.key"
+                    type="button"
+                    role="radio"
+                    class="merge-option"
+                    :class="{
+                      'merge-option--selected': isAttributeOptionSelected(attribute, option),
+                      'merge-option--empty': option.clear || isEmptyAttributeValue(option.value),
+                      'merge-option--text': attribute.type === 'text'
+                    }"
+                    :aria-checked="isAttributeOptionSelected(attribute, option)"
+                    @click="selectAttributeOption(attribute, option)"
+                  >
+                    <span class="merge-option__value">{{ option.clear ? 'Очистить поле' : formatAttributeValue(attribute, option.value) }}</span>
+                    <span class="merge-option__source">{{ option.clear ? 'значение будет удалено' : optionSourcesLabel(option) }}</span>
+                    <el-icon v-if="isAttributeOptionSelected(attribute, option)" class="merge-option__check" aria-hidden="true"><Check /></el-icon>
+                  </button>
+                </div>
               </div>
             </div>
           </div>

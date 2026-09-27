@@ -53,8 +53,9 @@ public sealed class MergeJobCreator : IMergeJobCreator
         CancellationToken cancellationToken)
     {
         ValidateShape(request);
+        var mainCounterparty = NormalizeAttributeJson(request.MainCounterparty);
         var ids = request.DuplicateCounterpartyIds.Append(request.MainCounterpartyId).ToArray();
-        var counterparties = await _counterpartyRepository.GetAvailabilityAsync(accountId, ids, cancellationToken);
+        var counterparties = await _counterpartyRepository.GetSelectionAsync(accountId, ids, cancellationToken);
         if (counterparties.Count != ids.Length)
         {
             throw new MergeRequestException(
@@ -62,6 +63,8 @@ public sealed class MergeJobCreator : IMergeJobCreator
                 "COUNTERPARTY_NOT_FOUND",
                 "One or more counterparties were not found.");
         }
+
+        ValidateAttributes(mainCounterparty.Attributes, counterparties);
 
         if (counterparties.Single(item => item.Id == request.MainCounterpartyId).Archived)
         {
@@ -82,7 +85,7 @@ public sealed class MergeJobCreator : IMergeJobCreator
             accountId,
             request.MainCounterpartyId,
             request.DuplicateCounterpartyIds,
-            request.MainCounterparty,
+            mainCounterparty,
             requestedByUserId,
             now);
         var job = new MergeJob
@@ -95,7 +98,7 @@ public sealed class MergeJobCreator : IMergeJobCreator
             RequestedByUserId = requestedByUserId,
             Status = MergeJobStatuses.Pending,
             PayloadVersion = 1,
-            Payload = JsonSerializer.Serialize(request.MainCounterparty, JsonOptions),
+            Payload = JsonSerializer.Serialize(mainCounterparty, JsonOptions),
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -154,6 +157,7 @@ public sealed class MergeJobCreator : IMergeJobCreator
 
     private static void ValidateShape(CreateMergeJobRequest request)
     {
+        var attributes = request.MainCounterparty?.Attributes;
         if (request.MainCounterpartyId == Guid.Empty ||
             request.MainCounterparty is null ||
             string.IsNullOrWhiteSpace(request.MainCounterparty.Name) ||
@@ -164,12 +168,110 @@ public sealed class MergeJobCreator : IMergeJobCreator
             request.DuplicateCounterpartyIds.Count == 0 ||
             request.DuplicateCounterpartyIds.Any(id => id == Guid.Empty) ||
             request.DuplicateCounterpartyIds.Distinct().Count() != request.DuplicateCounterpartyIds.Count ||
-            request.DuplicateCounterpartyIds.Contains(request.MainCounterpartyId))
+            request.DuplicateCounterpartyIds.Contains(request.MainCounterpartyId) ||
+            attributes is not null &&
+            (attributes.Any(attribute => attribute is null || attribute.Id == Guid.Empty ||
+                                          attribute.SourceCounterpartyId == Guid.Empty ||
+                                          string.IsNullOrWhiteSpace(attribute.Type) || attribute.Type.Length > 255) ||
+             attributes.Select(attribute => attribute.Id).Distinct().Count() != attributes.Count))
         {
-            throw new MergeRequestException(
-                MergeRequestError.Invalid,
-                "INVALID_MERGE_REQUEST",
-                "Merge request contains invalid fields.");
+            throw InvalidMergeRequest();
         }
     }
+
+    private static void ValidateAttributes(
+        IReadOnlyList<MergeMainCounterpartyAttributeDto>? requestedAttributes,
+        IReadOnlyList<CounterpartySelectionItem> counterparties)
+    {
+        if (requestedAttributes is null or { Count: 0 })
+            return;
+
+        var counterpartiesById = counterparties.ToDictionary(item => item.Id);
+        var parsedAttributes = counterparties.ToDictionary(
+            item => item.Id,
+            item => MergeCounterpartyAttributesParser.Parse(item.RawJson));
+        var knownAttributes = parsedAttributes.Values
+            .SelectMany(attributes => attributes)
+            .GroupBy(attribute => attribute.Id)
+            .ToDictionary(group => group.Key, group => group.ToArray());
+
+        foreach (var requested in requestedAttributes)
+        {
+            if (!counterpartiesById.ContainsKey(requested.SourceCounterpartyId) ||
+                !knownAttributes.TryGetValue(requested.Id, out var definitions) ||
+                definitions.Any(attribute => !string.IsNullOrWhiteSpace(attribute.Type) && attribute.Type != requested.Type))
+            {
+                throw InvalidMergeRequest();
+            }
+
+            if (requested.Clear)
+            {
+                if (!MergeCounterpartyAttributesParser.ValuesEqual(requested.Value, null) ||
+                    !MergeCounterpartyAttributesParser.ValuesEqual(requested.File, null))
+                {
+                    throw InvalidMergeRequest();
+                }
+
+                continue;
+            }
+
+            var sourceAttribute = parsedAttributes[requested.SourceCounterpartyId]
+                .FirstOrDefault(attribute => attribute.Id == requested.Id);
+            if (sourceAttribute is null)
+            {
+                if (!MergeCounterpartyAttributesParser.ValuesEqual(requested.Value, null) ||
+                    !MergeCounterpartyAttributesParser.ValuesEqual(requested.File, null))
+                {
+                    throw InvalidMergeRequest();
+                }
+
+                continue;
+            }
+
+            if (sourceAttribute.Type != requested.Type ||
+                !MergeCounterpartyAttributesParser.ValuesEqual(sourceAttribute.Value, requested.Value) ||
+                !MergeCounterpartyAttributesParser.ValuesEqual(sourceAttribute.File, requested.File))
+            {
+                throw InvalidMergeRequest();
+            }
+        }
+    }
+
+    private static MergeMainCounterpartyDto NormalizeAttributeJson(MergeMainCounterpartyDto mainCounterparty)
+    {
+        if (mainCounterparty.Attributes is null or { Count: 0 })
+            return mainCounterparty;
+
+        var attributes = mainCounterparty.Attributes.Select(attribute => attribute with
+        {
+            Value = ParseJson(attribute.ValueJson, attribute.Value),
+            File = ParseJson(attribute.FileJson, attribute.File),
+            ValueJson = null,
+            FileJson = null
+        }).ToArray();
+        return mainCounterparty with { Attributes = attributes };
+    }
+
+    private static System.Text.Json.JsonElement? ParseJson(
+        string? rawJson,
+        System.Text.Json.JsonElement? fallback)
+    {
+        if (rawJson is null)
+            return fallback;
+
+        try
+        {
+            using var document = JsonDocument.Parse(rawJson);
+            return document.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            throw InvalidMergeRequest();
+        }
+    }
+
+    private static MergeRequestException InvalidMergeRequest() => new(
+        MergeRequestError.Invalid,
+        "INVALID_MERGE_REQUEST",
+        "Merge request contains invalid fields.");
 }

@@ -287,6 +287,30 @@ public sealed class MoySkladCounterpartyGateway : IMoySkladCounterpartyGateway
         if (update.Email is not null) payload["email"] = update.Email;
         if (update.Phone is not null) payload["phone"] = update.Phone;
         if (update.Description is not null) payload["description"] = update.Description;
+        if (update.Attributes is { Count: > 0 })
+        {
+            payload["attributes"] = update.Attributes.Select(attribute =>
+            {
+                var item = new Dictionary<string, object?>
+                {
+                    ["meta"] = new
+                    {
+                        href = new Uri(
+                            _httpClient.BaseAddress!,
+                            $"entity/counterparty/metadata/attributes/{attribute.Id:D}").ToString(),
+                        type = "attributemetadata",
+                        mediaType = "application/json"
+                    }
+                };
+
+                if (string.Equals(attribute.Type, "file", StringComparison.OrdinalIgnoreCase))
+                    item["file"] = attribute.File;
+                else
+                    item["value"] = attribute.Value;
+
+                return item;
+            }).ToArray();
+        }
         return PutAsync(accountId, counterpartyId, payload, mergeJobId, operationId, userId, correlationId, cancellationToken);
     }
 

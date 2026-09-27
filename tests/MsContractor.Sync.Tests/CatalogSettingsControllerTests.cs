@@ -13,6 +13,47 @@ namespace MsContractor.Sync.Tests;
 public sealed class CatalogSettingsControllerTests
 {
     [Fact]
+    public async Task GetAsync_RequiresSession()
+    {
+        var client = new CapturingSettingsClient();
+        var controller = CreateController(new FakeSessionReader(null), client);
+
+        var result = await controller.GetAsync(CancellationToken.None);
+
+        Assert.IsType<UnauthorizedObjectResult>(result);
+        Assert.Null(client.AccountId);
+    }
+
+    [Fact]
+    public async Task GetAsync_ForwardsAccountFromSessionAndReturnsSettings()
+    {
+        var accountId = Guid.NewGuid();
+        var settings = SettingsResponse();
+        var client = new CapturingSettingsClient { Response = settings };
+        var controller = CreateController(
+            new FakeSessionReader(new GatewaySession(accountId, Guid.NewGuid())),
+            client);
+
+        var result = await controller.GetAsync(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(accountId, client.AccountId);
+        Assert.Same(settings, ok.Value);
+    }
+
+    [Fact]
+    public async Task GetAsync_MapsCatalogUnavailableTo503()
+    {
+        var controller = CreateController(
+            new FakeSessionReader(new GatewaySession(Guid.NewGuid(), Guid.NewGuid())),
+            new CapturingSettingsClient { ThrowUnavailable = true });
+
+        var result = await controller.GetAsync(CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<ObjectResult>(result).StatusCode);
+    }
+
+    [Fact]
     public async Task SaveAsync_RequiresSession()
     {
         var client = new CapturingSettingsClient();
@@ -86,6 +127,11 @@ public sealed class CatalogSettingsControllerTests
         new CatalogDuplicateSearchOptions(true),
         new CatalogDuplicateSearchLimits(200, 200));
 
+    private static CatalogSettingsResponse SettingsResponse() => new(
+        [new CatalogDuplicateExclusionSetting("email", "shared@example.com")],
+        new CatalogDuplicateSearchOptions(false),
+        new CatalogDuplicateSearchLimits(25, 10));
+
     private sealed class FakeSessionReader(GatewaySession? session) : IGatewaySessionReader
     {
         public Task<GatewaySession?> ReadAsync(string? token, CancellationToken cancellationToken) =>
@@ -96,8 +142,20 @@ public sealed class CatalogSettingsControllerTests
     {
         public Guid? AccountId { get; private set; }
         public CatalogSettingsRequest? Settings { get; private set; }
+        public CatalogSettingsResponse? Response { get; init; }
         public bool ThrowUnavailable { get; init; }
         public bool ThrowRejected { get; init; }
+
+        public Task<CatalogSettingsResponse> GetSettingsAsync(
+            Guid accountId,
+            CancellationToken cancellationToken)
+        {
+            AccountId = accountId;
+            if (ThrowUnavailable)
+                throw new CatalogSyncUnavailableException("Unavailable.");
+
+            return Task.FromResult(Response ?? SettingsResponse());
+        }
 
         public Task SaveSettingsAsync(
             Guid accountId,

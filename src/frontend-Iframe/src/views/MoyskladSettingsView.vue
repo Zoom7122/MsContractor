@@ -1,29 +1,14 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Close, Plus } from '@element-plus/icons-vue'
 
-import { saveCatalogSettings } from '../api/catalog'
+import { getCatalogSettings, saveCatalogSettings } from '../api/catalog'
 import EmptyState from '../components/ui/EmptyState.vue'
 import ErrorNotice from '../components/ui/ErrorNotice.vue'
 import PageHeader from '../components/ui/PageHeader.vue'
 import SectionPanel from '../components/ui/SectionPanel.vue'
 import StatusBadge from '../components/ui/StatusBadge.vue'
 import { matchFieldMeta } from '../domain/duplicates'
-
-const props = defineProps({
-  settingsData: {
-    type: Object,
-    default: null
-  },
-  loading: {
-    type: Boolean,
-    default: false
-  },
-  loadError: {
-    type: [String, Object],
-    default: null
-  }
-})
 
 const defaultSettings = {
   duplicateExclusions: [],
@@ -49,6 +34,8 @@ const exclusionFieldOptions = [
 
 const initialSettings = ref(cloneSettings(defaultSettings))
 const form = ref(cloneSettings(defaultSettings))
+const loading = ref(true)
+const loadError = ref(null)
 const saving = ref(false)
 const message = ref(null)
 const saveError = ref(null)
@@ -69,19 +56,23 @@ const enabledMergeAttributesCount = computed(() =>
   form.value.mergeAttributes.filter((item) => item.enabled).length
 )
 
-watch(
-  () => props.settingsData,
-  (value) => {
-    if (!value) {
-      return
-    }
+onMounted(loadSettings)
 
-    const normalized = normalizeSettings(value)
+async function loadSettings() {
+  loading.value = true
+  loadError.value = null
+
+  try {
+    const settings = await getCatalogSettings()
+    const normalized = normalizeSettings(settings)
     initialSettings.value = cloneSettings(normalized)
     form.value = cloneSettings(normalized)
-  },
-  { immediate: true }
-)
+  } catch (error) {
+    loadError.value = error
+  } finally {
+    loading.value = false
+  }
+}
 
 function normalizeSettings(source) {
   const duplicateExclusions = Array.isArray(source?.duplicateExclusions)
@@ -262,17 +253,11 @@ async function saveSettings() {
       v-if="loadError"
       :error="loadError"
       fallback="Не удалось загрузить настройки"
-      description="Показаны значения по умолчанию. Их можно сохранить; загрузка ранее сохранённых значений пока не подключена."
+      description="Показаны значения по умолчанию. Проверьте их перед сохранением."
     />
     <el-skeleton v-if="loading" :rows="8" animated class="settings-skeleton" />
 
     <template v-else>
-      <el-alert
-        title="При повторном открытии страницы пока показываются значения по умолчанию: загрузка сохранённых настроек ещё не подключена."
-        type="info"
-        :closable="false"
-        show-icon
-      />
       <SectionPanel title="Поиск дублей" subtitle="Исключения, архивные контрагенты и лимиты выдачи" flush>
         <div class="settings-row">
           <div class="settings-row__text">

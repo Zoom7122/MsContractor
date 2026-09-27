@@ -5,6 +5,8 @@ namespace MsContractor.CatalogSyncService.Services;
 
 public interface ICatalogSettingsService
 {
+    Task<CatalogSettingsResponse> GetAsync(Guid accountId, CancellationToken cancellationToken);
+
     Task SaveAsync(
         Guid accountId,
         CatalogSettingsRequest? request,
@@ -33,6 +35,17 @@ public sealed class CatalogSettingsService : ICatalogSettingsService
     public CatalogSettingsService(ICatalogSettingsRepository repository)
     {
         _repository = repository;
+    }
+
+    public async Task<CatalogSettingsResponse> GetAsync(
+        Guid accountId,
+        CancellationToken cancellationToken)
+    {
+        return await _repository.GetAsync(accountId, cancellationToken)
+            ?? new CatalogSettingsResponse(
+                [],
+                new CatalogDuplicateSearchOptions(IncludeArchivedWithDocuments: true),
+                new CatalogDuplicateSearchLimits(GroupLimit: 200, ItemLimit: 200));
     }
 
     public async Task SaveAsync(

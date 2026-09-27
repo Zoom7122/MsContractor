@@ -19,6 +19,10 @@ public interface ICatalogSyncStateClient
 
 public interface ICatalogSettingsClient
 {
+    Task<CatalogSettingsResponse> GetSettingsAsync(
+        Guid accountId,
+        CancellationToken cancellationToken);
+
     Task SaveSettingsAsync(
         Guid accountId,
         CatalogSettingsRequest settings,
@@ -36,6 +40,44 @@ public sealed class CatalogSyncClient : ICatalogSyncClient, ICatalogSyncStateCli
     {
         _httpClient = httpClient;
         _configuration = configuration;
+    }
+
+    public async Task<CatalogSettingsResponse> GetSettingsAsync(
+        Guid accountId,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"internal/accounts/{accountId:D}/settings");
+        request.Headers.TryAddWithoutValidation(
+            InternalApiHeaders.ApiKey,
+            _configuration["InternalApi:Key"]);
+
+        try
+        {
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                throw new CatalogSyncUnavailableException("CatalogSyncService rejected the settings request.");
+
+            return await response.Content.ReadFromJsonAsync<CatalogSettingsResponse>(cancellationToken)
+                ?? throw new CatalogSyncUnavailableException("CatalogSyncService returned an invalid settings response.");
+        }
+        catch (CatalogSyncUnavailableException)
+        {
+            throw;
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new CatalogSyncUnavailableException("CatalogSyncService is unavailable.", exception);
+        }
+        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new CatalogSyncUnavailableException("CatalogSyncService timed out.", exception);
+        }
+        catch (System.Text.Json.JsonException exception)
+        {
+            throw new CatalogSyncUnavailableException("CatalogSyncService returned an invalid settings response.", exception);
+        }
     }
 
     public async Task<SyncAccepted> StartAsync(

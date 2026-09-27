@@ -20,6 +20,20 @@ public sealed class InternalSettingsController : ControllerBase
         _configuration = configuration;
     }
 
+    [HttpGet]
+    [ProducesResponseType<CatalogSettingsResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<InternalErrorResponse>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<InternalErrorResponse>(StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> GetAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        if (!InternalApiKeyAuthentication.IsAuthorized(Request, _configuration))
+            return Unauthorized(new InternalErrorResponse("INTERNAL_UNAUTHORIZED", "Internal authentication failed."));
+        if (accountId == Guid.Empty)
+            return BadRequest(new InternalErrorResponse("INVALID_ACCOUNT_ID", "accountId must be a non-empty guid."));
+
+        return Ok(await _settingsService.GetAsync(accountId, cancellationToken));
+    }
+
     [HttpPut]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<InternalErrorResponse>(StatusCodes.Status400BadRequest)]

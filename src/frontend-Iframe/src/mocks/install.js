@@ -45,6 +45,7 @@ const ROUTES = [
   ['post', /^\/api\/merge-preview\/selection$/, selectionPreview],
   ['post', /^\/api\/merge-preview$/, duplicatePreview],
   ['post', /^\/api\/merge-jobs$/, createMergeJob],
+  ['get', /^\/api\/catalog\/settings$/, getCatalogSettings],
   ['put', /^\/api\/catalog\/settings$/, saveCatalogSettings],
   ['post', /^\/api\/sync(\/incremental)?$/, startSync]
 ]
@@ -138,6 +139,10 @@ function startSync() {
   return { status: 202, data: { syncRunId: crypto.randomUUID(), status: 'queued' } }
 }
 
+function getCatalogSettings({ store }) {
+  return ok(store.settings)
+}
+
 function saveCatalogSettings({ store, body }) {
   if (!body) {
     return { status: 400, data: { code: 'INVALID_CATALOG_SETTINGS', message: 'Settings payload is required.' } }
@@ -163,7 +168,6 @@ function applyRouteProps(router, scenario, store) {
       ...buildOverview(scenario, store.jobs),
       mergeQueueData: { jobs: store.jobs, busyCounterpartyIds: buildBusyCounterpartyIds(store.jobs) }
     }),
-    'moysklad-settings': () => ({ settingsData: store.settings }),
     'moysklad-history-counterparties': (route) => withData({ historyData: buildHistory(scenario, route.query) }),
     'moysklad-counterparty': (route) => withData({ counterpartyData: buildCounterpartyPage(scenario, route.params.id) }),
     'moysklad-merge': (route) => {

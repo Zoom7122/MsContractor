@@ -24,6 +24,30 @@ public sealed class CatalogSettingsController : ControllerBase
         _configuration = configuration;
     }
 
+    [HttpGet]
+    [ProducesResponseType<CatalogSettingsResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<InternalErrorResponse>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<InternalErrorResponse>(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> GetAsync(CancellationToken cancellationToken)
+    {
+        var cookieName = _configuration["Session:CookieName"] ?? "mscontractor.session";
+        Request.Cookies.TryGetValue(cookieName, out var token);
+        var session = await _sessionReader.ReadAsync(token, cancellationToken);
+        if (session is null)
+            return Unauthorized(new InternalErrorResponse("SESSION_UNAUTHORIZED", "Session is missing or expired."));
+
+        try
+        {
+            return Ok(await _settingsClient.GetSettingsAsync(session.AccountId, cancellationToken));
+        }
+        catch (CatalogSyncUnavailableException)
+        {
+            return StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                new InternalErrorResponse("CATALOG_SYNC_UNAVAILABLE", "Synchronization service is unavailable."));
+        }
+    }
+
     [HttpPut]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<InternalErrorResponse>(StatusCodes.Status400BadRequest)]

@@ -15,3 +15,8 @@ public sealed record CatalogSettingsRequest(
     IReadOnlyList<CatalogDuplicateExclusionSetting>? DuplicateExclusions,
     CatalogDuplicateSearchOptions? DuplicateSearchOptions,
     CatalogDuplicateSearchLimits? SearchLimits);
+
+public sealed record CatalogSettingsResponse(
+    IReadOnlyList<CatalogDuplicateExclusionSetting> DuplicateExclusions,
+    CatalogDuplicateSearchOptions DuplicateSearchOptions,
+    CatalogDuplicateSearchLimits SearchLimits);

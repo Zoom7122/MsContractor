@@ -7,6 +7,8 @@ namespace MsContractor.CatalogSyncService.Repositories;
 
 public interface ICatalogSettingsRepository
 {
+    Task<CatalogSettingsResponse?> GetAsync(Guid accountId, CancellationToken cancellationToken);
+
     Task SaveAsync(
         Guid accountId,
         bool includeArchivedWithDocuments,
@@ -27,6 +29,29 @@ public sealed class CatalogSettingsRepository : ICatalogSettingsRepository
     {
         _dbContext = dbContext;
         _timeProvider = timeProvider;
+    }
+
+    public async Task<CatalogSettingsResponse?> GetAsync(
+        Guid accountId,
+        CancellationToken cancellationToken)
+    {
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
+        var settings = await _dbContext.CatalogSettings.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.AccountId == accountId, cancellationToken);
+        if (settings is null)
+            return null;
+
+        var exclusions = await _dbContext.CatalogSettingExclusions.AsNoTracking()
+            .Where(item => item.AccountId == accountId)
+            .OrderBy(item => item.Field)
+            .ThenBy(item => item.Value)
+            .Select(item => new CatalogDuplicateExclusionSetting(item.Field, item.Value))
+            .ToListAsync(cancellationToken);
+
+        return new CatalogSettingsResponse(
+            exclusions,
+            new CatalogDuplicateSearchOptions(settings.IncludeArchivedWithDocuments),
+            new CatalogDuplicateSearchLimits(settings.GroupLimit, settings.ItemLimit));
     }
 
     public async Task SaveAsync(

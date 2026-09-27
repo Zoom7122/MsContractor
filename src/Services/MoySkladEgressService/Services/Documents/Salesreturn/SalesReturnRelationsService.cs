@@ -253,7 +253,8 @@ public sealed class SalesReturnRelationsService : ISalesReturnRelationsService
         var cashOutIds = new HashSet<Guid>();
         var lossIds = new HashSet<Guid>();
 
-        foreach (var link in ReadCollection(source, "payments"))
+        // MoySklad may omit payments when the salesreturn has no linked payment documents.
+        foreach (var link in ReadOptionalCollection(source, "payments"))
         {
             var type = ReadMetaType(link);
             if (!string.Equals(type, "paymentout", StringComparison.OrdinalIgnoreCase) &&
@@ -936,6 +937,11 @@ private static bool IsSalesReturnReference(
             return rows.EnumerateArray().Select(item => item.Clone()).ToArray();
         throw new InvalidOperationException($"MoySklad response contains an invalid {propertyName} collection.");
     }
+
+    private static JsonElement[] ReadOptionalCollection(JsonElement root, string propertyName) =>
+        root.TryGetProperty(propertyName, out _)
+            ? ReadCollection(root, propertyName)
+            : [];
 
     private static JsonElement[] ReadRequiredArray(JsonElement root, string propertyName)
     {

@@ -187,6 +187,57 @@ public sealed class SalesReturnRelationsServiceTests
     }
 
     [Fact]
+    public async Task PrepareAndReattachAsync_MissingPaymentsCompletesWithoutPaymentBatches()
+    {
+        var sourceId = Guid.NewGuid();
+        var gateway = new RecordingRelationsGateway(sourceId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid())
+        {
+            OmitPayments = true
+        };
+        var repository = new RecordingRelationsRepository();
+        var operation = Operation(Guid.NewGuid(), Guid.NewGuid(), sourceId);
+        var service = new SalesReturnRelationsService(gateway, repository, NullLogger<SalesReturnRelationsService>.Instance);
+
+        await service.PrepareAndDetachAsync(operation, "correlation-id", CancellationToken.None);
+
+        var item = Assert.Single(operation.Items);
+        Assert.Equal("Prepared", item.Stage);
+        Assert.Equal("RelationsDetached", item.RelationsStatus);
+        var snapshot = Assert.Single(repository.Snapshots);
+        Assert.Empty(snapshot.PaymentOuts);
+        Assert.Empty(snapshot.CashOuts);
+        Assert.Empty(gateway.Batches);
+
+        item.NewDocumentId = Guid.NewGuid();
+        item.Stage = "Created";
+        await service.ReattachAsync(operation, "correlation-id", CancellationToken.None);
+
+        Assert.Equal("Completed", item.Stage);
+        Assert.Equal("RelationsReattached", item.RelationsStatus);
+        Assert.Empty(gateway.Batches);
+    }
+
+    [Fact]
+    public async Task PrepareAndDetachAsync_InvalidPresentPaymentsStillSkipsSource()
+    {
+        var sourceId = Guid.NewGuid();
+        var gateway = new RecordingRelationsGateway(sourceId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid())
+        {
+            InvalidPayments = true
+        };
+        var repository = new RecordingRelationsRepository();
+        var operation = Operation(Guid.NewGuid(), Guid.NewGuid(), sourceId);
+
+        await new SalesReturnRelationsService(gateway, repository, NullLogger<SalesReturnRelationsService>.Instance)
+            .PrepareAndDetachAsync(operation, "correlation-id", CancellationToken.None);
+
+        var item = Assert.Single(operation.Items);
+        Assert.Equal("Skipped", item.Stage);
+        Assert.Equal("SALESRETURN_RELATIONS_LOAD_FAILED", item.ErrorCode);
+        Assert.Empty(gateway.Batches);
+    }
+
+    [Fact]
     public async Task PrepareAndDetachAsync_AcceptsMoySkladOmittedEmptyRelationFields()
     {
         var sourceId = Guid.NewGuid();
@@ -392,22 +443,46 @@ public sealed class SalesReturnRelationsServiceTests
 
         public bool EmptyRelations { get; set; }
 
+        public bool OmitPayments { get; set; }
+
+        public bool InvalidPayments { get; set; }
+
         public bool MultipleSourceOperations { get; set; }
 
         public bool OmitEmptyDetachedFields { get; set; }
 
         public List<(string Type, IReadOnlyList<string> Payloads)> Batches { get; } = [];
 
-        public Task<string> GetSalesReturnRelationsAsync(Guid accountId, Guid salesReturnId, string correlationId, CancellationToken cancellationToken) =>
-            Task.FromResult(EmptyRelations
-                ? JsonSerializer.Serialize(new
+        public Task<string> GetSalesReturnRelationsAsync(Guid accountId, Guid salesReturnId, string correlationId, CancellationToken cancellationToken)
+        {
+            if (EmptyRelations)
+                return Task.FromResult(JsonSerializer.Serialize(new
                 {
                     id = _sourceId,
                     meta = EntityMeta("salesreturn", _sourceId),
                     payments = Array.Empty<object>(),
                     losses = Array.Empty<object>()
-                })
-                : ResponseSource(_sourceId, _paymentId!.Value, _cashOutId!.Value, _lossId!.Value));
+                }));
+
+            if (OmitPayments)
+                return Task.FromResult(JsonSerializer.Serialize(new
+                {
+                    id = _sourceId,
+                    meta = EntityMeta("salesreturn", _sourceId),
+                    losses = Array.Empty<object>()
+                }));
+
+            if (InvalidPayments)
+                return Task.FromResult(JsonSerializer.Serialize(new
+                {
+                    id = _sourceId,
+                    meta = EntityMeta("salesreturn", _sourceId),
+                    payments = "invalid",
+                    losses = Array.Empty<object>()
+                }));
+
+            return Task.FromResult(ResponseSource(_sourceId, _paymentId!.Value, _cashOutId!.Value, _lossId!.Value));
+        }
 
         public Task<string> GetPaymentOutAsync(Guid accountId, Guid documentId, string correlationId, CancellationToken cancellationToken) =>
             Task.FromResult(MoneyDocument("paymentout", documentId, _sourceId, ZeroLinkedSum ? 0m : 100m, includeOther: true,

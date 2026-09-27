@@ -11,6 +11,7 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
     public DbSet<SyncRun> SyncRuns => Set<SyncRun>();
     public DbSet<InboxMessage> InboxMessages => Set<InboxMessage>();
     public DbSet<Counterparty> Counterparties => Set<Counterparty>();
+    public DbSet<CounterpartySyncStage> CounterpartySyncStaging => Set<CounterpartySyncStage>();
     public DbSet<SyncOutboxMessage> OutboxMessages => Set<SyncOutboxMessage>();
     public DbSet<SyncWatermark> SyncWatermarks => Set<SyncWatermark>();
     public DbSet<MergeJob> MergeJobs => Set<MergeJob>();
@@ -92,6 +93,22 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
                 .HasForeignKey(item => new { item.LastSyncRunId, item.AccountId })
                 .HasPrincipalKey(item => new { item.Id, item.AccountId })
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<CounterpartySyncStage>(entity =>
+        {
+            entity.ToTable("counterparty_sync_staging");
+            entity.HasKey(item => new { item.AccountId, item.SyncRunId, item.Sequence });
+            entity.Property(item => item.Name).IsRequired();
+            entity.Property(item => item.NormalizedName).IsRequired();
+            entity.Property(item => item.RawJson).IsRequired();
+            entity.HasIndex(item => new { item.SyncRunId, item.AccountId });
+            entity.HasIndex(item => new { item.AccountId, item.SyncRunId, item.CounterpartyId, item.Sequence });
+            entity.HasOne<SyncRun>()
+                .WithMany()
+                .HasForeignKey(item => new { item.SyncRunId, item.AccountId })
+                .HasPrincipalKey(item => new { item.Id, item.AccountId })
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<SyncOutboxMessage>(entity =>

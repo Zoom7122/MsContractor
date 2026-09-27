@@ -4,6 +4,7 @@ using MsContractor.CatalogSyncService.Clients;
 using System.Text.Json;
 using MsContractor.CatalogSyncService.Models;
 using MsContractor.Contracts.Sync;
+using MsContractor.Contracts.Internal;
 
 namespace MsContractor.CatalogSyncService.Services;
 
@@ -16,6 +17,7 @@ public sealed class SyncProcessor : ISyncProcessor
 {
     private readonly ISyncRepository _repository;
     private readonly IMoySkladEgressClient _egressClient;
+    private readonly IMoySkladDocumentDiscoveryClient _documentDiscoveryClient;
     private readonly IMoySkladCounterpartyParser _parser;
     private readonly ICounterpartyNormalizer _normalizer;
     private readonly TimeProvider _timeProvider;
@@ -24,6 +26,7 @@ public sealed class SyncProcessor : ISyncProcessor
     public SyncProcessor(
         ISyncRepository repository,
         IMoySkladEgressClient egressClient,
+        IMoySkladDocumentDiscoveryClient documentDiscoveryClient,
         IMoySkladCounterpartyParser parser,
         ICounterpartyNormalizer normalizer,
         TimeProvider timeProvider,
@@ -31,6 +34,7 @@ public sealed class SyncProcessor : ISyncProcessor
     {
         _repository = repository;
         _egressClient = egressClient;
+        _documentDiscoveryClient = documentDiscoveryClient;
         _parser = parser;
         _normalizer = normalizer;
         _timeProvider = timeProvider;
@@ -39,6 +43,8 @@ public sealed class SyncProcessor : ISyncProcessor
 
     public const string ConsumerName = "catalog-sync-counterparties-v1";
     private const int PageSize = 1000;
+    private const int DocumentDiscoveryBatchSize = 50;
+    private static readonly TimeSpan RunLeaseDuration = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan SafetyOverlap = TimeSpan.FromMinutes(5);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -58,7 +64,8 @@ public sealed class SyncProcessor : ISyncProcessor
             return;
         }
 
-        var run = await EnsureRunningAsync(command, cancellationToken);
+        var ownerToken = Guid.NewGuid();
+        var run = await EnsureRunningAsync(command, ownerToken, cancellationToken);
         using var scope = _logger.BeginScope(new Dictionary<string, object?>
         {
             ["account_id"] = command.AccountId,
@@ -75,56 +82,51 @@ public sealed class SyncProcessor : ISyncProcessor
         try
         {
             if (run.ExecutionMode == ModeName(SyncMode.Incremental))
-                await ProcessIncrementalAsync(command, run, cancellationToken);
+                await ProcessIncrementalAsync(command, run, ownerToken, cancellationToken);
             else
-                await ProcessFullAsync(command, run, cancellationToken);
+                await ProcessFullAsync(command, run, ownerToken, cancellationToken);
         }
         catch (Exception exception)
         {
-            await MarkFailedAsync(command, exception, cancellationToken);
+            await MarkFailedAsync(command, ownerToken, exception, cancellationToken);
         }
     }
 
     private async Task ProcessFullAsync(
         SyncRequested command,
         SyncRun run,
+        Guid ownerToken,
         CancellationToken cancellationToken)
     {
-        // A full synchronization starts from an empty account-scoped catalog.
-        // Remove dependent document snapshots first, otherwise their FK blocks
-        // deletion of the counterparties they reference.
-        var (deletedDocumentsCount, deletedCount) = await _repository.ClearSnapshotAsync(command.AccountId, cancellationToken);
-        _logger.LogInformation(
-            "Existing full-sync snapshot cleared before loading MoySklad: deleted_document_count={DeletedDocumentsCount}, deleted_counterparty_count={DeletedCount}",
-            deletedDocumentsCount,
-            deletedCount);
-
-        var snapshot = await LoadSnapshotAsync(command, null, null, cancellationToken);
-        if (snapshot.Rows.Select(item => item.Value.Id).Distinct().Count() != snapshot.TotalCount)
-            throw SnapshotChanged();
-
+        var snapshot = await LoadSnapshotAsync(command, run, ownerToken, null, null, cancellationToken);
+        await _repository.ValidateFullStagingAsync(
+            command.AccountId, command.SyncRunId, snapshot.TotalCount, cancellationToken);
+        var archivedIds = await _repository.GetArchivedStagedCounterpartyIdsAsync(
+            command.AccountId, command.SyncRunId, incremental: false, cancellationToken: cancellationToken);
         var now = _timeProvider.GetUtcNow();
-        var counterparties = snapshot.Rows
-            .Select(item => _normalizer.Create(command.AccountId, command.SyncRunId, item, now))
-            .Where(IsValidForStorage)
-            .ToArray();
+        var (documents, commissions) = await LoadArchivedDocumentsAsync(command, ownerToken, archivedIds, now, cancellationToken);
+        var processedCount = await _repository.GetStagedProcessedCountAsync(
+            command.AccountId, command.SyncRunId, incremental: false, cancellationToken: cancellationToken);
 
-        var completion = PrepareCompletion(command, run, snapshot.TotalCount, counterparties.Length, now);
-        await _repository.CompleteFullAsync(command.AccountId, counterparties, completion, cancellationToken);
+        var completion = PrepareCompletion(command, run, snapshot.TotalCount, processedCount, now);
+        await _repository.CompleteFullFromStagingAsync(
+            command.AccountId, command.SyncRunId, ownerToken, documents, commissions, completion,
+            LeaseExpiresAt(now).UtcTicks, cancellationToken);
 
         _logger.LogInformation(
-            "Full counterparty sync completed: deleted_count={DeletedCount}, processed_count={ProcessedCount}, total_count={TotalCount}, active_count={ActiveCount}, archived_count={ArchivedCount}, window_to={WindowTo}",
-            deletedCount,
-            counterparties.Length,
+            "Full counterparty sync completed: processed_count={ProcessedCount}, total_count={TotalCount}, active_count={ActiveCount}, archived_count={ArchivedCount}, archived_document_count={ArchivedDocumentCount}, window_to={WindowTo}",
+            processedCount,
             snapshot.TotalCount,
             snapshot.ActiveCount,
             snapshot.ArchivedCount,
+            documents.Length,
             run.WindowTo);
     }
 
     private async Task ProcessIncrementalAsync(
         SyncRequested command,
         SyncRun run,
+        Guid ownerToken,
         CancellationToken cancellationToken)
     {
         if (run.WindowFrom is null || run.WindowTo is null || run.WindowFrom >= run.WindowTo)
@@ -132,82 +134,164 @@ public sealed class SyncProcessor : ISyncProcessor
 
         var snapshot = await LoadSnapshotAsync(
             command,
+            run,
+            ownerToken,
             run.WindowFrom,
             run.WindowTo,
             cancellationToken);
-        var uniqueRows = snapshot.Rows
-            .Select((row, index) => new { Row = row, Index = index })
-            .GroupBy(item => item.Row.Value.Id)
-            .Select(group => group
-                .OrderBy(item => item.Row.Value.Updated)
-                .ThenBy(item => item.Index)
-                .Last().Row)
-            .ToArray();
         var now = _timeProvider.GetUtcNow();
-        var incoming = uniqueRows
-            .Select(item => _normalizer.Create(command.AccountId, command.SyncRunId, item, now))
-            .Where(IsValidForStorage)
-            .ToArray();
+        var archivedIds = await _repository.GetArchivedStagedCounterpartyIdsAsync(
+            command.AccountId, command.SyncRunId, incremental: true, cancellationToken: cancellationToken);
+        var (documents, commissions) = await LoadArchivedDocumentsAsync(command, ownerToken, archivedIds, now, cancellationToken);
+        var processedCount = await _repository.GetStagedProcessedCountAsync(
+            command.AccountId, command.SyncRunId, incremental: true, cancellationToken: cancellationToken);
 
-        var completion = PrepareCompletion(command, run, snapshot.TotalCount, incoming.Length, now);
-        var (insertedCount, updatedCount) = await _repository.CompleteIncrementalAsync(
-            command.AccountId, incoming, completion, ApplyIncomingIfCurrent, cancellationToken);
+        var completion = PrepareCompletion(command, run, snapshot.TotalCount, processedCount, now);
+        var (insertedCount, updatedCount) = await _repository.CompleteIncrementalFromStagingAsync(
+            command.AccountId, command.SyncRunId, ownerToken, documents, commissions, completion,
+            ApplyIncomingIfCurrent, LeaseExpiresAt(now).UtcTicks, cancellationToken);
 
         _logger.LogInformation(
-            "Incremental counterparty sync completed: processed_count={ProcessedCount}, total_count={TotalCount}, inserted_count={InsertedCount}, updated_count={UpdatedCount}, active_count={ActiveCount}, archived_count={ArchivedCount}, window_from={WindowFrom}, window_to={WindowTo}",
-            incoming.Length,
+            "Incremental counterparty sync completed: processed_count={ProcessedCount}, total_count={TotalCount}, inserted_count={InsertedCount}, updated_count={UpdatedCount}, active_count={ActiveCount}, archived_count={ArchivedCount}, archived_document_count={ArchivedDocumentCount}, window_from={WindowFrom}, window_to={WindowTo}",
+            processedCount,
             snapshot.TotalCount,
             insertedCount,
             updatedCount,
             snapshot.ActiveCount,
             snapshot.ArchivedCount,
+            documents.Length,
             run.WindowFrom,
             run.WindowTo);
     }
 
+    private async Task<(CounterpartyDocument[] Documents, DocumentAdditionalCommission[] Commissions)> LoadArchivedDocumentsAsync(
+        SyncRequested command,
+        Guid ownerToken,
+        IReadOnlyCollection<Guid> archivedIds,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (archivedIds.Count == 0)
+            return ([], []);
+
+        var knownCounterpartyIds = archivedIds.ToHashSet();
+        var seenDocumentIds = new HashSet<Guid>();
+        var documents = new List<CounterpartyDocument>();
+        var commissions = new List<DocumentAdditionalCommission>();
+        foreach (var batch in archivedIds.Chunk(DocumentDiscoveryBatchSize))
+        {
+            var batchIds = batch.ToArray();
+            var batchCounterpartyIds = batchIds.ToHashSet();
+            if (!await _repository.RenewRunLeaseAsync(
+                    command.AccountId, command.SyncRunId, ownerToken, LeaseExpiresAt(_timeProvider.GetUtcNow()).UtcTicks, cancellationToken))
+                throw new SyncRunLeaseLostException("The sync run lease was lost before archived document discovery.");
+            var response = await _documentDiscoveryClient.DiscoverAsync(
+                command.AccountId,
+                batchIds,
+                command.RequestedByUserId,
+                command.MessageId.ToString("D"),
+                cancellationToken);
+            if (response?.Documents is null)
+                throw InvalidDiscoveryResponse();
+
+            foreach (var document in response.Documents)
+            {
+                if (document is null || string.IsNullOrWhiteSpace(document.DocumentType) || document.DocumentType.Length > 64 ||
+                    document.DocumentId == Guid.Empty ||
+                    !batchCounterpartyIds.Contains(document.CounterpartyId) ||
+                    !knownCounterpartyIds.Contains(document.CounterpartyId) ||
+                    !seenDocumentIds.Add(document.DocumentId))
+                {
+                    throw InvalidDiscoveryResponse();
+                }
+
+                documents.Add(new CounterpartyDocument
+                {
+                    AccountId = command.AccountId,
+                    CounterpartyId = document.CounterpartyId,
+                    DocumentType = document.DocumentType,
+                    DocumentId = document.DocumentId,
+                    UpdatedAt = now
+                });
+
+                if (IsCommissionReport(document.DocumentType))
+                {
+                    commissions.Add(new DocumentAdditionalCommission
+                    {
+                        DocumentId = document.DocumentId,
+                        Contract = document.ContractId
+                    });
+                }
+            }
+        }
+
+        return (documents.ToArray(), commissions.ToArray());
+    }
+
+    private static bool IsCommissionReport(string documentType) =>
+        string.Equals(documentType, "commissionreportin", StringComparison.Ordinal) ||
+        string.Equals(documentType, "commissionreportout", StringComparison.Ordinal);
+
+    private static EgressClientException InvalidDiscoveryResponse() =>
+        new("EGRESS_INVALID_RESPONSE", "MoySklad Egress Service returned an inconsistent document discovery response.", 502);
+
     private async Task<LoadedSnapshot> LoadSnapshotAsync(
         SyncRequested command,
+        SyncRun run,
+        Guid ownerToken,
         DateTimeOffset? windowFrom,
         DateTimeOffset? windowTo,
         CancellationToken cancellationToken)
     {
-        var activeCount = await GetCountAsync(command, false, windowFrom, windowTo, cancellationToken);
-        var archivedCount = await GetCountAsync(command, true, windowFrom, windowTo, cancellationToken);
+        var activeCount = await GetCountAsync(command, ownerToken, false, windowFrom, windowTo, cancellationToken);
+        var archivedCount = await GetCountAsync(command, ownerToken, true, windowFrom, windowTo, cancellationToken);
         var totalCount = checked(activeCount + archivedCount);
-        var rows = new List<ParsedCounterparty>(totalCount);
-        await LoadPagesAsync(command, false, activeCount, windowFrom, windowTo, rows, cancellationToken);
-        await LoadPagesAsync(command, true, archivedCount, windowFrom, windowTo, rows, cancellationToken);
-        if (rows.Count != totalCount)
+        run.TotalCount = totalCount;
+        await _repository.SetTotalCountAsync(
+            command.AccountId, command.SyncRunId, ownerToken, totalCount,
+            LeaseExpiresAt(_timeProvider.GetUtcNow()).UtcTicks, cancellationToken);
+        var now = _timeProvider.GetUtcNow();
+        var activeLoaded = await LoadPagesAsync(
+            command, ownerToken, false, activeCount, 0, windowFrom, windowTo, run.ExecutionMode == ModeName(SyncMode.Incremental), now, cancellationToken);
+        var archivedLoaded = await LoadPagesAsync(
+            command, ownerToken, true, archivedCount, activeCount, windowFrom, windowTo, run.ExecutionMode == ModeName(SyncMode.Incremental), now, cancellationToken);
+        if (activeLoaded + archivedLoaded != totalCount)
             throw SnapshotChanged();
-        return new LoadedSnapshot(rows, activeCount, archivedCount, totalCount);
+        return new LoadedSnapshot(activeCount, archivedCount, totalCount);
     }
 
     private async Task<int> GetCountAsync(
         SyncRequested command,
+        Guid ownerToken,
         bool archived,
         DateTimeOffset? windowFrom,
         DateTimeOffset? windowTo,
         CancellationToken cancellationToken)
     {
-        var parsed = await GetPageAsync(command, archived, 1, 0, windowFrom, windowTo, cancellationToken);
+        var parsed = await GetPageAsync(command, ownerToken, archived, 1, 0, windowFrom, windowTo, cancellationToken);
         if (parsed.Meta.Size < 0)
             throw SnapshotChanged();
         return parsed.Meta.Size;
     }
 
-    private async Task LoadPagesAsync(
+    private async Task<int> LoadPagesAsync(
         SyncRequested command,
+        Guid ownerToken,
         bool archived,
         int expectedCount,
+        long sequenceBase,
         DateTimeOffset? windowFrom,
         DateTimeOffset? windowTo,
-        ICollection<ParsedCounterparty> destination,
+        bool incremental,
+        DateTimeOffset now,
         CancellationToken cancellationToken)
     {
+        var loadedCount = 0;
         for (var offset = 0; offset < expectedCount; offset += PageSize)
         {
             var parsed = await GetPageAsync(
                 command,
+                ownerToken,
                 archived,
                 PageSize,
                 offset,
@@ -226,13 +310,54 @@ public sealed class SyncProcessor : ISyncProcessor
                 throw SnapshotChanged();
             }
 
-            foreach (var row in parsed.Rows)
-                destination.Add(row);
+            var stageRows = new CounterpartySyncStage[parsed.Rows.Count];
+            for (var index = 0; index < parsed.Rows.Count; index++)
+            {
+                var normalized = _normalizer.Create(command.AccountId, command.SyncRunId, parsed.Rows[index], now);
+                stageRows[index] = ToStage(
+                    normalized,
+                    sequenceBase + offset + index,
+                    IsValidForStorage(normalized));
+            }
+            await _repository.StagePageAsync(
+                command.AccountId, command.SyncRunId, ownerToken, stageRows, incremental, now,
+                LeaseExpiresAt(_timeProvider.GetUtcNow()).UtcTicks, cancellationToken);
+            loadedCount += parsed.Rows.Count;
         }
+
+        return loadedCount;
     }
+
+    private static CounterpartySyncStage ToStage(Counterparty counterparty, long sequence, bool isValidForStorage) => new()
+    {
+        AccountId = counterparty.AccountId,
+        SyncRunId = counterparty.LastSyncRunId,
+        Sequence = sequence,
+        CounterpartyId = counterparty.Id,
+        IsValidForStorage = isValidForStorage,
+        Name = counterparty.Name,
+        Phone = counterparty.Phone,
+        Email = counterparty.Email,
+        Inn = counterparty.Inn,
+        Kpp = counterparty.Kpp,
+        Description = counterparty.Description,
+        Archived = counterparty.Archived,
+        NormalizedName = counterparty.NormalizedName,
+        NormalizedPhone = counterparty.NormalizedPhone,
+        NormalizedEmail = counterparty.NormalizedEmail,
+        NormalizedInn = counterparty.NormalizedInn,
+        NormalizedKpp = counterparty.NormalizedKpp,
+        MoySkladUpdatedAt = counterparty.MoySkladUpdatedAt,
+        MoySkladUpdatedSortValue = counterparty.MoySkladUpdatedAt?.UtcTicks ?? long.MinValue,
+        LastSyncRunId = counterparty.LastSyncRunId,
+        RawJson = counterparty.RawJson,
+        CreatedAt = counterparty.CreatedAt,
+        UpdatedAt = counterparty.UpdatedAt
+    };
 
     private async Task<ParsedCounterpartyCollection> GetPageAsync(
         SyncRequested command,
+        Guid ownerToken,
         bool archived,
         int limit,
         int offset,
@@ -240,6 +365,11 @@ public sealed class SyncProcessor : ISyncProcessor
         DateTimeOffset? windowTo,
         CancellationToken cancellationToken)
     {
+        if (!await _repository.RenewRunLeaseAsync(
+                command.AccountId, command.SyncRunId, ownerToken,
+                LeaseExpiresAt(_timeProvider.GetUtcNow()).UtcTicks, cancellationToken))
+            throw new SyncRunLeaseLostException("The sync run lease was lost before fetching a counterparty page.");
+
         var rawResponse = await _egressClient.GetCounterpartiesAsync(
             command.AccountId,
             archived,
@@ -256,10 +386,12 @@ public sealed class SyncProcessor : ISyncProcessor
 
     private async Task<SyncRun> EnsureRunningAsync(
         SyncRequested command,
+        Guid ownerToken,
         CancellationToken cancellationToken)
     {
         var run = await _repository.FindRunAsync(command.AccountId, command.MessageId, cancellationToken);
         var now = _timeProvider.GetUtcNow();
+        var isNew = run is null;
         if (run is null)
         {
             var requestedMode = ModeName(command.Mode);
@@ -298,16 +430,32 @@ public sealed class SyncProcessor : ISyncProcessor
                 throw new InvalidOperationException("MessageId is associated with another sync command.");
             }
 
-            run.Status = "running";
-            run.StartedAt ??= now;
-            run.WindowTo ??= TruncateToMilliseconds(now);
-            run.UpdatedAt = now;
-            run.CompletedAt = null;
-            run.ErrorCode = null;
-            run.ErrorMessage = null;
         }
 
-        await _repository.SaveRunAsync(command.AccountId, run, cancellationToken);
+        if (isNew)
+            await _repository.SaveRunAsync(command.AccountId, run, cancellationToken);
+
+        var leaseNow = _timeProvider.GetUtcNow();
+        var leaseExpiresAt = LeaseExpiresAt(leaseNow);
+        if (!await _repository.TryAcquireRunLeaseAsync(
+                command.AccountId, command.SyncRunId, ownerToken,
+                leaseNow.UtcTicks, leaseExpiresAt.UtcTicks, cancellationToken))
+            throw new SyncRunAlreadyOwnedException("Another worker currently owns this counterparty sync run.");
+
+        run.Status = "running";
+        run.StartedAt ??= leaseNow;
+        run.WindowTo ??= TruncateToMilliseconds(leaseNow);
+        run.UpdatedAt = leaseNow;
+        run.CompletedAt = null;
+        run.ErrorCode = null;
+        run.ErrorMessage = null;
+        run.ProcessingOwnerToken = ownerToken;
+        run.ProcessingLeaseExpiresAtTicks = leaseExpiresAt.UtcTicks;
+        await _repository.RestartStagingAsync(
+            command.AccountId, command.SyncRunId, ownerToken, leaseNow, run.WindowTo.Value,
+            leaseExpiresAt.UtcTicks, cancellationToken);
+        run.TotalCount = 0;
+        run.ProcessedCount = 0;
         return run;
     }
 
@@ -324,6 +472,8 @@ public sealed class SyncProcessor : ISyncProcessor
         run.UpdatedAt = now;
         run.ErrorCode = null;
         run.ErrorMessage = null;
+        run.ProcessingOwnerToken = null;
+        run.ProcessingLeaseExpiresAtTicks = null;
         return new SyncCompletion(run,
             new InboxMessage { MessageId = command.MessageId, ConsumerName = ConsumerName, ProcessedAt = now },
             CreateOutbox(new SyncCompleted(Guid.NewGuid(), command.SyncRunId, command.AccountId, processedCount, now), command.AccountId, now),
@@ -332,6 +482,7 @@ public sealed class SyncProcessor : ISyncProcessor
 
     private async Task MarkFailedAsync(
         SyncRequested command,
+        Guid ownerToken,
         Exception exception,
         CancellationToken cancellationToken)
     {
@@ -345,17 +496,21 @@ public sealed class SyncProcessor : ISyncProcessor
             command.RequestedByUserId,
             code);
 
-        var run = await _repository.ReloadRunAsync(command.AccountId, command.MessageId, cancellationToken);
         var now = _timeProvider.GetUtcNow();
-        run.Status = "failed";
-        run.ErrorCode = code;
-        run.ErrorMessage = safeMessage;
-        run.CompletedAt = now;
-        run.UpdatedAt = now;
-        await _repository.FailAsync(command.AccountId, run,
+        var failed = await _repository.FailAsync(
+            command.AccountId, command.SyncRunId, ownerToken, code, safeMessage, now,
             new InboxMessage { MessageId = command.MessageId, ConsumerName = ConsumerName, ProcessedAt = now },
             CreateOutbox(new SyncFailed(Guid.NewGuid(), command.SyncRunId, command.AccountId, code, safeMessage, now), command.AccountId, now),
             cancellationToken);
+        if (!failed)
+        {
+            _logger.LogInformation(
+                "Skipping sync failure transition because this worker no longer owns the run: account_id={AccountId}, sync_run_id={SyncRunId}",
+                command.AccountId,
+                command.SyncRunId);
+            throw new SyncRunLeaseLostException(
+                "The sync run lease was lost before this worker could persist the failure; retry the command.");
+        }
     }
 
     private static bool ApplyIncomingIfCurrent(Counterparty target, Counterparty source)
@@ -447,11 +602,9 @@ public sealed class SyncProcessor : ISyncProcessor
         return new DateTimeOffset(ticks, TimeSpan.Zero);
     }
 
+    private DateTimeOffset LeaseExpiresAt(DateTimeOffset now) => now.Add(RunLeaseDuration);
+
     private static string ModeName(SyncMode mode) => mode.ToString().ToLowerInvariant();
 
-    private sealed record LoadedSnapshot(
-        IReadOnlyList<ParsedCounterparty> Rows,
-        int ActiveCount,
-        int ArchivedCount,
-        int TotalCount);
+    private sealed record LoadedSnapshot(int ActiveCount, int ArchivedCount, int TotalCount);
 }

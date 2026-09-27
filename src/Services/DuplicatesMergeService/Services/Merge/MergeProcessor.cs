@@ -22,6 +22,7 @@ public sealed class MergeProcessor(
     ISalesReturnRecreationSender salesReturnRecreationSender,
     IPurchaseReturnRecreationSender purchaseReturnRecreationSender,
     IFactureInRecreationSender factureInRecreationSender,
+    IFactureOutRecreationSender factureOutRecreationSender,
     IDocumentSnapshotRepository documentSnapshots,
     IMergeCounterpartyArchiveService counterpartyArchive,
     ILogger<MergeProcessor> logger) : IMergeProcessor
@@ -44,6 +45,7 @@ public sealed class MergeProcessor(
         await state.EnsureSalesReturnRecreationOperationAsync(job, cancellationToken);
         await state.EnsurePurchaseReturnRecreationOperationAsync(job, cancellationToken);
         await state.EnsureFactureInRecreationOperationAsync(job, cancellationToken);
+        await state.EnsureFactureOutRecreationOperationAsync(job, cancellationToken);
         await state.StartJobAsync(job, cancellationToken);
 
         var discovery = job.Operations.Single(item => item.OperationType == MergeOperationTypes.DiscoverDocuments);
@@ -105,6 +107,19 @@ public sealed class MergeProcessor(
                     documentSnapshots,
                     token),
                 "Facturein recreation will be retried.", cancellationToken))
+            return;
+
+        var factureOutOperation = job.Operations.Single(item =>
+            item.OperationType == MergeOperationTypes.RecreateFactureOuts);
+        if (!await state.ExecuteAsync(job, factureOutOperation,
+                token => RecreateFactureOutsAsync(
+                    job,
+                    factureOutOperation,
+                    command.DuplicateCounterpartyIds,
+                    factureOutRecreationSender,
+                    documentSnapshots,
+                    token),
+                "Factureout recreation will be retried.", cancellationToken))
             return;
 
         var archiveOperations = job.Operations
@@ -283,4 +298,92 @@ public sealed class MergeProcessor(
                 400);
         }
     }
+
+    private static async Task RecreateFactureOutsAsync(
+        MergeJob job,
+        MergeOperation operation,
+        IReadOnlyList<Guid> duplicateCounterpartyIds,
+        IFactureOutRecreationSender sender,
+        IDocumentSnapshotRepository documentSnapshots,
+        CancellationToken cancellationToken)
+    {
+        var rows = await documentSnapshots.GetForCounterpartiesAsync(
+            job.AccountId, duplicateCounterpartyIds, cancellationToken);
+        var factureOuts = rows
+            .Where(item => string.Equals(item.DocumentType, "factureout", StringComparison.Ordinal))
+            .ToArray();
+        if (factureOuts.Length == 0)
+            return;
+
+        var sourceIds = factureOuts.Select(item => item.DocumentId).ToArray();
+        var response = await sender.SendAsync(
+            job.AccountId,
+            job.MainCounterpartyId,
+            "factureout",
+            sourceIds,
+            job.Id,
+            operation.Id,
+            job.RequestedByUserId,
+            job.CorrelationId,
+            cancellationToken);
+
+        ValidateFactureOutResponse(sourceIds, response);
+
+        if (response.TransferredDocumentIds.ToHashSet().SetEquals(sourceIds))
+            return;
+
+        var failed = response.FailedDocuments.FirstOrDefault();
+        var createdWithError = response.CreatedWithErrors.FirstOrDefault();
+        var skipped = response.SkippedDocuments.FirstOrDefault();
+        throw new MergeEgressException(
+            failed?.ErrorCode ?? createdWithError?.ErrorCode ?? skipped?.ErrorCode ??
+            "FACTUREOUT_RECREATION_INCOMPLETE",
+            failed?.Error ?? createdWithError?.Error ?? skipped?.Error ??
+            "Factureout recreation skipped or failed one or more documents.",
+            400);
+    }
+
+    private static void ValidateFactureOutResponse(
+        IReadOnlyList<Guid> requestedIds,
+        FactureOutRecreationResponse response)
+    {
+        if (response is null)
+            throw InvalidFactureOutResponse();
+
+        var transferred = response.TransferredDocumentIds;
+        var skippedIds = response.SkippedDocumentIds;
+        var skippedDocuments = response.SkippedDocuments;
+        var createdWithErrors = response.CreatedWithErrors;
+        var failedDocuments = response.FailedDocuments;
+        if (transferred is null || skippedIds is null || skippedDocuments is null ||
+            createdWithErrors is null || failedDocuments is null)
+        {
+            throw InvalidFactureOutResponse();
+        }
+
+        var returnedIds = transferred
+            .Concat(skippedIds)
+            .Concat(createdWithErrors.Select(item => item.SourceDocumentId))
+            .Concat(failedDocuments.Select(item => item.SourceDocumentId))
+            .ToArray();
+        var requested = requestedIds.ToHashSet();
+        var skippedDetailIds = skippedDocuments.Select(item => item.DocumentId).ToArray();
+        if (returnedIds.Length != requested.Count ||
+            returnedIds.Distinct().Count() != returnedIds.Length ||
+            !returnedIds.ToHashSet().SetEquals(requested) ||
+            skippedDetailIds.Length != skippedIds.Count ||
+            skippedDetailIds.Distinct().Count() != skippedDetailIds.Length ||
+            !skippedDetailIds.ToHashSet().SetEquals(skippedIds) ||
+            skippedDocuments.Any(item => item.Status != "Skipped") ||
+            createdWithErrors.Any(item => item.Status != "CreatedWithErrors") ||
+            failedDocuments.Any(item => item.Status != "Failed"))
+        {
+            throw InvalidFactureOutResponse();
+        }
+    }
+
+    private static MergeEgressException InvalidFactureOutResponse() => new(
+        "EGRESS_INVALID_RESPONSE",
+        "MoySklad Egress Service returned an inconsistent factureout recreation response.",
+        502);
 }

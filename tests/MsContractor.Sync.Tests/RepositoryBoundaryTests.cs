@@ -84,25 +84,55 @@ public sealed class RepositoryBoundaryTests
         await using var fixture = await Fixture.CreateAsync();
         var run = fixture.Counterparty.LastSyncRun;
         var oldStatus = run.Status;
+        var oldDocument = new CounterpartyDocument
+        {
+            AccountId = fixture.AccountId,
+            CounterpartyId = fixture.Counterparty.Id,
+            DocumentType = "purchasereturn",
+            DocumentId = Guid.NewGuid(),
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        fixture.Db.CounterpartyDocuments.Add(oldDocument);
+        await fixture.Db.SaveChangesAsync();
+        var ownerToken = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        run.Status = "running";
+        run.TotalCount = 1;
+        run.ProcessedCount = 1;
+        run.ProcessingOwnerToken = ownerToken;
+        run.ProcessingLeaseExpiresAtTicks = now.AddMinutes(2).UtcTicks;
+        run.WindowTo = now;
+        fixture.Db.CounterpartySyncStaging.Add(new CounterpartySyncStage
+        {
+            AccountId = fixture.AccountId,
+            SyncRunId = run.Id,
+            Sequence = 0,
+            CounterpartyId = Guid.NewGuid(),
+            IsValidForStorage = true,
+            Name = "new",
+            NormalizedName = "new",
+            LastSyncRunId = run.Id,
+            RawJson = "{}",
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        await fixture.Db.SaveChangesAsync();
         run.Status = "completed";
+        run.ProcessingOwnerToken = null;
+        run.ProcessingLeaseExpiresAtTicks = null;
         var outbox = Outbox();
         outbox.Payload = null!;
         var completion = new SyncCompletion(run,
             new InboxMessage { MessageId = run.MessageId, ConsumerName = "test" }, outbox,
-            new SyncWatermark { AccountId = fixture.AccountId, LastSyncRunId = run.Id, Watermark = DateTimeOffset.UtcNow });
-        var incoming = new Counterparty
-        {
-            Id = Guid.NewGuid(),
-            AccountId = fixture.AccountId,
-            LastSyncRunId = run.Id,
-            Name = "new"
-        };
-        await Assert.ThrowsAsync<CatalogPersistenceException>(() => fixture.Sync.CompleteFullAsync(
-            fixture.AccountId, [incoming], completion, CancellationToken.None));
+            new SyncWatermark { AccountId = fixture.AccountId, LastSyncRunId = run.Id, Watermark = now });
+        await Assert.ThrowsAsync<CatalogPersistenceException>(() => fixture.Sync.CompleteFullFromStagingAsync(
+            fixture.AccountId, run.Id, ownerToken, [], [], completion, now.AddMinutes(2).UtcTicks, CancellationToken.None));
 
         fixture.Db.ChangeTracker.Clear();
         Assert.Equal(oldStatus, (await fixture.Db.SyncRuns.SingleAsync()).Status);
-        Assert.Single(await fixture.Db.Counterparties.ToListAsync());
+        Assert.Equal(fixture.Counterparty.Id, (await fixture.Db.Counterparties.SingleAsync()).Id);
+        Assert.Equal(oldDocument.DocumentId, (await fixture.Db.CounterpartyDocuments.SingleAsync()).DocumentId);
+        Assert.Single(await fixture.Db.CounterpartySyncStaging.ToListAsync());
         Assert.Empty(await fixture.Db.InboxMessages.ToListAsync());
         Assert.Empty(await fixture.Db.SyncWatermarks.ToListAsync());
         Assert.Empty(await fixture.Db.OutboxMessages.ToListAsync());

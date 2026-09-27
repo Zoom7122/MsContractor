@@ -17,6 +17,8 @@ public sealed class SyncRun
     public DateTimeOffset? CompletedAt { get; set; }
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
+    public Guid? ProcessingOwnerToken { get; set; }
+    public long? ProcessingLeaseExpiresAtTicks { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public ICollection<Counterparty> Counterparties { get; set; } = new List<Counterparty>();

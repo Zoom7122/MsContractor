@@ -232,6 +232,7 @@ services:
     environment:
       <<: *service-env
       Kafka__SyncConsumerGroup: catalog-sync-service
+      Kafka__SyncConsumerMaxPollIntervalMs: ${SYNC_CONSUMER_MAX_POLL_INTERVAL_MS:-660000}
     depends_on:
       postgres:
         condition: service_healthy

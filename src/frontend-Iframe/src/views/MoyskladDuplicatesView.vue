@@ -159,7 +159,7 @@ function normalizeApiGroup(group) {
     description: String(item?.description || ''),
     email: String(item?.email || ''),
     phone: String(item?.phone || ''),
-    archived: Boolean(item?.archived),
+    archived: readArchivedFlag(item),
     updatedAt: String(item?.updatedAt || ''),
     syncedAt: ''
   }))
@@ -197,12 +197,16 @@ function normalizeGroup(group) {
           description: String(item?.description || ''),
           email: String(item?.email || ''),
           phone: String(item?.phone || ''),
-          archived: Boolean(item?.archived),
+          archived: readArchivedFlag(item),
           updatedAt: String(item?.updatedAt || ''),
           syncedAt: String(item?.syncedAt || '')
         }))
       : []
   }
+}
+
+function readArchivedFlag(item) {
+  return Boolean(item?.archived ?? item?.Archived)
 }
 
 function normalizeCriteria(items) {

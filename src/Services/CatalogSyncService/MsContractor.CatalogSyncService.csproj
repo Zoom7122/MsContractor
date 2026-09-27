@@ -20,4 +20,8 @@
     <ProjectReference Include="..\..\Shared\MsContractor.Contracts\MsContractor.Contracts.csproj" />
     <ProjectReference Include="..\..\Shared\MsContractor.BuildingBlocks\MsContractor.BuildingBlocks.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="MsContractor.Sync.Tests" />
+  </ItemGroup>
 </Project>

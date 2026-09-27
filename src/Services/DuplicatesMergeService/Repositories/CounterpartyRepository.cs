@@ -28,7 +28,9 @@ public sealed class CounterpartyRepository : ICounterpartyRepository
     public async Task<IReadOnlyList<DuplicateCandidate>> GetCandidatesAsync(Guid accountId, CancellationToken cancellationToken)
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
-        return await _dbContext.Counterparties.AsNoTracking().Where(x => x.AccountId == accountId && !x.Archived &&
+        return await _dbContext.Counterparties.AsNoTracking().Where(x => x.AccountId == accountId &&
+                (!x.Archived || _dbContext.CounterpartyDocuments.Any(document =>
+                    document.AccountId == accountId && document.CounterpartyId == x.Id)) &&
                 !_dbContext.MergeCounterpartyLocks.Any(l => l.AccountId == accountId && l.CounterpartyId == x.Id))
             .Select(x => new DuplicateCandidate(x.Id, x.NormalizedName, x.NormalizedEmail, x.NormalizedPhone)).ToListAsync(cancellationToken);
     }
@@ -36,7 +38,7 @@ public sealed class CounterpartyRepository : ICounterpartyRepository
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
         return await _dbContext.Counterparties.AsNoTracking().Where(x => x.AccountId == accountId && ids.Contains(x.Id))
-            .Select(x => new CounterpartyDisplayItem(x.Id, x.Name, x.Email, x.Phone, x.Description, x.RawJson, x.CreatedAt, x.UpdatedAt)).ToListAsync(cancellationToken);
+            .Select(x => new CounterpartyDisplayItem(x.Id, x.Name, x.Email, x.Phone, x.Description, x.Archived, x.RawJson, x.CreatedAt, x.UpdatedAt)).ToListAsync(cancellationToken);
     }
     public async Task<IReadOnlyList<CounterpartySelectionItem>> GetSelectionAsync(Guid accountId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
     {

@@ -114,6 +114,89 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.ToTable("counterparties", "catalog_sync");
                 });
 
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.CounterpartySyncStage", b =>
+                {
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Archived")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("CounterpartyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Email")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Inn")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsValidForStorage")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("LastSyncRunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Kpp")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("MoySkladUpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("MoySkladUpdatedSortValue")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("NormalizedEmail")
+                        .HasColumnType("text");
+
+                    b.Property<string>("NormalizedInn")
+                        .HasColumnType("text");
+
+                    b.Property<string>("NormalizedKpp")
+                        .HasColumnType("text");
+
+                    b.Property<string>("NormalizedName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("NormalizedPhone")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Phone")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RawJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("Sequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("SyncRunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("AccountId", "SyncRunId", "Sequence");
+
+                    b.HasIndex("SyncRunId", "AccountId");
+
+                    b.HasIndex("AccountId", "SyncRunId", "CounterpartyId", "Sequence");
+
+                    b.ToTable("counterparty_sync_staging", "catalog_sync");
+                });
+
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.CounterpartyDocument", b =>
                 {
                     b.Property<Guid>("AccountId")
@@ -432,6 +515,12 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.Property<DateTimeOffset?>("WindowTo")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<long?>("ProcessingLeaseExpiresAtTicks")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("ProcessingOwnerToken")
+                        .HasColumnType("uuid");
+
                     b.HasKey("Id");
 
                     b.HasIndex("MessageId")
@@ -486,6 +575,16 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Counterparty");
+                });
+
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.CounterpartySyncStage", b =>
+                {
+                    b.HasOne("MsContractor.CatalogSyncService.Models.SyncRun", null)
+                        .WithMany()
+                        .HasForeignKey("SyncRunId", "AccountId")
+                        .HasPrincipalKey("Id", "AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.DocumentAdditionalCommission", b =>

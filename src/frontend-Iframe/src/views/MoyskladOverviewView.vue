@@ -5,7 +5,6 @@ import {
   Connection,
   CopyDocument,
   Refresh,
-  Timer,
   User,
   VideoPause
 } from '@element-plus/icons-vue'
@@ -108,24 +107,6 @@ const tiles = computed(() => {
       icon: User,
       value: known ? formatNumber(data.local.counterpartiesCount) : '—',
       hint: !known ? 'Нет данных' : total > 0 ? `из ${formatNumber(total)} в МоёмСкладе` : 'Синхронизация не выполнялась',
-    },
-    {
-      key: 'duplicates',
-      label: 'Групп дублей',
-      icon: CopyDocument,
-      tone: 'warning',
-      value: known ? formatNumber(data.duplicates.groupsCount) : '—',
-      hint: known ? 'по последнему поиску' : 'Нет данных',
-      to: { name: 'moysklad-duplicates' },
-      linkLabel: 'К дублям',
-    },
-    {
-      key: 'mergeQueue',
-      label: 'Объединений в работе',
-      icon: Timer,
-      tone: 'neutral',
-      value: known ? formatNumber(data.mergeQueue.jobsCount) : '—',
-      hint: known ? 'в очереди и выполняются' : 'Нет данных',
     },
     {
       key: 'lastSync',

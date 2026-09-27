@@ -11,7 +11,7 @@ namespace MsContractor.Sync.Tests;
 public sealed class DuplicatePreviewServiceTests
 {
     [Fact]
-    public async Task FindAsync_ScopesAccountExcludesArchivedAndKeepsDistinctOverlappingGroups()
+    public async Task FindAsync_IncludesArchivedOnlyWhenDocumentsExistAndKeepsAccountScope()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -27,11 +27,21 @@ public sealed class DuplicatePreviewServiceTests
         var c = Counterparty(account, "C", "unique", "a@example.test", null, now.AddMinutes(-1));
         var archived = Counterparty(account, "Archived", "same-name", null, null, now);
         archived.Archived = true;
+        var archivedWithoutDocuments = Counterparty(account, "Archived without documents", "same-name", null, null, now.AddSeconds(1));
+        archivedWithoutDocuments.Archived = true;
         var foreign = Counterparty(other, "Foreign", "same-name", null, null, now);
-        foreach (var counterparty in new[] { a, b, c, archived })
+        foreach (var counterparty in new[] { a, b, c, archived, archivedWithoutDocuments })
             counterparty.LastSyncRunId = accountRun.Id;
         foreign.LastSyncRunId = otherRun.Id;
-        db.Counterparties.AddRange(a, b, c, archived, foreign);
+        db.Counterparties.AddRange(a, b, c, archived, archivedWithoutDocuments, foreign);
+        db.CounterpartyDocuments.Add(new CounterpartyDocument
+        {
+            AccountId = account,
+            CounterpartyId = archived.Id,
+            DocumentType = "purchasereturn",
+            DocumentId = Guid.NewGuid(),
+            UpdatedAt = now
+        });
         await db.SaveChangesAsync();
 
         var result = await new DuplicatePreviewService(new CounterpartyRepository(db)).FindAsync(
@@ -39,12 +49,12 @@ public sealed class DuplicatePreviewServiceTests
 
         Assert.Equal(2, result.Count);
         Assert.Contains(result, group => group.MatchedBy == "name" && group.MatchValue == "same-name" &&
-            group.Counterparties.Select(item => item.Id).SequenceEqual(new[] { a.Id, b.Id }));
+            group.Counterparties.Select(item => item.Id).ToHashSet().SetEquals(new[] { a.Id, b.Id, archived.Id }));
         Assert.Contains(result, group => group.MatchedBy == "email" && group.MatchValue == "a@example.test" &&
             group.Counterparties.Select(item => item.Id).SequenceEqual(new[] { a.Id, c.Id }));
         Assert.All(result.SelectMany(group => group.Counterparties), item => Assert.NotEqual(foreign.Id, item.Id));
-        Assert.DoesNotContain(result.SelectMany(group => group.Counterparties), item => item.Id == archived.Id);
-        Assert.Equal(5, await db.Counterparties.CountAsync());
+        Assert.DoesNotContain(result.SelectMany(group => group.Counterparties), item => item.Id == archivedWithoutDocuments.Id);
+        Assert.Equal(6, await db.Counterparties.CountAsync());
     }
 
     [Fact]

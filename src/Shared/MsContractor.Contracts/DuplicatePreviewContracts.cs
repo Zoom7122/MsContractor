@@ -15,6 +15,7 @@ public sealed record DuplicateCounterpartyDto(
     string? Email,
     string? Phone,
     string? Description,
+    bool Archived,
     JsonElement RawJson,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);

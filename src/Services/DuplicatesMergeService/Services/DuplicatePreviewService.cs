@@ -79,7 +79,7 @@ public sealed class DuplicatePreviewService : IDuplicatePreviewService
     private static string GroupKey(IEnumerable<Guid> ids) => string.Join(':', ids.Select(id => id.ToString("N")));
 
     private static DuplicateCounterpartyDto ToDto(CounterpartyDisplayItem item) => new(
-        item.Id, item.Name, item.Email, item.Phone, item.Description, ParseRawJson(item.RawJson), item.CreatedAt, item.UpdatedAt);
+        item.Id, item.Name, item.Email, item.Phone, item.Description, item.Archived, ParseRawJson(item.RawJson), item.CreatedAt, item.UpdatedAt);
 
     private static JsonElement ParseRawJson(string rawJson)
     {

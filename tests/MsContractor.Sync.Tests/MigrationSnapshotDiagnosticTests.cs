@@ -92,8 +92,36 @@ public sealed class MigrationSnapshotDiagnosticTests
             "20260914120000_RemoveSalesReturnRecreationRequest",
             "20260916120000_RemoveDocumentAdditionalData"
         ];
-        Assert.Equal([.. expected, "20260924120000_AddMergeCounterpartyLocks"],
+        Assert.Equal([.. expected, "20260924120000_AddMergeCounterpartyLocks", "20260927120000_AddCounterpartySyncStaging"],
             context.GetService<IMigrationsAssembly>().Migrations.Keys);
+    }
+
+    [Fact]
+    public void CounterpartySyncStagingMigration_CreatesRunScopedTenantIsolatedTable()
+    {
+        using var context = new CatalogSyncDbContext(new DbContextOptionsBuilder<CatalogSyncDbContext>()
+            .UseNpgsql("Host=localhost;Database=test;Username=postgres;Password=postgres").Options);
+        var migrationsAssembly = context.GetService<IMigrationsAssembly>();
+        var migration = migrationsAssembly.CreateMigration(
+            migrationsAssembly.Migrations["20260927120000_AddCounterpartySyncStaging"],
+            context.Database.ProviderName!);
+
+        var table = Assert.Single(migration.UpOperations.OfType<CreateTableOperation>());
+        Assert.Equal("catalog_sync", table.Schema);
+        Assert.Equal("counterparty_sync_staging", table.Name);
+        Assert.Equal(["AccountId", "SyncRunId", "Sequence"], table.PrimaryKey!.Columns);
+        var foreignKey = Assert.Single(table.ForeignKeys);
+        Assert.Equal(["SyncRunId", "AccountId"], foreignKey.Columns!);
+        Assert.Equal("sync_runs", foreignKey.PrincipalTable);
+        Assert.Equal(["Id", "AccountId"], foreignKey.PrincipalColumns!);
+        Assert.Equal(ReferentialAction.Cascade, foreignKey.OnDelete);
+
+        var sql = string.Join(Environment.NewLine,
+            migration.UpOperations.OfType<SqlOperation>().Select(operation => operation.Sql));
+        Assert.Contains("ENABLE ROW LEVEL SECURITY", sql);
+        Assert.Contains("FORCE ROW LEVEL SECURITY", sql);
+        Assert.Contains("CREATE POLICY account_isolation", sql);
+        Assert.Contains("current_setting('app.account_id', true)", sql);
     }
 
     [Fact]

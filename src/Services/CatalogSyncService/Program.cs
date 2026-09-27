@@ -32,6 +32,12 @@ builder.Services.AddHttpClient<IMoySkladEgressClient, MoySkladEgressClient>(clie
         egressBaseUrl.EndsWith('/') ? egressBaseUrl : $"{egressBaseUrl}/");
     client.Timeout = TimeSpan.FromSeconds(45);
 });
+builder.Services.AddHttpClient<IMoySkladDocumentDiscoveryClient, MoySkladDocumentDiscoveryClient>(client =>
+{
+    client.BaseAddress = new Uri(
+        egressBaseUrl.EndsWith('/') ? egressBaseUrl : $"{egressBaseUrl}/");
+    client.Timeout = TimeSpan.FromSeconds(45);
+});
 builder.Services.AddSingleton<IProducer<string, string>>(_ =>
     new ProducerBuilder<string, string>(new ProducerConfig
     {

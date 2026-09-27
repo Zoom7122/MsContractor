@@ -187,6 +187,7 @@ public sealed class MergeProcessorTests
                 MergeOperationTypes.RecreateSalesReturns,
                 MergeOperationTypes.RecreatePurchaseReturns,
                 MergeOperationTypes.RecreateFactureIns,
+                MergeOperationTypes.RecreateFactureOuts,
                 MergeOperationTypes.ArchiveDuplicate
             ],
             operations.Where(item => item.Sequence >= 3).Select(item => item.OperationType));
@@ -509,7 +510,7 @@ public sealed class MergeProcessorTests
         job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
         Assert.Equal(2, job.Operations.Single(item =>
             item.OperationType == MergeOperationTypes.ChangeDocumentCounterparties).Sequence);
-        Assert.Equal(3, job.Operations.Single(item =>
+        Assert.Equal(7, job.Operations.Single(item =>
             item.OperationType == MergeOperationTypes.ArchiveDuplicate).Sequence);
         Assert.Equal(MergeJobStatuses.Completed, job.Status);
     }
@@ -523,6 +524,7 @@ public sealed class MergeProcessorTests
         FakeSalesReturnRecreationSender salesReturns,
         FakePurchaseReturnRecreationSender purchaseReturns,
         FakeFactureInRecreationSender factureIns,
+        FakeFactureOutRecreationSender factureOuts,
         int maxAttempts) : IAsyncDisposable
     {
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -534,6 +536,7 @@ public sealed class MergeProcessorTests
         public FakeSalesReturnRecreationSender SalesReturns { get; } = salesReturns;
         public FakePurchaseReturnRecreationSender PurchaseReturns { get; } = purchaseReturns;
         public FakeFactureInRecreationSender FactureIns { get; } = factureIns;
+        public FakeFactureOutRecreationSender FactureOuts { get; } = factureOuts;
         public Guid AccountId { get; } = Guid.NewGuid();
         public Counterparty Main { get; private set; } = null!;
         public List<Counterparty> Duplicates { get; } = [];
@@ -563,6 +566,7 @@ public sealed class MergeProcessorTests
                     SalesReturns,
                     PurchaseReturns,
                     FactureIns,
+                    FactureOuts,
                     snapshots,
                     new MergeCounterpartyArchiveService(Egress, counterparties, parser, normalizer, TimeProvider.System),
                     NullLogger<MergeProcessor>.Instance);
@@ -582,7 +586,8 @@ public sealed class MergeProcessorTests
             var salesReturns = new FakeSalesReturnRecreationSender();
             var purchaseReturns = new FakePurchaseReturnRecreationSender();
             var factureIns = new FakeFactureInRecreationSender();
-            var fixture = new Fixture(connection, db, egress, documents, documentChanges, salesReturns, purchaseReturns, factureIns, maxAttempts);
+            var factureOuts = new FakeFactureOutRecreationSender();
+            var fixture = new Fixture(connection, db, egress, documents, documentChanges, salesReturns, purchaseReturns, factureIns, factureOuts, maxAttempts);
             var run = NewRun(fixture.AccountId);
             fixture.Main = NewCounterparty(fixture.AccountId, run, "Main");
             db.Add(run);
@@ -746,6 +751,26 @@ public sealed class MergeProcessorTests
 
             return Task.FromResult(Response?.Invoke(documentIds) ??
                 new FactureInRecreationResponse(documentIds, []));
+        }
+    }
+
+    private sealed class FakeFactureOutRecreationSender : IFactureOutRecreationSender
+    {
+        public List<(Guid MainCounterpartyId, string DocumentType, IReadOnlyList<Guid> DocumentIds)> Calls { get; } = [];
+
+        public Task<FactureOutRecreationResponse> SendAsync(
+            Guid accountId,
+            Guid mainCounterpartyId,
+            string documentType,
+            IReadOnlyList<Guid> documentIds,
+            Guid mergeJobId,
+            Guid operationId,
+            Guid userId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add((mainCounterpartyId, documentType, documentIds.ToArray()));
+            return Task.FromResult(new FactureOutRecreationResponse(documentIds, [], [], [], []));
         }
     }
 

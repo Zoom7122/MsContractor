@@ -111,6 +111,61 @@ public sealed class DuplicatePreviewServiceTests
         Assert.Equal(new[] { a.Id, c.Id }.Order(), group.Counterparties.Select(item => item.Id).Order());
     }
 
+    [Fact]
+    public async Task FindAsync_FiltersCandidatesByAllNormalizedAccountExclusionsBeforeGrouping()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = await CreateContextAsync(connection);
+        var account = Guid.NewGuid();
+        var otherAccount = Guid.NewGuid();
+        var run = SyncRun(account);
+        var now = DateTimeOffset.UtcNow;
+        var keepA = Counterparty(account, "Keep A", "keep group", "shared@example.test", null, now);
+        var keepB = Counterparty(account, "Keep B", "keep group", "other@example.test", null, now.AddMinutes(1));
+        var excludedByNameA = Counterparty(account, "Name A", "name group", "name-a@example.test", null, now);
+        var excludedByNameB = Counterparty(account, "Name B", "name group", "name-b@example.test", null, now.AddMinutes(1));
+        var excludedByEmailA = Counterparty(account, "Email A", "email group", "blocked@example.test", null, now);
+        var excludedByEmailB = Counterparty(account, "Email B", "email group", "allowed@example.test", null, now.AddMinutes(1));
+        var excludedByPhoneA = Counterparty(account, "Phone A", "phone group", "phone-a@example.test", "+7 999 123-45-67", now);
+        var excludedByPhoneB = Counterparty(account, "Phone B", "phone group", "phone-b@example.test", "+7 999 765-43-21", now.AddMinutes(1));
+        foreach (var candidate in new[]
+                 {
+                     keepA, keepB, excludedByNameA, excludedByNameB, excludedByEmailA,
+                     excludedByEmailB, excludedByPhoneA, excludedByPhoneB
+                 })
+        {
+            candidate.LastSyncRunId = run.Id;
+        }
+
+        db.SyncRuns.Add(run);
+        db.Counterparties.AddRange(
+            keepA, keepB, excludedByNameA, excludedByNameB, excludedByEmailA,
+            excludedByEmailB, excludedByPhoneA, excludedByPhoneB);
+        db.CatalogSettings.AddRange(
+            SettingsRow(account, now),
+            SettingsRow(otherAccount, now));
+        db.CatalogSettingExclusions.AddRange(
+            new CatalogSettingExclusion { AccountId = account, Field = "name", Value = "  NAME   GROUP " },
+            new CatalogSettingExclusion { AccountId = account, Field = "email", Value = " BLOCKED@EXAMPLE.TEST " },
+            new CatalogSettingExclusion { AccountId = account, Field = "phone", Value = "8 999 123-45-67" },
+            new CatalogSettingExclusion { AccountId = otherAccount, Field = "email", Value = "shared@example.test" });
+        await db.SaveChangesAsync();
+
+        var groups = await new DuplicatePreviewService(new CounterpartyRepository(db)).FindAsync(
+            account, [DuplicateMatchField.Name], CancellationToken.None);
+
+        var group = Assert.Single(groups);
+        Assert.Equal("keep group", group.MatchValue);
+        Assert.Equal(2, group.Counterparties.Count);
+        Assert.True(new[] { keepA.Id, keepB.Id }.ToHashSet()
+            .SetEquals(group.Counterparties.Select(item => item.Id)));
+        Assert.DoesNotContain(groups.SelectMany(item => item.Counterparties), item =>
+            new[] { excludedByNameA.Id, excludedByNameB.Id, excludedByEmailA.Id,
+                    excludedByEmailB.Id, excludedByPhoneA.Id, excludedByPhoneB.Id }
+                .Contains(item.Id));
+    }
+
     private static async Task<CatalogSyncDbContext> CreateContextAsync(SqliteConnection connection)
     {
         var context = new CatalogSyncDbContext(new DbContextOptionsBuilder<CatalogSyncDbContext>().UseSqlite(connection).Options);
@@ -129,6 +184,15 @@ public sealed class DuplicatePreviewServiceTests
         RawJson = "{}",
         CreatedAt = createdAt,
         UpdatedAt = createdAt
+    };
+
+    private static CatalogSettings SettingsRow(Guid accountId, DateTimeOffset updatedAt) => new()
+    {
+        AccountId = accountId,
+        IncludeArchivedWithDocuments = true,
+        GroupLimit = 200,
+        ItemLimit = 200,
+        UpdatedAt = updatedAt
     };
 
     private static SyncRun SyncRun(Guid accountId) => new()

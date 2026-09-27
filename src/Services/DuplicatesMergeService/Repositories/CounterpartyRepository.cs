@@ -8,6 +8,7 @@ namespace MsContractor.DuplicatesMergeService.Repositories;
 public interface ICounterpartyRepository
 {
     Task<IReadOnlyList<DuplicateCandidate>> GetCandidatesAsync(Guid accountId, CancellationToken cancellationToken);
+    Task<IReadOnlyList<CatalogSettingExclusion>> GetDuplicateSearchExclusionsAsync(Guid accountId, CancellationToken cancellationToken);
     Task<IReadOnlyList<CounterpartyDisplayItem>> GetDisplayItemsAsync(Guid accountId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
     Task<IReadOnlyList<CounterpartySelectionItem>> GetSelectionAsync(Guid accountId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
     Task<IReadOnlyList<CounterpartyAvailability>> GetAvailabilityAsync(Guid accountId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
@@ -34,6 +35,17 @@ public sealed class CounterpartyRepository : ICounterpartyRepository
                 !_dbContext.MergeCounterpartyLocks.Any(l => l.AccountId == accountId && l.CounterpartyId == x.Id))
             .Select(x => new DuplicateCandidate(x.Id, x.NormalizedName, x.NormalizedEmail, x.NormalizedPhone)).ToListAsync(cancellationToken);
     }
+
+    public async Task<IReadOnlyList<CatalogSettingExclusion>> GetDuplicateSearchExclusionsAsync(
+        Guid accountId,
+        CancellationToken cancellationToken)
+    {
+        await _dbContext.SetTenantAsync(accountId, cancellationToken);
+        return await _dbContext.CatalogSettingExclusions.AsNoTracking()
+            .Where(item => item.AccountId == accountId)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<CounterpartyDisplayItem>> GetDisplayItemsAsync(Guid accountId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);

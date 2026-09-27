@@ -2,6 +2,8 @@ using MsContractor.DuplicatesMergeService.Models;
 using MsContractor.DuplicatesMergeService.Repositories;
 using System.Text.Json;
 using MsContractor.Contracts.Duplicates;
+using MsContractor.CatalogSyncService.Models;
+using MsContractor.CatalogSyncService.Services;
 
 namespace MsContractor.DuplicatesMergeService.Services;
 
@@ -30,6 +32,21 @@ public sealed class DuplicatePreviewService : IDuplicatePreviewService
     {
 
         var candidates = await _repository.GetCandidatesAsync(accountId, cancellationToken);
+        var exclusions = await _repository.GetDuplicateSearchExclusionsAsync(accountId, cancellationToken);
+
+        if (exclusions.Count > 0)
+        {
+            var excludedValues = new HashSet<(string Field, string Value)>();
+            foreach (var exclusion in exclusions)
+            {
+                if (ToNormalizedExclusion(exclusion) is { } normalized)
+                    excludedValues.Add(normalized);
+            }
+
+            candidates = candidates
+                .Where(candidate => !IsExcluded(candidate, excludedValues))
+                .ToArray();
+        }
 
         var groups = new Dictionary<string, DuplicateGroupCandidate>();
         AddGroups(DuplicateMatchField.Name, fields.Contains(DuplicateMatchField.Name), candidates, item => item.NormalizedName, groups);
@@ -77,6 +94,34 @@ public sealed class DuplicatePreviewService : IDuplicatePreviewService
     }
 
     private static string GroupKey(IEnumerable<Guid> ids) => string.Join(':', ids.Select(id => id.ToString("N")));
+
+    private static (string Field, string Value)? ToNormalizedExclusion(CatalogSettingExclusion exclusion)
+    {
+        var normalizedValue = exclusion.Field switch
+        {
+            "name" => CounterpartyNormalizer.NormalizeName(exclusion.Value),
+            "email" => CounterpartyNormalizer.NormalizeEmail(exclusion.Value),
+            "phone" => CounterpartyNormalizer.NormalizePhone(exclusion.Value),
+            _ => null
+        };
+
+        return string.IsNullOrWhiteSpace(normalizedValue)
+            ? null
+            : (exclusion.Field, normalizedValue);
+    }
+
+    private static bool IsExcluded(
+        DuplicateCandidate candidate,
+        HashSet<(string Field, string Value)> excludedValues) =>
+        Matches("name", candidate.NormalizedName, excludedValues) ||
+        Matches("email", candidate.NormalizedEmail, excludedValues) ||
+        Matches("phone", candidate.NormalizedPhone, excludedValues);
+
+    private static bool Matches(
+        string field,
+        string? value,
+        HashSet<(string Field, string Value)> excludedValues) =>
+        !string.IsNullOrWhiteSpace(value) && excludedValues.Contains((field, value));
 
     private static DuplicateCounterpartyDto ToDto(CounterpartyDisplayItem item) => new(
         item.Id, item.Name, item.Email, item.Phone, item.Description, item.Archived, ParseRawJson(item.RawJson), item.CreatedAt, item.UpdatedAt);

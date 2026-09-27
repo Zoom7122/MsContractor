@@ -319,7 +319,8 @@ public sealed class SalesReturnRelationsService : ISalesReturnRelationsService
             }
         }
 
-        foreach (var link in ReadCollection(source, "losses"))
+        // MoySklad may omit losses when the salesreturn has no linked loss documents.
+        foreach (var link in ReadOptionalCollection(source, "losses"))
         {
             if (!string.Equals(ReadMetaType(link), "loss", StringComparison.OrdinalIgnoreCase))
                 continue;

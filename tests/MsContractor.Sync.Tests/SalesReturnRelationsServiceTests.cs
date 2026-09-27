@@ -238,6 +238,55 @@ public sealed class SalesReturnRelationsServiceTests
     }
 
     [Fact]
+    public async Task PrepareAndReattachAsync_MissingLossesCompletesWithoutLossBatches()
+    {
+        var sourceId = Guid.NewGuid();
+        var gateway = new RecordingRelationsGateway(sourceId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid())
+        {
+            OmitLosses = true
+        };
+        var repository = new RecordingRelationsRepository();
+        var operation = Operation(Guid.NewGuid(), Guid.NewGuid(), sourceId);
+        var service = new SalesReturnRelationsService(gateway, repository, NullLogger<SalesReturnRelationsService>.Instance);
+
+        await service.PrepareAndDetachAsync(operation, "correlation-id", CancellationToken.None);
+
+        var item = Assert.Single(operation.Items);
+        Assert.Equal("Prepared", item.Stage);
+        Assert.Equal("RelationsDetached", item.RelationsStatus);
+        Assert.Empty(Assert.Single(repository.Snapshots).Losses);
+        Assert.Empty(gateway.Batches);
+
+        item.NewDocumentId = Guid.NewGuid();
+        item.Stage = "Created";
+        await service.ReattachAsync(operation, "correlation-id", CancellationToken.None);
+
+        Assert.Equal("Completed", item.Stage);
+        Assert.Equal("RelationsReattached", item.RelationsStatus);
+        Assert.Empty(gateway.Batches);
+    }
+
+    [Fact]
+    public async Task PrepareAndDetachAsync_InvalidPresentLossesStillSkipsSource()
+    {
+        var sourceId = Guid.NewGuid();
+        var gateway = new RecordingRelationsGateway(sourceId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid())
+        {
+            InvalidLosses = true
+        };
+        var repository = new RecordingRelationsRepository();
+        var operation = Operation(Guid.NewGuid(), Guid.NewGuid(), sourceId);
+
+        await new SalesReturnRelationsService(gateway, repository, NullLogger<SalesReturnRelationsService>.Instance)
+            .PrepareAndDetachAsync(operation, "correlation-id", CancellationToken.None);
+
+        var item = Assert.Single(operation.Items);
+        Assert.Equal("Skipped", item.Stage);
+        Assert.Equal("SALESRETURN_RELATIONS_LOAD_FAILED", item.ErrorCode);
+        Assert.Empty(gateway.Batches);
+    }
+
+    [Fact]
     public async Task PrepareAndDetachAsync_AcceptsMoySkladOmittedEmptyRelationFields()
     {
         var sourceId = Guid.NewGuid();
@@ -447,6 +496,10 @@ public sealed class SalesReturnRelationsServiceTests
 
         public bool InvalidPayments { get; set; }
 
+        public bool OmitLosses { get; set; }
+
+        public bool InvalidLosses { get; set; }
+
         public bool MultipleSourceOperations { get; set; }
 
         public bool OmitEmptyDetachedFields { get; set; }
@@ -479,6 +532,23 @@ public sealed class SalesReturnRelationsServiceTests
                     meta = EntityMeta("salesreturn", _sourceId),
                     payments = "invalid",
                     losses = Array.Empty<object>()
+                }));
+
+            if (OmitLosses)
+                return Task.FromResult(JsonSerializer.Serialize(new
+                {
+                    id = _sourceId,
+                    meta = EntityMeta("salesreturn", _sourceId),
+                    payments = Array.Empty<object>()
+                }));
+
+            if (InvalidLosses)
+                return Task.FromResult(JsonSerializer.Serialize(new
+                {
+                    id = _sourceId,
+                    meta = EntityMeta("salesreturn", _sourceId),
+                    payments = Array.Empty<object>(),
+                    losses = "invalid"
                 }));
 
             return Task.FromResult(ResponseSource(_sourceId, _paymentId!.Value, _cashOutId!.Value, _lossId!.Value));

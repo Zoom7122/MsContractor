@@ -92,8 +92,32 @@ public sealed class MigrationSnapshotDiagnosticTests
             "20260914120000_RemoveSalesReturnRecreationRequest",
             "20260916120000_RemoveDocumentAdditionalData"
         ];
-        Assert.Equal([.. expected, "20260924120000_AddMergeCounterpartyLocks", "20260927120000_AddCounterpartySyncStaging"],
+        Assert.Equal([.. expected, "20260924120000_AddMergeCounterpartyLocks", "20260927120000_AddCounterpartySyncStaging", "20260927130000_AddCatalogSettings"],
             context.GetService<IMigrationsAssembly>().Migrations.Keys);
+    }
+
+    [Fact]
+    public void CatalogSettingsMigration_CreatesAccountScopedRlsTable()
+    {
+        using var context = new CatalogSyncDbContext(new DbContextOptionsBuilder<CatalogSyncDbContext>()
+            .UseNpgsql("Host=localhost;Database=test;Username=postgres;Password=postgres").Options);
+        var migrationsAssembly = context.GetService<IMigrationsAssembly>();
+        var migration = migrationsAssembly.CreateMigration(
+            migrationsAssembly.Migrations["20260927130000_AddCatalogSettings"],
+            context.Database.ProviderName!);
+
+        var table = Assert.Single(migration.UpOperations.OfType<CreateTableOperation>());
+        Assert.Equal("catalog_sync", table.Schema);
+        Assert.Equal("catalog_settings", table.Name);
+        Assert.Equal(["AccountId"], table.PrimaryKey!.Columns);
+        Assert.Contains(table.Columns, column => column.Name == "Payload" && column.ColumnType == "jsonb");
+
+        var sql = string.Join(Environment.NewLine,
+            migration.UpOperations.OfType<SqlOperation>().Select(operation => operation.Sql));
+        Assert.Contains("ENABLE ROW LEVEL SECURITY", sql);
+        Assert.Contains("FORCE ROW LEVEL SECURITY", sql);
+        Assert.Contains("CREATE POLICY account_isolation", sql);
+        Assert.Contains("current_setting('app.account_id', true)", sql);
     }
 
     [Fact]

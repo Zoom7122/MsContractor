@@ -23,6 +23,23 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.CatalogSettings", b =>
+                {
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("AccountId");
+
+                    b.ToTable("catalog_settings", "catalog_sync");
+                });
+
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.Counterparty", b =>
                 {
                     b.Property<Guid>("Id")

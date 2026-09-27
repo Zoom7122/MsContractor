@@ -19,6 +19,7 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
     public DbSet<MergeOperation> MergeOperations => Set<MergeOperation>();
     public DbSet<CounterpartyDocument> CounterpartyDocuments => Set<CounterpartyDocument>();
     public DbSet<DocumentAdditionalCommission> DocumentAdditionalCommissions => Set<DocumentAdditionalCommission>();
+    public DbSet<CatalogSettings> CatalogSettings => Set<CatalogSettings>();
     internal Guid? TenantAccountId => _tenantAccountId;
 
     public Task SetTenantAsync(Guid accountId, CancellationToken cancellationToken)
@@ -188,6 +189,13 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
                 .HasForeignKey<DocumentAdditionalCommission>(item => item.DocumentId)
                 .HasPrincipalKey<CounterpartyDocument>(item => item.DocumentId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CatalogSettings>(entity =>
+        {
+            entity.ToTable("catalog_settings");
+            entity.HasKey(item => item.AccountId);
+            entity.Property(item => item.Payload).HasColumnType("jsonb").IsRequired();
         });
 
     }

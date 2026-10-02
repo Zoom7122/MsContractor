@@ -63,6 +63,6 @@ internal static class Fixtures
         MainCounterpartyId = Main, DuplicateCounterpartyIds = [Duplicate],
         CaptureStartedAt = DateTimeOffset.Parse("2026-09-20T12:00:00Z"),
         CaptureCompletedAt = DateTimeOffset.Parse("2026-09-20T12:01:00Z"), Documents = documents,
-        Coverage = DocumentRegistry.All.Select(x => new CaptureCoverage(x.EntityType, x.AgentFilterSupported)).ToArray()
+        Coverage = DocumentRegistry.All.Select(x => new CaptureCoverage(x.EntityType, x.TransferMode != DocumentTransferMode.Unsupported)).ToArray()
     };
 }

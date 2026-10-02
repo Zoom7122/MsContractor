@@ -16,7 +16,10 @@ public sealed record CaptureCoverage(string EntityType, bool Fetched, string? No
 
 public sealed record MergeSnapshot
 {
-    public int SnapshotVersion { get; init; } = 1;
+    /// <summary>2: agentAccount ownership, recreated syncId, linkKey in references to recreated documents.</summary>
+    public const int CurrentVersion = 2;
+
+    public int SnapshotVersion { get; init; } = CurrentVersion;
     public required Guid MainCounterpartyId { get; init; }
     public required IReadOnlyList<Guid> DuplicateCounterpartyIds { get; init; }
     public required DateTimeOffset CaptureStartedAt { get; init; }

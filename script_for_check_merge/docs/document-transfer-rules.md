@@ -26,12 +26,13 @@
 | [retailsalesreturn](https://dev.moysklad.ru/doc/api/remap/1.2/#/documents/retail-sales-return) | да | да | нет | Recreate | Раздел изменения явно запрещает изменение agent. Для возврата с основанием требуется совпадение контрагента с основанием. |
 | [factureout](https://dev.moysklad.ru/doc/api/remap/1.2/#/documents/factureout) | да | да | нет (проверено на API) | Recreate | Пример PUT в документации меняет только name. На реальном API `PUT {agent}` отвечает 200, но и ответ, и повторный GET содержат прежнего контрагента, даже если основание уже перенесено. Перенести можно только пересозданием; в Egress для этого есть `FactureOutRecreationOrchestrator`. |
 | [facturein](https://dev.moysklad.ru/doc/api/remap/1.2/#/documents/facturein) | да | да | не подтверждено | Recreate | MSContractor при merge удаляет и создаёт facturein заново (`MergeProcessor.RecreateFactureInsAsync`, Egress `FactureInDocumentTransferService`); проверено на API. |
-| [retireorder](https://dev.moysklad.ru/doc/api/remap/1.2/#/documents/retireorder) | да | да | не подтверждено для общего случая | Unsupported | Изменение ограничено documentState CREATED, CHECKED_NOT_OK, PROCESSING_ERROR; общей гарантии переноса нет. agent не имеет документированного оператора фильтрации. Endpoint не сканируется целиком; тип всегда отмечается Unsupported. |
+| [retireorder](https://dev.moysklad.ru/doc/api/remap/1.2/#/documents/retireorder) | да | да | не подтверждено для общего случая | PutAgent (список без фильтра agent) | Изменение ограничено documentState CREATED, CHECKED_NOT_OK, PROCESSING_ERROR; у agent нет документированного оператора фильтрации. Список читается целиком (на тестовом аккаунте GET отвечает 200) и фильтруется по agent в верификаторе. MSContractor retireorder не переносит: документы duplicate останутся `StillOnDuplicate`. |
 
 ## Ограничения и полнота
 
-`retireorder` не загружается без документированного agent-фильтра. Он явно присутствует в capture coverage как Unsupported, даже если неизвестно, есть ли такие документы.
-Поэтому текущая строгая проверка всего заданного реестра **не выдаст полный PASS**: результат будет exit 1 с Unsupported. Это осознанное выполнение требования не угадывать неописанные правила. Убрать это ограничение можно только после дополнения доказательств и правил, а не CLI-переключателем скрытия типов.
+Все 20 типов собираются. У `retireorder` нет документированного фильтра agent: раньше тип был `Unsupported`, и из-за этого
+verify никогда не мог вернуть 0, даже в аккаунте без единого retireorder. Теперь список читается целиком и фильтруется
+по agent в верификаторе; снимок фиксирует это в coverage (`No documented agent filter: N document(s) read …`).
 
 ## Проверка на реальном API
 
@@ -63,9 +64,31 @@ merge воспроизведён по коду Egress:
 
 Итог исправленной версии на том же сценарии: 106 документов в BEFORE, **104 Matched, 0 Changed, 0 Unexpected**.
 Оставшиеся отличия настоящие: purchasereturn и его factureout остались на duplicate (`StillOnDuplicate` + `Missing`), а
-`retireorder` помечен `Unsupported` намеренно. Независимый скрипт перечитал через GET списки документов main и
+`retireorder` тогда был помечен `Unsupported` (исправлено позже, см. ниже). Независимый скрипт перечитал через GET списки документов main и
 duplicate по каждому типу: количества совпали с вердиктом верификатора, расхождений 0. Отдельно снимок BEFORE сверен с
 GET по 94 документам (поля, позиции, 116 коллекций связей): расхождений 0.
+
+### Повторная проверка 2026-09-28: все 19 сценариев генератора
+
+`--all --counterparties 2` (16 сценариев без розницы, включая `*-full`: платежи на двух документах, авансы без документа,
+возвраты без основания, `returnToCommissionerPositions`, несколько отчётов комиссионера на одном договоре) → BEFORE
+снят старой и исправленной версией → merge воспроизведён по текущему Egress (factureout теперь тоже пересоздаётся,
+purchasereturn без счетов-фактур — пересоздаётся) → verify обеими версиями. 362 документа в BEFORE.
+
+| | старая версия | исправленная |
+|---|---|---|
+| Changed | 1 — supply «изменился», потому что изменился его purchasereturn (каскад через semanticHash) | 0 — supply совпал по `linkKey`, отличие показано у самого возврата |
+| Unsupported | 1 — retireorder, verify не мог вернуть 0 | 0 — список retireorder прочитан целиком (0 документов) |
+| Matched | 349 | 350 |
+
+Оставшиеся отличия настоящие:
+
+- 3 salesreturn и 1 purchasereturn после пересоздания без договора: Egress удаляет `contract` из payload
+  (`SalesReturnRecreationPayloadBuilder`, `PurchaseReturnCreateMapper`). Это потеря данных при merge.
+- 4 purchasereturn со счетами-фактурами и их 4 factureout остались на duplicate (`StillOnDuplicate`):
+  MSContractor такие возвраты пропускает (`PURCHASERETURN_FACTURE_RELATIONS_PRESENT`).
+- У одного salesreturn без основания отличается `cost` позиции — это артефакт симуляции (она не копировала `cost`,
+  Egress копирует), верификатор его правильно показал.
 
 ## Нормализация
 
@@ -78,6 +101,10 @@ GET по 94 документам (поля, позиции, 116 коллекци
 - `syncId` пересоздаваемого документа — технический ключ идемпотентности (раздел «Назначение поля syncId»);
   Egress генерирует новый при каждом пересоздании. У Recreate он игнорируется, как `created`; у PutAgent
   сравнивается.
+- Ссылка на Recreate документ хранит `semanticHash` (всё содержимое) и `linkKey` (тип, name, externalCode, moment — то,
+  что пересоздание сохраняет). Отличие только в `semanticHash` при том же `linkKey` не делает ссылающийся документ
+  изменённым: изменение показывается у самого связанного документа. Иначе одно отличие пересозданного возврата
+  (например, не перенесённый договор) давало `Changed` у отгрузки и всех платежей по нему.
 - Взаимные ссылки двух Recreate документов (`purchasereturn.factureOut` ↔ `factureout.returns`, появились
   после перевода factureout в Recreate). Сторона с меньшим (ordinal) типом хранит маркер `mutualLink`,
   другая — hash. Правило не зависит от порядка обхода.

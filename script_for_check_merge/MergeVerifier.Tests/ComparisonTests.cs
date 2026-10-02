@@ -178,8 +178,8 @@ public sealed class ComparisonTests
     {
         var beforeRaw = Raw("demand"); beforeRaw["returns"] = new JsonArray(Reference("salesreturn", Id));
         var afterRaw = Raw("demand", agent: Main); afterRaw["returns"] = new JsonArray(Reference("salesreturn", OtherId));
-        var before = await Document(beforeRaw, "demand", (_, _, _) => Task.FromResult("same-semantic-hash"));
-        var after = await Document(afterRaw, "demand", (_, _, _) => Task.FromResult("same-semantic-hash"));
+        var before = await Document(beforeRaw, "demand", (_, _, _) => Task.FromResult(new RecreatedReference("same-semantic-hash", "same-link")));
+        var after = await Document(afterRaw, "demand", (_, _, _) => Task.FromResult(new RecreatedReference("same-semantic-hash", "same-link")));
         Assert.True(Compare("demand", [before], [after]).Passed);
         Assert.DoesNotContain(Id.ToString(), before.Data.ToString());
     }
@@ -195,12 +195,63 @@ public sealed class ComparisonTests
     }
 
     [Fact]
-    public void UnsupportedPreventsFullPassEvenWithNoKnownDocuments()
+    public void EmptyScopeCanPassBecauseEveryTypeIsCaptured()
     {
+        // retireorder used to be Unsupported, which made every verification fail even without such documents.
         var report = DocumentComparisonService.Compare(Snapshot(), Snapshot());
-        Assert.False(report.Passed); Assert.Equal(1, report.ExitCode);
-        Assert.Equal(1, report.Totals[VerificationStatus.Unsupported]);
-        Assert.Equal(["retireorder"], report.Types.Where(x => x.TransferMode == DocumentTransferMode.Unsupported).Select(x => x.EntityType));
+        Assert.True(report.Passed); Assert.Equal(0, report.ExitCode);
+        Assert.Equal(0, report.Totals[VerificationStatus.Unsupported]);
+        Assert.DoesNotContain(DocumentRegistry.All, rule => rule.TransferMode == DocumentTransferMode.Unsupported);
+    }
+
+    private static RecreatedReferenceResolver Linked(string hash, string link = "return-1") =>
+        (_, _, _) => Task.FromResult(new RecreatedReference(hash, link));
+
+    [Fact]
+    public async Task ChangeOfALinkedRecreatedDocumentIsNotReportedOnTheReferencingDocument()
+    {
+        // The salesreturn itself changed (reported under salesreturn); the demand still points to its counterpart.
+        var beforeRaw = Raw("demand"); beforeRaw["returns"] = new JsonArray(Reference("salesreturn", Id));
+        var afterRaw = Raw("demand", agent: Main); afterRaw["returns"] = new JsonArray(Reference("salesreturn", OtherId));
+        var result = Compare("demand", [await Document(beforeRaw, "demand", Linked("hash-before"))],
+            [await Document(afterRaw, "demand", Linked("hash-after"))]);
+        Assert.Equal(1, result.Count(VerificationStatus.Matched));
+        Assert.Contains("linked recreated", result.Documents.Single().Note, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ReferenceMovedToAnotherRecreatedDocumentIsAChange()
+    {
+        var beforeRaw = Raw("demand"); beforeRaw["returns"] = new JsonArray(Reference("salesreturn", Id));
+        var afterRaw = Raw("demand", agent: Main); afterRaw["returns"] = new JsonArray(Reference("salesreturn", OtherId));
+        var result = Compare("demand", [await Document(beforeRaw, "demand", Linked("hash", "return-1"))],
+            [await Document(afterRaw, "demand", Linked("hash", "return-2"))]);
+        Assert.Equal(1, result.Count(VerificationStatus.Changed));
+        Assert.Contains(result.Documents.Single().Differences, x => x.Path.StartsWith("/returns", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task OwnChangeNextToALinkedChangeIsReportedWithoutTheLinkedNoise()
+    {
+        var beforeRaw = Raw("demand"); beforeRaw["returns"] = new JsonArray(Reference("salesreturn", Id));
+        var afterRaw = Raw("demand", agent: Main); afterRaw["returns"] = new JsonArray(Reference("salesreturn", OtherId));
+        afterRaw["description"] = "changed by merge";
+        var result = Compare("demand", [await Document(beforeRaw, "demand", Linked("hash-before"))],
+            [await Document(afterRaw, "demand", Linked("hash-after"))]);
+        Assert.Equal(1, result.Count(VerificationStatus.Changed));
+        Assert.Equal(["/description"], result.Documents.Single().Differences.Select(x => x.Path));
+    }
+
+    [Fact]
+    public async Task RecreatedDocumentLinkedToAChangedRecreatedDocumentStillMatches()
+    {
+        // purchasereturn.factureOut -> factureout: the facture changed, the return did not.
+        var beforeRaw = Raw("purchasereturn"); beforeRaw["factureOut"] = Reference("factureout", Id);
+        var afterRaw = Raw("purchasereturn", OtherId, Main); afterRaw["factureOut"] = Reference("factureout", OtherId);
+        var result = Compare("purchasereturn", [await Document(beforeRaw, "purchasereturn", Linked("facture-before", "facture"))],
+            [await Document(afterRaw, "purchasereturn", Linked("facture-after", "facture"))]);
+        Assert.Equal(1, result.Count(VerificationStatus.Matched));
+        Assert.Equal(0, result.Count(VerificationStatus.Missing));
     }
 
     private static JsonObject Account(Guid counterparty, Guid account) => new()
@@ -270,7 +321,7 @@ public sealed class ComparisonTests
         {
             [Id] = Normalization.SemanticHasher.Hash(before.Data), [OtherId] = Normalization.SemanticHasher.Hash(after.Data)
         };
-        RecreatedReferenceResolver resolver = (_, id, _) => Task.FromResult(hashes[id]);
+        RecreatedReferenceResolver resolver = (_, id, _) => Task.FromResult(new RecreatedReference(hashes[id], "facture-link"));
         var supply = Raw("supply"); supply["factureIn"] = Reference("facturein", Id);
         var movedSupply = Raw("supply", agent: Main); movedSupply["factureIn"] = Reference("facturein", OtherId);
         Assert.Equal(1, Compare("supply", [await Document(supply, "supply", resolver)],

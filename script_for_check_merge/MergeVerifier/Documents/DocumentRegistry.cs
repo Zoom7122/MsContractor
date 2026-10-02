@@ -38,8 +38,9 @@ public static class DocumentRegistry
         // prepares the same for factureout (Egress FactureOutRecreationOrchestrator).
         Recreate("factureout", false, "demands", "payments", "returns"),
         Recreate("facturein", false, "supplies", "payments"),
-        new("retireorder", DocumentTransferMode.Unsupported)
-        { AgentFilterSupported = false, PositionCollections = ["positions"] }
+        // No documented agent filter: capture reads the whole list and filters by agent. MSContractor does not transfer
+        // retireorder, so documents of a duplicate stay there and are reported as StillOnDuplicate.
+        Put("retireorder", true) with { AgentFilterSupported = false }
     ];
 
     public static DocumentRule Get(string type) => All.SingleOrDefault(x => x.EntityType == type)

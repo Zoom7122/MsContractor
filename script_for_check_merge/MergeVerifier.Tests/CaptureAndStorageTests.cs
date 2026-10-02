@@ -35,7 +35,13 @@ internal sealed class AccountApi
         var query = uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
             .Select(x => x.Split('=', 2)).ToDictionary(x => Uri.UnescapeDataString(x[0]), x => Uri.UnescapeDataString(x[1]));
         JsonObject[] rows;
-        if (segments.Length == 1)
+        if (segments.Length == 1 && !DocumentRegistry.Get(type).AgentFilterSupported)
+        {
+            // No documented agent filter: the verifier reads the whole list.
+            Assert.False(query.ContainsKey("filter"));
+            rows = Documents.Where(x => x["meta"]!["type"]!.GetValue<string>() == type).ToArray();
+        }
+        else if (segments.Length == 1)
         {
             Assert.True(query.TryGetValue("filter", out var filter));
             Assert.StartsWith("agent=https://", filter, StringComparison.Ordinal);
@@ -91,7 +97,7 @@ public sealed class CaptureAndStorageTests
             Assert.Equal(2, before.Documents.Single(x => x.EntityType == "salesreturn").Data.GetProperty("positions").GetArrayLength());
             Assert.DoesNotContain(api.Paths, x => x.StartsWith("paymentin/") && x.EndsWith("/positions"));
             Assert.Contains(api.Paths, x => x.EndsWith("/returntocommissionerpositions"));
-            Assert.DoesNotContain(api.Paths, x => x.StartsWith("retireorder"));
+            Assert.Contains(api.Paths, x => x == "retireorder");
             var path = Path.Combine(folder, "before.json");
             await SnapshotStore.WriteAsync(path, before, false);
             var bytes = await File.ReadAllBytesAsync(path);
@@ -109,13 +115,13 @@ public sealed class CaptureAndStorageTests
                 }
             }
             var result = await VerifierApplication.VerifyAsync(await SnapshotStore.ReadAsync(path), path, collector, output, error);
-            Assert.Equal(1, result); // All four documents match; retireorder remains explicitly Unsupported.
+            Assert.Equal(0, result); // All four documents match and every type is captured.
             Assert.Empty(error.ToString());
             Assert.Equal(bytes, await File.ReadAllBytesAsync(path));
             Assert.True(File.Exists(Path.Combine(folder, "after.json")));
             var report = JsonSerializer.Deserialize<VerificationReport>(await File.ReadAllTextAsync(Path.Combine(folder, "report.json")), SnapshotStore.JsonOptions)!;
             Assert.Equal(4, report.Totals[VerificationStatus.Matched]);
-            Assert.Equal(1, report.Totals[VerificationStatus.Unsupported]);
+            Assert.Equal(0, report.Totals[VerificationStatus.Unsupported]);
             foreach (var text in new[] { output.ToString(), JsonSerializer.Serialize(before), JsonSerializer.Serialize(report) })
             {
                 Assert.DoesNotContain("fixture-login", text); Assert.DoesNotContain("fixture-password", text);
@@ -197,6 +203,22 @@ public sealed class CaptureAndStorageTests
     }
 
     [Fact]
+    public async Task RetireOrdersAreReadWithoutAgentFilterAndKeptOnlyForTheScope()
+    {
+        var api = new AccountApi();
+        api.Documents.Add(Raw("retireorder", Id, Duplicate));
+        api.Documents.Add(Raw("retireorder", OtherId, Guid.NewGuid())); // another counterparty: out of scope
+        using var client = api.CreateClient();
+
+        var snapshot = await new SnapshotCollector(client, TextWriter.Null).CaptureAsync(Main, [Duplicate], default);
+
+        var retireOrder = Assert.Single(snapshot.Documents);
+        Assert.Equal(("retireorder", Id.ToString("D"), Duplicate), (retireOrder.EntityType, retireOrder.StableDocumentId, retireOrder.SourceCounterpartyId));
+        Assert.Contains(api.Paths, x => x == "retireorder"); // pages of the unfiltered list
+        SnapshotStore.Validate(snapshot);
+    }
+
+    [Fact]
     public async Task UnexplainedSelfIdIsRejectedBeforePersistence()
     {
         var api = new AccountApi();
@@ -269,6 +291,7 @@ public sealed class CaptureAndStorageTests
 
     [Theory]
     [InlineData("{\"snapshotVersion\":99}")]
+    [InlineData("{\"snapshotVersion\":1}")]
     [InlineData("{}")]
     [InlineData("{\"snapshotVersion\":1,\"snapshotVersion\":1}")]
     public async Task InvalidSnapshotFileReturnsExitTwoWithoutNetwork(string json)

@@ -40,7 +40,7 @@ public static class VerifierApplication
                 var path = Path.Combine(options.SnapshotDirectory, folder, "before.json");
                 await SnapshotStore.WriteAsync(path, snapshot, overwrite: false, ct);
                 output.WriteLine($"BEFORE saved: {Path.GetFullPath(path)}");
-                output.WriteLine("Capture complete with Unsupported coverage; inspect docs/document-transfer-rules.md.");
+                output.WriteLine("Capture complete; rules and evidence: docs/document-transfer-rules.md.");
                 return 0;
             }
             return await VerifyAsync(before, command.SnapshotPath!, collector, output, error, ct);

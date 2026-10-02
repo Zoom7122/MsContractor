@@ -24,20 +24,22 @@ public sealed class SnapshotCollector(IMoySkladClient client, TextWriter progres
         foreach (var rule in DocumentRegistry.All)
         {
             progress.WriteLine($"[{rule.EntityType}]");
-            if (!rule.AgentFilterSupported)
-            {
-                progress.WriteLine("UNSUPPORTED: no documented agent filter; account-wide scan skipped.");
-                coverage.Add(new(rule.EntityType, false, "Agent filtering is not documented; type is unsupported."));
-                continue;
-            }
+            // Without a documented agent filter (retireorder) the whole list is read once and filtered here.
+            var scanned = rule.AgentFilterSupported ? null : await client.GetAllAsync($"entity/{rule.EntityType}", ct);
             foreach (var owner in owners)
             {
-                // `filter` is the query parameter name and the `=` operator. Encode only
-                // the reference value. Encoding the complete expression (`agent%3D...`)
-                // makes MoySklad parse it as a field-less filter and return HTTP 400.
-                var agentReference = new Uri(client.BaseUrl, $"entity/counterparty/{owner:D}");
-                var filter = "agent=" + Uri.EscapeDataString(agentReference.AbsoluteUri);
-                var rows = await client.GetAllAsync($"entity/{rule.EntityType}?filter={filter}", ct);
+                IReadOnlyList<JsonObject> rows;
+                if (scanned is not null)
+                    rows = scanned.Where(row => TryReadAgent(row) == owner).ToList();
+                else
+                {
+                    // `filter` is the query parameter name and the `=` operator. Encode only
+                    // the reference value. Encoding the complete expression (`agent%3D...`)
+                    // makes MoySklad parse it as a field-less filter and return HTTP 400.
+                    var agentReference = new Uri(client.BaseUrl, $"entity/counterparty/{owner:D}");
+                    var filter = "agent=" + Uri.EscapeDataString(agentReference.AbsoluteUri);
+                    rows = await client.GetAllAsync($"entity/{rule.EntityType}?filter={filter}", ct);
+                }
                 foreach (var row in rows)
                 {
                     var id = ReadId(row);
@@ -49,7 +51,8 @@ public sealed class SnapshotCollector(IMoySkladClient client, TextWriter progres
                 }
                 progress.WriteLine($"{(owner == main ? "main" : $"duplicate {Array.IndexOf(owners, owner)}"),-20} {rows.Count}");
             }
-            coverage.Add(new(rule.EntityType, true));
+            coverage.Add(new(rule.EntityType, true,
+                scanned is null ? null : $"No documented agent filter: {scanned.Count} document(s) read and filtered by agent."));
         }
         var snapshots = new List<DocumentSnapshot>();
         foreach (var (rule, id, agent) in documents)
@@ -196,6 +199,12 @@ public sealed class SnapshotCollector(IMoySkladClient client, TextWriter progres
 
     public static Guid ReadId(JsonObject document) => Guid.TryParse(document["id"]?.GetValue<string>(), out var id) && id != Guid.Empty
         ? id : throw new VerifierException("Document has an invalid or missing UUID.");
+
+    private static Guid? TryReadAgent(JsonObject document)
+    {
+        try { return ReadAgent(document); }
+        catch (VerifierException) { return null; }
+    }
 
     public static Guid ReadAgent(JsonObject document)
     {

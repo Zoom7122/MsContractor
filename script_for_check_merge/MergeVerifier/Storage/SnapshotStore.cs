@@ -20,8 +20,10 @@ public static class SnapshotStore
     {
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(path, ct));
         RejectDuplicateProperties(json.RootElement);
-        if (!json.RootElement.TryGetProperty("snapshotVersion", out var version) || !version.TryGetInt32(out var number) || number != 1)
-            throw new VerifierException("Unsupported or missing snapshotVersion; expected 1.");
+        if (!json.RootElement.TryGetProperty("snapshotVersion", out var version) || !version.TryGetInt32(out var number) ||
+            number != MergeSnapshot.CurrentVersion)
+            throw new VerifierException($"Unsupported or missing snapshotVersion; expected {MergeSnapshot.CurrentVersion}. " +
+                                        "A BEFORE made by an earlier version is normalized differently: capture it again.");
         var result = json.Deserialize<MergeSnapshot>(JsonOptions) ?? throw new VerifierException("Invalid snapshot.");
         Validate(result);
         return result;
@@ -29,7 +31,8 @@ public static class SnapshotStore
 
     public static void Validate(MergeSnapshot snapshot)
     {
-        if (snapshot.SnapshotVersion != 1) throw new VerifierException("Unsupported snapshotVersion; expected 1.");
+        if (snapshot.SnapshotVersion != MergeSnapshot.CurrentVersion)
+            throw new VerifierException($"Unsupported snapshotVersion; expected {MergeSnapshot.CurrentVersion}.");
         ValidateScope(snapshot.MainCounterpartyId, snapshot.DuplicateCounterpartyIds);
         if (snapshot.CaptureStartedAt == default || snapshot.CaptureCompletedAt < snapshot.CaptureStartedAt ||
             snapshot.Documents is null || snapshot.Coverage is null)
@@ -40,7 +43,7 @@ public static class SnapshotStore
         foreach (var coverage in snapshot.Coverage)
         {
             var rule = DocumentRegistry.Get(coverage.EntityType);
-            if (coverage.Fetched != rule.AgentFilterSupported)
+            if (coverage.Fetched != (rule.TransferMode != DocumentTransferMode.Unsupported))
                 throw new VerifierException("Snapshot has incomplete or inconsistent fetch coverage.");
         }
         var seen = new HashSet<(string, Guid)>();
@@ -48,7 +51,7 @@ public static class SnapshotStore
         {
             if (document is null) throw new VerifierException("Null document in snapshot.");
             var rule = DocumentRegistry.Get(document.EntityType);
-            if (document.TransferMode != rule.TransferMode || !rule.AgentFilterSupported ||
+            if (document.TransferMode != rule.TransferMode || rule.TransferMode == DocumentTransferMode.Unsupported ||
                 document.Data.ValueKind != JsonValueKind.Object ||
                 document.SourceCounterpartyId != snapshot.MainCounterpartyId && !snapshot.DuplicateCounterpartyIds.Contains(document.SourceCounterpartyId))
                 throw new VerifierException("Invalid document rule, owner or data in snapshot.");

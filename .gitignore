@@ -12,7 +12,7 @@ x64/
 x86/
 [Aa][Rr][Mm]/
 [Aa][Rr][Mm]64/
-
+.env.test_data
 *.user
 *.rsuser
 *.suo
@@ -25,6 +25,9 @@ _ReSharper*/
 *.DotSettings.user
 
 audit/
+
+.env.prod
+.env.dev
 
 # Visual Studio
 .vs/

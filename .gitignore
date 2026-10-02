@@ -18,7 +18,7 @@ x86/
 *.suo
 *.userosscache
 *.sln.docstates
-
+.vscode
 # Rider / ReSharper
 .idea/
 _ReSharper*/

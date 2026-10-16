@@ -142,6 +142,31 @@ public sealed class ScenarioRegistryTests
     }
 
     [Fact]
+    public void AllWithoutPurchaseReturnFactureOut_HasEveryNonRetailGraphExceptFacturesOnPurchaseReturns()
+    {
+        const string excluded = "factureout.returns->purchasereturn";
+        var composite = ScenarioRegistry.Select(["all-without-purchasereturn-factureout"]).Single();
+        var sources = ScenarioRegistry.All
+            .Where(scenario => scenario.Requirement == ScenarioRequirement.None && scenario != composite).ToList();
+        var links = composite.Steps.SelectMany(step => step.Links).Select(link => link.RelationId).ToHashSet();
+
+        Assert.Equal(ScenarioRequirement.None, composite.Requirement);
+        Assert.DoesNotContain(excluded, links);
+        Assert.DoesNotContain(composite.Steps, step => step.DocumentType == "factureout" &&
+            step.Links.Any(link => link.RelationId == excluded));
+        Assert.Equal(sources.SelectMany(scenario => scenario.Steps).SelectMany(step => step.Links)
+            .Select(link => link.RelationId).Where(id => id != excluded).ToHashSet(), links);
+
+        var removed = sources.Sum(scenario => scenario.Steps.Count(step => step.Links.Any(link => link.RelationId == excluded)));
+        Assert.Equal(4, removed);
+        Assert.Equal(sources.Sum(scenario => scenario.Steps.Count) - removed, composite.Steps.Count);
+        foreach (var type in new[] { "purchasereturn", "salesreturn", "facturein", "commissionreportin", "commissionreportout" })
+            Assert.Equal(sources.Sum(scenario => scenario.Steps.Count(step => step.DocumentType == type)),
+                composite.Steps.Count(step => step.DocumentType == type));
+        Assert.DoesNotContain(composite.Steps, step => step.DocumentType is "retaildemand" or "retailsalesreturn" or "retailshift");
+    }
+
+    [Fact]
     public void OnlyRetailScenarios_RequireARetailStore() =>
         Assert.Equal(["retail-flow", "retaildemand-full", "retailsalesreturn-full"],
             ScenarioRegistry.All.Where(scenario => scenario.Requirement != ScenarioRequirement.None).Select(scenario => scenario.Name));

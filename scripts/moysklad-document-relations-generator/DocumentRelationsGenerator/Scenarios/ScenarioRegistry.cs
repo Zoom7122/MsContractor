@@ -207,6 +207,7 @@ public static class ScenarioRegistry
             CommissionReportInFull(),
             CommissionReportOutFull()
         };
+        scenarios.Add(AllWithoutPurchaseReturnFactureOut(scenarios));
 
         foreach (var scenario in scenarios) Validate(scenario);
         return scenarios;
@@ -275,6 +276,32 @@ public static class ScenarioRegistry
             "paymentin/cashin (on order, invoice, demand, purchasereturn, commission report, without document), purchasereturn " +
             "(by supply, without base)",
             ScenarioRequirement.None, steps) { AlternatesAgreementsPerRoot = true };
+    }
+
+    /// <summary>
+    /// Every business graph of the non-retail scenarios on one counterparty in a single scenario, without factureout
+    /// based on purchasereturn (MSContractor skips a purchasereturn that has a facture). salesreturn.factureOut is not
+    /// generated anywhere: the API does not store it. Step keys are prefixed with their source scenario.
+    /// </summary>
+    private static ScenarioDefinition AllWithoutPurchaseReturnFactureOut(IReadOnlyList<ScenarioDefinition> sources)
+    {
+        const string excludedRelation = "factureout.returns->purchasereturn";
+        var steps = new List<ScenarioStep>();
+        foreach (var source in sources.Where(scenario => scenario.Requirement == ScenarioRequirement.None))
+        {
+            var excluded = source.Steps.Where(step => step.Links.Any(link => link.RelationId == excludedRelation))
+                .Select(step => step.Key).ToHashSet(StringComparer.Ordinal);
+            excluded.UnionWith(DependencyOrder.Descendants(source.Steps, excluded));
+            string Key(string key) => $"{source.Name}.{key}";
+            steps.AddRange(source.Steps.Where(step => !excluded.Contains(step.Key)).Select(step => step with
+            {
+                Key = Key(step.Key),
+                Links = step.Links.Select(link => link with { TargetStep = Key(link.TargetStep) }).ToList()
+            }));
+        }
+
+        return Full("all-without-purchasereturn-factureout",
+            "all non-retail business graphs on one counterparty in one scenario, without factureout on purchasereturn", steps);
     }
 
     private static ScenarioDefinition Full(string name, string description, List<ScenarioStep> steps,

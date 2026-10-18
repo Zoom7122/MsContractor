@@ -204,6 +204,7 @@ services:
     environment:
       <<: *service-env
       MoySklad__JsonApiBaseUrl: https://api.moysklad.ru/api/remap/1.2
+      MoySklad__RequestTimeout: ${EGRESS_MOYSKLAD_REQUEST_TIMEOUT:-00:00:30}
     depends_on:
       postgres:
         condition: service_healthy

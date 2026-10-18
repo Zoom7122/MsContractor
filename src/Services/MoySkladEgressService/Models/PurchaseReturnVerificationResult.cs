@@ -3,6 +3,10 @@ namespace MsContractor.MoySkladEgressService.Models;
 public sealed record PurchaseReturnVerificationResult(
     IReadOnlyList<PurchaseReturnDocumentVerificationResult> Documents)
 {
+    public IReadOnlyList<RecreatedPurchaseReturn> RecreatedPurchaseReturns { get; init; } = [];
+    public IReadOnlyList<RecreatedPurchaseReturnFactureOut> RecreatedFactureOuts { get; init; } = [];
+    public IReadOnlyList<FactureOutSkippedDocumentResult> SkippedFactureOuts { get; init; } = [];
+
     public bool Passed => Documents.All(document => document.Status == "Verified");
 }
 
@@ -25,3 +29,10 @@ public sealed record PurchaseReturnPositionMismatch(
     string Kind,
     string? Expected,
     string? Actual);
+
+public sealed record RecreatedPurchaseReturn(Guid SourceDocumentId, Guid NewDocumentId);
+
+public sealed record RecreatedPurchaseReturnFactureOut(
+    Guid SourcePurchaseReturnId,
+    Guid SourceDocumentId,
+    Guid NewDocumentId);

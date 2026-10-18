@@ -244,7 +244,7 @@ public sealed class MergeProcessor(
         if (purchaseReturns.Length == 0)
             return;
 
-        await sender.SendAsync(
+        var response = await sender.SendAsync(
             job.AccountId,
             job.MainCounterpartyId,
             "purchasereturn",
@@ -254,6 +254,75 @@ public sealed class MergeProcessor(
             job.RequestedByUserId,
             job.CorrelationId,
             cancellationToken);
+
+        ValidatePurchaseReturnResponse(purchaseReturns.Select(item => item.DocumentId).ToArray(), response);
+        var returnIds = response.RecreatedPurchaseReturns.ToDictionary(item => item.SourceDocumentId, item => item.NewDocumentId);
+        var invoiceIds = response.RecreatedFactureOuts.ToDictionary(item => item.SourceDocumentId, item => item.NewDocumentId);
+        var changedRows = rows.Where(row =>
+            row.DocumentType == "purchasereturn" && returnIds.ContainsKey(row.DocumentId) ||
+            row.DocumentType == "factureout" && invoiceIds.ContainsKey(row.DocumentId)).ToArray();
+        if (changedRows.Length > 0)
+        {
+            await documentSnapshots.ReplaceDocumentRowsAsync(job.AccountId,
+                changedRows.Select(row => row.DocumentId).ToArray(),
+                changedRows.Select(row => new CounterpartyDocument
+                {
+                    AccountId = job.AccountId,
+                    CounterpartyId = job.MainCounterpartyId,
+                    DocumentType = row.DocumentType,
+                    DocumentId = row.DocumentType == "purchasereturn" ? returnIds[row.DocumentId] : invoiceIds[row.DocumentId],
+                    UpdatedAt = DateTimeOffset.UtcNow
+                }).ToArray(), cancellationToken);
+        }
+
+        if (!response.TransferredDocumentIds.ToHashSet().SetEquals(purchaseReturns.Select(item => item.DocumentId)))
+        {
+            var failed = response.CreatedWithErrors?.FirstOrDefault();
+            var skipped = response.SkippedDocuments?.FirstOrDefault();
+            throw new MergeEgressException(failed?.ErrorCode ?? skipped?.ErrorCode ?? "PURCHASERETURN_RECREATION_INCOMPLETE",
+                failed?.Error ?? skipped?.Error ?? "Purchasereturn recreation skipped or failed one or more documents.", 400);
+        }
+    }
+
+    private static void ValidatePurchaseReturnResponse(IReadOnlyList<Guid> requestedIds, PurchaseReturnRecreationResponse response)
+    {
+        static MergeEgressException Invalid() => new(MergeEgressException.PurchaseReturnUnknownResult,
+            "MoySklad Egress Service returned an inconsistent purchasereturn recreation response; the remote result is unknown.", 502);
+        if (response is null || response.TransferredDocumentIds is null || response.SkippedDocumentIds is null ||
+            response.RecreatedPurchaseReturns is null || response.RecreatedFactureOuts is null)
+            throw Invalid();
+        var skipped = response.SkippedDocuments ?? [];
+        var failed = response.CreatedWithErrors ?? [];
+        var requested = requestedIds.ToHashSet();
+        if (skipped.Any(item => item is null) || failed.Any(item => item is null) ||
+            response.RecreatedPurchaseReturns.Any(item => item is null) || response.RecreatedFactureOuts.Any(item => item is null))
+            throw Invalid();
+        var returned = response.TransferredDocumentIds.Concat(response.SkippedDocumentIds)
+            .Concat(failed.Select(item => item.SourceDocumentId)).ToArray();
+        var createdIds = response.TransferredDocumentIds.Concat(failed.Select(item => item.SourceDocumentId)).ToHashSet();
+        var mappings = response.RecreatedPurchaseReturns;
+        var invoices = response.RecreatedFactureOuts;
+        if (mappings.Select(item => item.SourceDocumentId).Distinct().Count() != mappings.Count)
+            throw Invalid();
+        var mappingBySource = mappings.ToDictionary(item => item.SourceDocumentId, item => item.NewDocumentId);
+        if (returned.Length != requested.Count || returned.Distinct().Count() != returned.Length ||
+            !returned.ToHashSet().SetEquals(requested) ||
+            skipped.Count != response.SkippedDocumentIds.Count ||
+            skipped.Select(item => item.DocumentId).Distinct().Count() != skipped.Count ||
+            !skipped.Select(item => item.DocumentId).ToHashSet().SetEquals(response.SkippedDocumentIds) ||
+            skipped.Any(item => string.IsNullOrWhiteSpace(item.Status) || item.Status is "Verified" or "NeedsManualReview") ||
+            failed.Any(item => item.NewDocumentId == Guid.Empty || string.IsNullOrWhiteSpace(item.Status) ||
+                item.Status is "Verified" or "NeedsManualReview") ||
+            mappings.Count != createdIds.Count ||
+            !mappings.Select(item => item.SourceDocumentId).ToHashSet().SetEquals(createdIds) ||
+            mappings.Any(item => item.NewDocumentId == Guid.Empty || item.NewDocumentId == item.SourceDocumentId) ||
+            failed.Any(item => !mappingBySource.TryGetValue(item.SourceDocumentId, out var newId) || newId != item.NewDocumentId) ||
+            invoices.Select(item => item.SourceDocumentId).Distinct().Count() != invoices.Count ||
+            invoices.Any(item => item.SourceDocumentId == Guid.Empty || item.NewDocumentId == Guid.Empty || item.NewDocumentId == item.SourceDocumentId ||
+                requested.Contains(item.SourceDocumentId) || !createdIds.Contains(item.SourcePurchaseReturnId)) ||
+            mappings.Select(item => item.NewDocumentId).Concat(invoices.Select(item => item.NewDocumentId)).Distinct().Count() !=
+                mappings.Count + invoices.Count)
+            throw Invalid();
     }
 
     private static async Task RecreateFactureInsAsync(

@@ -186,6 +186,30 @@ public sealed class InternalPurchaseReturnsControllerTests
         }
     }
 
+    [Fact]
+    public async Task RecreateAsync_ReturnsConfirmedMappingsEvenWhenInvoiceVerificationFails()
+    {
+        var sourceId = Guid.NewGuid(); var newId = Guid.NewGuid();
+        var invoiceId = Guid.NewGuid(); var newInvoiceId = Guid.NewGuid();
+        var orchestrator = new CapturingOrchestrator
+        {
+            Result = new PurchaseReturnVerificationResult(
+                [new(sourceId, newId, "CreatedWithError", [], [], [], "INVOICE_VERIFICATION_FAILED", "Wrong basis.")])
+            {
+                RecreatedPurchaseReturns = [new(sourceId, newId)],
+                RecreatedFactureOuts = [new(sourceId, invoiceId, newInvoiceId)]
+            }
+        };
+        var controller = Controller(orchestrator, authorized: true);
+        var accepted = Assert.IsType<AcceptedResult>(await controller.RecreateAsync(Guid.NewGuid(),
+            new PurchaseReturnRecreationRequest(Guid.NewGuid(), [sourceId]), CancellationToken.None));
+        var body = Assert.IsType<PurchaseReturnRecreationResponse>(accepted.Value);
+        Assert.Empty(body.TransferredDocumentIds);
+        Assert.Equal(newId, Assert.Single(body.RecreatedPurchaseReturns).NewDocumentId);
+        Assert.Equal(newInvoiceId, Assert.Single(body.RecreatedFactureOuts).NewDocumentId);
+        Assert.Equal(sourceId, Assert.Single(body.CreatedWithErrors!).SourceDocumentId);
+    }
+
     private static InternalPurchaseReturnsController Controller(
         CapturingOrchestrator orchestrator,
         bool authorized)

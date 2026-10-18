@@ -146,6 +146,100 @@ public sealed class MergeProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_AppliesReturnAndInvoiceIdsAndDoesNotRecreateLinkedInvoiceAgain()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var sourceId = Guid.NewGuid(); var invoiceId = Guid.NewGuid(); var otherInvoiceId = Guid.NewGuid();
+        var newReturnId = Guid.NewGuid(); var newInvoiceId = Guid.NewGuid();
+        var foreignInvoiceId = Guid.NewGuid();
+        fixture.Documents.Documents =
+        [new("purchasereturn", sourceId, fixture.Duplicates[0].Id),
+         new("factureout", invoiceId, fixture.Duplicates[0].Id),
+         new("factureout", otherInvoiceId, fixture.Duplicates[0].Id)];
+        fixture.PurchaseReturns.Response = ids => new PurchaseReturnRecreationResponse(ids, [])
+        {
+            RecreatedPurchaseReturns = [new(sourceId, newReturnId)],
+            RecreatedFactureOuts = [new(sourceId, invoiceId, newInvoiceId), new(sourceId, foreignInvoiceId, Guid.NewGuid())]
+        };
+        var otherAccountId = Guid.NewGuid();
+        var otherRun = NewRun(otherAccountId);
+        var otherCounterparty = NewCounterparty(otherAccountId, otherRun, "Other account");
+        fixture.Db.Add(otherRun); fixture.Db.Add(otherCounterparty);
+        fixture.Db.CounterpartyDocuments.Add(new CounterpartyDocument
+        {
+            AccountId = otherAccountId, CounterpartyId = otherCounterparty.Id,
+            DocumentId = foreignInvoiceId, DocumentType = "factureout", UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await fixture.Db.SaveChangesAsync();
+        var command = await fixture.CreateJobAsync();
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+        Assert.Equal([otherInvoiceId], Assert.Single(fixture.FactureOuts.Calls).DocumentIds);
+        Assert.Single(fixture.Egress.ArchiveCalls);
+        fixture.Db.ChangeTracker.Clear();
+        var rows = await fixture.Db.CounterpartyDocuments.Where(row => row.AccountId == fixture.AccountId).ToListAsync();
+        Assert.Contains(rows, row => row.DocumentId == newReturnId && row.CounterpartyId == fixture.Main.Id);
+        Assert.Contains(rows, row => row.DocumentId == newInvoiceId && row.CounterpartyId == fixture.Main.Id);
+        var other = await fixture.Db.CounterpartyDocuments.SingleAsync(row => row.AccountId == otherAccountId);
+        Assert.Equal(foreignInvoiceId, other.DocumentId);
+        Assert.Equal(otherCounterparty.Id, other.CounterpartyId);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProcessAsync_IncompleteReturnStopsBeforeInvoiceStageAndArchive(bool createdWithError)
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var sourceId = Guid.NewGuid(); var invoiceId = Guid.NewGuid(); var newId = Guid.NewGuid();
+        fixture.Documents.Documents = [new("purchasereturn", sourceId, fixture.Duplicates[0].Id),
+            new("factureout", invoiceId, fixture.Duplicates[0].Id)];
+        fixture.PurchaseReturns.Response = _ => createdWithError
+            ? new PurchaseReturnRecreationResponse([], [], [], [new(sourceId, newId, "CreatedWithError", "INVOICE_FAILED", "Invoice failed.")])
+              { RecreatedPurchaseReturns = [new(sourceId, newId)] }
+            : new PurchaseReturnRecreationResponse([], [sourceId], [new(sourceId, "Skipped", "SHARED_INVOICE", "Shared invoice.")]);
+        var command = await fixture.CreateJobAsync();
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+        Assert.Empty(fixture.FactureOuts.Calls);
+        Assert.Empty(fixture.Egress.ArchiveCalls);
+        fixture.Db.ChangeTracker.Clear();
+        var operation = await fixture.Db.MergeOperations.SingleAsync(item => item.OperationType == MergeOperationTypes.RecreatePurchaseReturns);
+        Assert.Equal(MergeOperationStatuses.Failed, operation.Status);
+        Assert.Equal(1, operation.AttemptCount);
+        var returned = await fixture.Db.CounterpartyDocuments.SingleAsync(row => row.AccountId == fixture.AccountId && row.DocumentType == "purchasereturn");
+        Assert.Equal(createdWithError ? newId : sourceId, returned.DocumentId);
+    }
+
+    [Theory]
+    [InlineData("missing-map")]
+    [InlineData("duplicate")]
+    [InlineData("foreign-parent")]
+    [InlineData("transport")]
+    public async Task ProcessAsync_UnknownReturnResultIsTerminalWithoutAutomaticRetry(string kind)
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var sourceId = Guid.NewGuid(); var newId = Guid.NewGuid();
+        fixture.Documents.Documents = [new("purchasereturn", sourceId, fixture.Duplicates[0].Id)];
+        fixture.PurchaseReturns.Response = _ => new PurchaseReturnRecreationResponse([sourceId], [])
+        {
+            RecreatedPurchaseReturns = kind == "missing-map" ? [] : kind == "duplicate"
+                ? [new(sourceId, newId), new(sourceId, Guid.NewGuid())] : [new(sourceId, newId)],
+            RecreatedFactureOuts = kind == "foreign-parent" ? [new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid())] : []
+        };
+        if (kind == "transport")
+            fixture.PurchaseReturns.Exception = new MergeEgressException(MergeEgressException.PurchaseReturnUnknownResult, "Unknown result.", 503);
+        var command = await fixture.CreateJobAsync();
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+        Assert.Single(fixture.PurchaseReturns.Calls);
+        Assert.Empty(fixture.FactureOuts.Calls);
+        Assert.Empty(fixture.Egress.ArchiveCalls);
+        fixture.Db.ChangeTracker.Clear();
+        var operation = await fixture.Db.MergeOperations.SingleAsync(item => item.OperationType == MergeOperationTypes.RecreatePurchaseReturns);
+        Assert.Equal(MergeOperationStatuses.Failed, operation.Status);
+        Assert.Equal(MergeEgressException.PurchaseReturnUnknownResult, operation.ErrorCode);
+    }
+
+    [Fact]
     public async Task ProcessAsync_RecreatesFactureInsAfterPurchaseReturnsAndBeforeArchivingDuplicates()
     {
         await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
@@ -708,6 +802,7 @@ public sealed class MergeProcessorTests
         public List<(Guid MainCounterpartyId, string DocumentType, IReadOnlyList<Guid> DocumentIds)> Calls { get; } = [];
         public List<string> CallOrder { get; } = [];
         public Exception? Exception { get; set; }
+        public Func<IReadOnlyList<Guid>, PurchaseReturnRecreationResponse>? Response { get; set; }
 
         public Task<PurchaseReturnRecreationResponse> SendAsync(
             Guid accountId,
@@ -723,7 +818,10 @@ public sealed class MergeProcessorTests
             Calls.Add((mainCounterpartyId, documentType, documentIds.ToArray()));
             CallOrder.Add("purchasereturn");
             return Exception is null
-                ? Task.FromResult(new PurchaseReturnRecreationResponse(documentIds, []))
+                ? Task.FromResult(Response?.Invoke(documentIds) ?? new PurchaseReturnRecreationResponse(documentIds, [])
+                {
+                    RecreatedPurchaseReturns = documentIds.Select(id => new RecreatedPurchaseReturnResponse(id, Guid.NewGuid())).ToArray()
+                })
                 : Task.FromException<PurchaseReturnRecreationResponse>(Exception);
         }
     }

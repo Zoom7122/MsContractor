@@ -61,15 +61,15 @@ public sealed class PurchaseReturnRecreationEgressClient(
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             throw new MergeEgressException(
-                "EGRESS_UNAVAILABLE",
-                "MoySklad Egress Service timed out.",
+                MergeEgressException.PurchaseReturnUnknownResult,
+                "Purchasereturn recreation timed out; the remote result is unknown.",
                 503);
         }
         catch (HttpRequestException)
         {
             throw new MergeEgressException(
-                "EGRESS_UNAVAILABLE",
-                "MoySklad Egress Service is unavailable.",
+                MergeEgressException.PurchaseReturnUnknownResult,
+                "Purchasereturn recreation transport failed; the remote result is unknown.",
                 503);
         }
 
@@ -82,13 +82,16 @@ public sealed class PurchaseReturnRecreationEgressClient(
                 {
                     error = await response.Content.ReadFromJsonAsync<InternalErrorResponse>(cancellationToken);
                 }
-                catch (Exception exception) when (exception is System.Text.Json.JsonException or NotSupportedException)
+                catch (Exception exception) when (exception is System.Text.Json.JsonException or NotSupportedException or IOException or HttpRequestException ||
+                    exception is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                 {
                     // Use a stable fallback for an untrusted Egress response.
                 }
 
                 throw new MergeEgressException(
-                    error?.Code ?? "EGRESS_UNAVAILABLE",
+                    (int)response.StatusCode >= 500 || (int)response.StatusCode == 429
+                        ? MergeEgressException.PurchaseReturnUnknownResult
+                        : error?.Code ?? "EGRESS_UNAVAILABLE",
                     error?.Message ?? "MoySklad Egress Service returned an error.",
                     (int)response.StatusCode);
             }
@@ -97,14 +100,15 @@ public sealed class PurchaseReturnRecreationEgressClient(
             {
                 return await response.Content.ReadFromJsonAsync<PurchaseReturnRecreationResponse>(cancellationToken)
                     ?? throw new MergeEgressException(
-                        "EGRESS_INVALID_RESPONSE",
+                        MergeEgressException.PurchaseReturnUnknownResult,
                         "MoySklad Egress Service returned an empty purchasereturn recreation response.",
                         502);
             }
-            catch (System.Text.Json.JsonException)
+            catch (Exception exception) when (exception is System.Text.Json.JsonException or NotSupportedException or IOException or HttpRequestException ||
+                exception is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
                 throw new MergeEgressException(
-                    "EGRESS_INVALID_RESPONSE",
+                    MergeEgressException.PurchaseReturnUnknownResult,
                     "MoySklad Egress Service returned an invalid purchasereturn recreation response.",
                     502);
             }

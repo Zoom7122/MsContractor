@@ -55,13 +55,20 @@ public sealed record PurchaseReturnFactureRelationResult(
     string? Error = null)
 {
     public bool IsReadyForRecreation =>
+        string.Equals(Status, "Checked", StringComparison.Ordinal) ||
         string.Equals(Status, "Detached", StringComparison.Ordinal) ||
         string.Equals(Status, "NoRelations", StringComparison.Ordinal);
 }
 
+public sealed record PurchaseReturnFactureOutRelation(
+    Guid PurchaseReturnId,
+    Guid FactureOutId);
+
 public sealed record PurchaseReturnFactureRelationsResult(
     IReadOnlyList<PurchaseReturnFactureRelationResult> Documents)
 {
+    public IReadOnlyList<PurchaseReturnFactureOutRelation> FactureOutRelations { get; init; } = [];
+
     public IReadOnlyList<Guid> ReadyForRecreationIds =>
         Documents
             .Where(item => item.IsReadyForRecreation)

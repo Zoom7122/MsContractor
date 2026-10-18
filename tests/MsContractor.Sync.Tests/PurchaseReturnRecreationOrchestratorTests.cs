@@ -6,6 +6,7 @@ using MsContractor.MoySkladEgressService.Models.Exceptions;
 using MsContractor.MoySkladEgressService.Models.Options;
 using MsContractor.MoySkladEgressService.Repositories;
 using MsContractor.MoySkladEgressService.Services.Documents.Purchasereturn;
+using MsContractor.MoySkladEgressService.Services.Documents.Factureout;
 
 namespace MsContractor.Sync.Tests;
 
@@ -234,13 +235,171 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
         Assert.Single(gateway.CreatedBatches);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_RecreatesLinkedInvoicesAfterReturnAndBeforeVerification()
+    {
+        var sourceId = Guid.NewGuid(); var newId = Guid.NewGuid(); var mainId = Guid.NewGuid();
+        var events = new List<string>();
+        var invoices = new PurchaseReturnFactureOutFixture(events);
+        var first = invoices.AddInvoice(sourceId); var second = invoices.AddInvoice(sourceId);
+        var gateway = SuccessfulGateway(events, newId);
+        var orchestrator = CreateOrchestrator(new PreparationStub([sourceId]), RepositoryFor(sourceId), gateway,
+            verifier: new RecordingVerifier(events), factureRelations: new LinkedFactureRelations(events, [new(sourceId, first), new(sourceId, second)]),
+            factureOutService: invoices.Service);
+        var result = await orchestrator.ExecuteAsync(Guid.NewGuid(), mainId, [sourceId], CancellationToken.None);
+        Assert.Equal("Verified", Assert.Single(result.Documents).Status);
+        Assert.Equal(newId, Assert.Single(result.RecreatedPurchaseReturns).NewDocumentId);
+        Assert.Equal(2, result.RecreatedFactureOuts.Count);
+        Assert.Equal(["inspect", "invoice-prepare", "invoice-payload", "detach", "invoice-delete", "delete", "create",
+            "invoice-create", "invoice-verify", "reattach", "verify"], events);
+        Assert.All(invoices.Gateway.CreatedItems, item => Assert.Contains(newId.ToString("D"), item.PayloadJson));
+    }
+
+    [Theory]
+    [InlineData("shared")]
+    [InlineData("missing")]
+    [InlineData("payload")]
+    public async Task ExecuteAsync_PreparationFailureSkipsReturnAndInvoicesBeforeDetachOrDelete(string failure)
+    {
+        var sourceId = Guid.NewGuid();
+        var events = new List<string>();
+        var invoices = new PurchaseReturnFactureOutFixture(events);
+        var invoiceId = failure == "missing" ? Guid.NewGuid() :
+            failure == "shared" ? invoices.AddInvoice(sourceId, Guid.NewGuid()) : invoices.AddInvoice(sourceId);
+        var repository = failure == "payload"
+            ? new RecordingRepository(new Dictionary<Guid, string> { [sourceId] = "not-json" },
+                new Dictionary<Guid, IReadOnlyDictionary<Guid, string>>
+                { [sourceId] = new Dictionary<Guid, string> { [Guid.NewGuid()] = PositionJson() } })
+            : RepositoryFor(sourceId);
+        var gateway = SuccessfulGateway(events, Guid.NewGuid());
+        var orchestrator = CreateOrchestrator(new PreparationStub([sourceId]), repository, gateway,
+            factureRelations: new LinkedFactureRelations(events, [new(sourceId, invoiceId)]), factureOutService: invoices.Service);
+        var result = await orchestrator.ExecuteAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
+        Assert.Equal("Skipped", Assert.Single(result.Documents).Status);
+        Assert.Equal(invoiceId, Assert.Single(result.SkippedFactureOuts).DocumentId);
+        Assert.DoesNotContain("detach", events);
+        Assert.Empty(invoices.Gateway.DeletedIds);
+        Assert.Empty(gateway.DeletedBatches);
+        Assert.Empty(invoices.Gateway.CreatedItems);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PartialInvoiceDeletionDoesNotDeleteReturn()
+    {
+        var sourceId = Guid.NewGuid(); var events = new List<string>();
+        var invoices = new PurchaseReturnFactureOutFixture(events);
+        var first = invoices.AddInvoice(sourceId); var second = invoices.AddInvoice(sourceId);
+        invoices.Gateway.RejectedDeleteIds.Add(second);
+        var gateway = SuccessfulGateway(events, Guid.NewGuid());
+        var orchestrator = CreateOrchestrator(new PreparationStub([sourceId]), RepositoryFor(sourceId), gateway,
+            factureRelations: new LinkedFactureRelations(events, [new(sourceId, first), new(sourceId, second)]),
+            factureOutService: invoices.Service);
+        var result = await orchestrator.ExecuteAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
+        Assert.Equal("DeleteFailed", Assert.Single(result.Documents).Status);
+        Assert.Equal(2, invoices.Gateway.DeletedIds.Count);
+        Assert.Empty(gateway.DeletedBatches);
+        Assert.Empty(invoices.Gateway.CreatedItems);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExecuteAsync_ReturnRecreationFailureDoesNotCreateInvoice(bool deleteFailure)
+    {
+        var sourceId = Guid.NewGuid(); var events = new List<string>();
+        var invoices = new PurchaseReturnFactureOutFixture(events);
+        var invoiceId = invoices.AddInvoice(sourceId);
+        var gateway = new RecordingGateway(events)
+        {
+            DeleteResults = ids => ids.Select(id => new MoySkladPurchaseReturnBatchDeleteResult(id, !deleteFailure)).ToArray(),
+            CreateResults = items => items.Select(item => new MoySkladPurchaseReturnBatchCreateResult(
+                item.SourceDocumentId, null, null, "REJECTED", "Return rejected.")).ToArray()
+        };
+        var orchestrator = CreateOrchestrator(new PreparationStub([sourceId]), RepositoryFor(sourceId), gateway,
+            factureRelations: new LinkedFactureRelations(events, [new(sourceId, invoiceId)]), factureOutService: invoices.Service);
+        var result = await orchestrator.ExecuteAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
+        Assert.Equal(deleteFailure ? "DeleteFailed" : "CreateFailed", Assert.Single(result.Documents).Status);
+        Assert.Empty(invoices.Gateway.CreatedItems);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_InvoiceCreateFailureKeepsNewReturnAndDoesNotVerifyItAsTransferred()
+    {
+        var sourceId = Guid.NewGuid(); var newId = Guid.NewGuid(); var events = new List<string>();
+        var invoices = new PurchaseReturnFactureOutFixture(events);
+        var invoiceId = invoices.AddInvoice(sourceId);
+        invoices.Gateway.RejectedCreateIds.Add(invoiceId);
+        var gateway = SuccessfulGateway(events, newId);
+        var verifier = new RecordingVerifier(events);
+        var orchestrator = CreateOrchestrator(new PreparationStub([sourceId]), RepositoryFor(sourceId), gateway,
+            verifier: verifier, factureRelations: new LinkedFactureRelations(events, [new(sourceId, invoiceId)]),
+            factureOutService: invoices.Service);
+        var result = await orchestrator.ExecuteAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
+        Assert.Equal("CreatedWithError", Assert.Single(result.Documents).Status);
+        Assert.Equal(newId, Assert.Single(result.RecreatedPurchaseReturns).NewDocumentId);
+        Assert.Empty(verifier.VerifiedIds);
+        Assert.Contains("reattach", events);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_InvoiceDeletionCancellationPropagatesWithoutDeletingReturn()
+    {
+        var sourceId = Guid.NewGuid(); var events = new List<string>();
+        var invoices = new PurchaseReturnFactureOutFixture(events);
+        var invoiceId = invoices.AddInvoice(sourceId);
+        invoices.Gateway.DeleteException = new OperationCanceledException();
+        var gateway = SuccessfulGateway(events, Guid.NewGuid());
+        var orchestrator = CreateOrchestrator(new PreparationStub([sourceId]), RepositoryFor(sourceId), gateway,
+            factureRelations: new LinkedFactureRelations(events, [new(sourceId, invoiceId)]), factureOutService: invoices.Service);
+        await Assert.ThrowsAsync<OperationCanceledException>(() => orchestrator.ExecuteAsync(
+            Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None));
+        Assert.Empty(gateway.DeletedBatches);
+    }
+
+    private static RecordingGateway SuccessfulGateway(List<string> events, Guid newId) => new(events)
+    {
+        DeleteResults = ids => ids.Select(id => new MoySkladPurchaseReturnBatchDeleteResult(id, true)).ToArray(),
+        CreateResults = items => items.Select(item => new MoySkladPurchaseReturnBatchCreateResult(
+            item.SourceDocumentId, newId, item.PayloadJson)).ToArray()
+    };
+
+    private sealed class LinkedFactureRelations : IPurchaseReturnFactureRelationsService
+    {
+        private readonly List<string> _events;
+        private readonly IReadOnlyList<PurchaseReturnFactureOutRelation> _relations;
+        public LinkedFactureRelations(List<string> events, IReadOnlyList<PurchaseReturnFactureOutRelation> relations)
+        { _events = events; _relations = relations; }
+        public Task<PurchaseReturnFactureRelationsResult> InspectAsync(Guid accountId,
+            IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+        {
+            _events.Add("inspect");
+            return Task.FromResult(new PurchaseReturnFactureRelationsResult(ids.Select(id =>
+                new PurchaseReturnFactureRelationResult(id, "Checked")).ToArray()) { FactureOutRelations = _relations });
+        }
+        public Task<PurchaseReturnFactureRelationsResult> CheckAsync(Guid accountId,
+            IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+        {
+            _events.Add("detach");
+            return Task.FromResult(new PurchaseReturnFactureRelationsResult(ids.Select(id =>
+                new PurchaseReturnFactureRelationResult(id, "Detached")).ToArray()) { FactureOutRelations = _relations });
+        }
+        public Task<PurchaseReturnRelationsReattachResult> ReattachAsync(Guid accountId,
+            IReadOnlyCollection<Guid> ids, IReadOnlyDictionary<Guid, Guid> replacements, CancellationToken cancellationToken)
+        {
+            _events.Add("reattach");
+            return Task.FromResult(new PurchaseReturnRelationsReattachResult(replacements.Select(pair =>
+                new PurchaseReturnRelationsReattachItem(pair.Key, pair.Value, "Reattached")).ToArray()));
+        }
+    }
+
     private static PurchaseReturnRecreationOrchestrator CreateOrchestrator(
         IPurchaseReturnPreparationService preparation,
         IPurchaseReturnPreparationRepository repository,
         RecordingGateway gateway,
         PurchaseReturnRecreationOptions? options = null,
         IPurchaseReturnVerifier? verifier = null,
-        IPurchaseReturnFactureRelationsService? factureRelations = null) =>
+        IPurchaseReturnFactureRelationsService? factureRelations = null,
+        IPurchaseReturnFactureOutService? factureOutService = null) =>
         new(
             preparation,
             factureRelations ?? new NoopFactureRelationsService(),
@@ -252,10 +411,29 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
                 JsonApiBaseUrl = new Uri("https://api.example.test/api/remap/1.2/")
             })),
             options ?? new PurchaseReturnRecreationOptions(1, TimeSpan.Zero),
-            NullLogger<PurchaseReturnRecreationOrchestrator>.Instance);
+            NullLogger<PurchaseReturnRecreationOrchestrator>.Instance,
+            factureOutService ?? new NoopFactureOutService());
+
+    private sealed class NoopFactureOutService : IPurchaseReturnFactureOutService
+    {
+        public Task<PurchaseReturnFactureOutPreparationResult> PrepareAsync(Guid accountId, Guid mainCounterpartyId,
+            IReadOnlyList<PurchaseReturnFactureOutRelation> relations, CancellationToken cancellationToken) =>
+            Task.FromResult(new PurchaseReturnFactureOutPreparationResult(new Dictionary<Guid, IReadOnlyList<FactureOutPayload>>(), [], []));
+        public Task<FactureOutDocumentDeletionResult> DeleteAsync(Guid accountId,
+            IReadOnlyList<FactureOutPayload> payloads, CancellationToken cancellationToken) =>
+            Task.FromResult(new FactureOutDocumentDeletionResult([], []));
+        public Task<PurchaseReturnFactureOutCreationResult> CreateAsync(Guid accountId, Guid mainCounterpartyId,
+            IReadOnlyDictionary<Guid, IReadOnlyList<FactureOutPayload>> payloadsByPurchaseReturn,
+            IReadOnlyDictionary<Guid, Guid> oldToNewPurchaseReturnIds, CancellationToken cancellationToken) =>
+            Task.FromResult(new PurchaseReturnFactureOutCreationResult([], []));
+    }
 
     private sealed class NoopFactureRelationsService : IPurchaseReturnFactureRelationsService
     {
+        public Task<PurchaseReturnFactureRelationsResult> InspectAsync(
+            Guid accountId, IReadOnlyCollection<Guid> purchaseReturnIds, CancellationToken cancellationToken) =>
+            CheckAsync(accountId, purchaseReturnIds, cancellationToken);
+
         public Task<PurchaseReturnFactureRelationsResult> CheckAsync(
             Guid accountId,
             IReadOnlyCollection<Guid> purchaseReturnIds,
@@ -280,6 +458,10 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
     private sealed class FilteringFactureRelationsService(Guid readyId, Guid failedId)
         : IPurchaseReturnFactureRelationsService
     {
+        public Task<PurchaseReturnFactureRelationsResult> InspectAsync(
+            Guid accountId, IReadOnlyCollection<Guid> purchaseReturnIds, CancellationToken cancellationToken) =>
+            CheckAsync(accountId, purchaseReturnIds, cancellationToken);
+
         public Task<PurchaseReturnFactureRelationsResult> CheckAsync(
             Guid accountId,
             IReadOnlyCollection<Guid> purchaseReturnIds,
@@ -308,6 +490,10 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
     private sealed class RecordingFactureRelationsService(List<string> events)
         : IPurchaseReturnFactureRelationsService
     {
+        public Task<PurchaseReturnFactureRelationsResult> InspectAsync(
+            Guid accountId, IReadOnlyCollection<Guid> purchaseReturnIds, CancellationToken cancellationToken) =>
+            CheckAsync(accountId, purchaseReturnIds, cancellationToken);
+
         public Task<PurchaseReturnFactureRelationsResult> CheckAsync(
             Guid accountId,
             IReadOnlyCollection<Guid> purchaseReturnIds,
@@ -335,6 +521,10 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
     private sealed class FailingReattachFactureRelationsService
         : IPurchaseReturnFactureRelationsService
     {
+        public Task<PurchaseReturnFactureRelationsResult> InspectAsync(
+            Guid accountId, IReadOnlyCollection<Guid> purchaseReturnIds, CancellationToken cancellationToken) =>
+            CheckAsync(accountId, purchaseReturnIds, cancellationToken);
+
         public Task<PurchaseReturnFactureRelationsResult> CheckAsync(
             Guid accountId,
             IReadOnlyCollection<Guid> purchaseReturnIds,

@@ -48,6 +48,8 @@ var egressOptions = new EgressOptions
         "http://localhost:5011/"),
     InternalApiKey = builder.Configuration["InternalApi:Key"] ?? string.Empty
 };
+var moySkladRequestTimeout = builder.Configuration.GetValue<TimeSpan?>("MoySklad:RequestTimeout")
+    ?? TimeSpan.FromSeconds(30);
 var documentChangeOptions = MoySkladDocumentChangeOptions.Parse(
     builder.Configuration["DOCUMENTS_PUT_CHANGE"]);
 var agentAndContractOptions = MoySkladDocumentAgentAndContractOptions.Parse(
@@ -75,7 +77,7 @@ builder.Services.AddHttpClient<IVendorTokenClient, VendorTokenClient>(client =>
 builder.Services.AddHttpClient<IMoySkladCounterpartyGateway, MoySkladCounterpartyGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
-    client.Timeout = TimeSpan.FromSeconds(30);
+    client.Timeout = moySkladRequestTimeout;
 }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
 {
     AutomaticDecompression = DecompressionMethods.GZip
@@ -83,7 +85,7 @@ builder.Services.AddHttpClient<IMoySkladCounterpartyGateway, MoySkladCounterpart
 builder.Services.AddHttpClient<IMoySkladDocumentGateway, MoySkladDocumentGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
-    client.Timeout = TimeSpan.FromSeconds(30);
+    client.Timeout = moySkladRequestTimeout;
 }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
 {
     AutomaticDecompression = DecompressionMethods.GZip
@@ -91,7 +93,7 @@ builder.Services.AddHttpClient<IMoySkladDocumentGateway, MoySkladDocumentGateway
 builder.Services.AddHttpClient<IMoySkladSalesReturnGateway, MoySkladSalesReturnGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
-    client.Timeout = TimeSpan.FromSeconds(30);
+    client.Timeout = moySkladRequestTimeout;
 }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
 {
     AutomaticDecompression = DecompressionMethods.GZip
@@ -99,7 +101,7 @@ builder.Services.AddHttpClient<IMoySkladSalesReturnGateway, MoySkladSalesReturnG
 builder.Services.AddHttpClient<IMoySkladSalesReturnRelationsGateway, MoySkladSalesReturnRelationsGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
-    client.Timeout = TimeSpan.FromSeconds(30);
+    client.Timeout = moySkladRequestTimeout;
 }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
 {
     AutomaticDecompression = DecompressionMethods.GZip
@@ -107,7 +109,7 @@ builder.Services.AddHttpClient<IMoySkladSalesReturnRelationsGateway, MoySkladSal
 builder.Services.AddHttpClient<IMoySkladSalesReturnPositionsGateway, MoySkladSalesReturnPositionsGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
-    client.Timeout = TimeSpan.FromSeconds(30);
+    client.Timeout = moySkladRequestTimeout;
 }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
 {
     AutomaticDecompression = DecompressionMethods.GZip
@@ -115,7 +117,7 @@ builder.Services.AddHttpClient<IMoySkladSalesReturnPositionsGateway, MoySkladSal
 builder.Services.AddHttpClient<IMoySkladPurchaseReturnGateway, MoySkladPurchaseReturnGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
-    client.Timeout = TimeSpan.FromSeconds(30);
+    client.Timeout = moySkladRequestTimeout;
 }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
 {
     AutomaticDecompression = DecompressionMethods.GZip
@@ -123,7 +125,7 @@ builder.Services.AddHttpClient<IMoySkladPurchaseReturnGateway, MoySkladPurchaseR
 builder.Services.AddHttpClient<IMoySkladFactureInGateway, MoySkladFactureInGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
-    client.Timeout = TimeSpan.FromSeconds(30);
+    client.Timeout = moySkladRequestTimeout;
 }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
 {
     AutomaticDecompression = DecompressionMethods.GZip
@@ -131,7 +133,7 @@ builder.Services.AddHttpClient<IMoySkladFactureInGateway, MoySkladFactureInGatew
 builder.Services.AddHttpClient<IMoySkladFactureOutGateway, MoySkladFactureOutGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
-    client.Timeout = TimeSpan.FromSeconds(30);
+    client.Timeout = moySkladRequestTimeout;
 }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
 {
     AutomaticDecompression = DecompressionMethods.GZip
@@ -139,7 +141,7 @@ builder.Services.AddHttpClient<IMoySkladFactureOutGateway, MoySkladFactureOutGat
 builder.Services.AddHttpClient<IMoySkladPurchaseReturnMoneyRelationsGateway, MoySkladPurchaseReturnMoneyRelationsGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
-    client.Timeout = TimeSpan.FromSeconds(30);
+    client.Timeout = moySkladRequestTimeout;
 }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
 {
     AutomaticDecompression = DecompressionMethods.GZip
@@ -147,7 +149,7 @@ builder.Services.AddHttpClient<IMoySkladPurchaseReturnMoneyRelationsGateway, Moy
 builder.Services.AddHttpClient<IMoySkladPurchaseReturnPositionsGateway, MoySkladPurchaseReturnPositionsGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
-    client.Timeout = TimeSpan.FromSeconds(30);
+    client.Timeout = moySkladRequestTimeout;
 }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
 {
     AutomaticDecompression = DecompressionMethods.GZip
@@ -155,7 +157,7 @@ builder.Services.AddHttpClient<IMoySkladPurchaseReturnPositionsGateway, MoySklad
 builder.Services.AddHttpClient<IMoySkladSupplyGateway, MoySkladSupplyGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
-    client.Timeout = TimeSpan.FromSeconds(30);
+    client.Timeout = moySkladRequestTimeout;
 }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
 {
     AutomaticDecompression = DecompressionMethods.GZip
@@ -200,7 +202,10 @@ builder.Services.AddScoped<IFactureOutPreparationService, FactureOutPreparationS
 builder.Services.AddScoped<IFactureInPayloadBuilder, FactureInPayloadBuilder>();
 builder.Services.AddScoped<IFactureOutPayloadBuilder, FactureOutPayloadBuilder>();
 builder.Services.AddScoped<IFactureOutDocumentRecreationVerifier, FactureOutDocumentRecreationVerifier>();
-builder.Services.AddScoped<IFactureOutDocumentRecreationService, FactureOutDocumentRecreationService>();
+builder.Services.AddScoped<FactureOutDocumentRecreationService>();
+builder.Services.AddScoped<IFactureOutDocumentRecreationService>(serviceProvider =>
+    serviceProvider.GetRequiredService<FactureOutDocumentRecreationService>());
+builder.Services.AddScoped<IPurchaseReturnFactureOutService, PurchaseReturnFactureOutService>();
 builder.Services.AddScoped<IFactureInDocumentTransferService, FactureInDocumentTransferService>();
 builder.Services.AddSingleton<IMoySkladRateLimiter, MoySkladRateLimiter>();
 builder.Services.AddHealthChecks()

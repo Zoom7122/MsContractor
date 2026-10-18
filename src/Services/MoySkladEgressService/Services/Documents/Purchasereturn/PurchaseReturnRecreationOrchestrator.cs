@@ -24,6 +24,7 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
     private readonly IPurchaseReturnPreparationRepository _repository;
     private readonly IMoySkladPurchaseReturnGateway _gateway;
     private readonly IPurchaseReturnVerifier _verifier;
+    private readonly IPurchaseReturnFactureOutService _factureOutService;
     private readonly PurchaseReturnCreateMapper _mapper;
     private readonly PurchaseReturnRecreationOptions _options;
     private readonly ILogger<PurchaseReturnRecreationOrchestrator> _logger;
@@ -36,7 +37,8 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
         IPurchaseReturnVerifier verifier,
         PurchaseReturnCreateMapper mapper,
         PurchaseReturnRecreationOptions options,
-        ILogger<PurchaseReturnRecreationOrchestrator> logger)
+        ILogger<PurchaseReturnRecreationOrchestrator> logger,
+        IPurchaseReturnFactureOutService factureOutService)
     {
         _preparationService = preparationService;
         _factureRelationsService = factureRelationsService;
@@ -46,6 +48,7 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
         _mapper = mapper;
         _options = options;
         _logger = logger;
+        _factureOutService = factureOutService;
     }
 
     public async Task<PurchaseReturnVerificationResult> ExecuteAsync(
@@ -68,11 +71,22 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
                 item.Reason))
             .ToList();
 
+        var createdDocuments = new List<PurchaseReturnVerificationInput>();
+        var recreatedFactureOuts = new List<RecreatedPurchaseReturnFactureOut>();
+        var skippedFactureOuts = new List<FactureOutSkippedDocumentResult>();
+        PurchaseReturnVerificationResult Result() => new(results)
+        {
+            RecreatedPurchaseReturns = createdDocuments.Select(item =>
+                new RecreatedPurchaseReturn(item.SourceDocumentId, item.NewDocumentId)).ToArray(),
+            RecreatedFactureOuts = recreatedFactureOuts,
+            SkippedFactureOuts = skippedFactureOuts
+        };
+
         LogSkipped(preparation, accountId);
         if (preparation.ReadyForRecreationIds.Count == 0)
-            return new PurchaseReturnVerificationResult(results);
+            return Result();
 
-        var relations = await _factureRelationsService.CheckAsync(
+        var relations = await _factureRelationsService.InspectAsync(
             accountId,
             preparation.ReadyForRecreationIds,
             cancellationToken);
@@ -84,7 +98,19 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
 
         var readyForRecreationIds = relations.ReadyForRecreationIds;
         if (readyForRecreationIds.Count == 0)
-            return new PurchaseReturnVerificationResult(results);
+            return Result();
+
+        var inspectedIds = readyForRecreationIds.ToHashSet();
+        var factureOutPreparation = await _factureOutService.PrepareAsync(
+            accountId, mainCounterpartyId,
+            relations.FactureOutRelations.Where(item => inspectedIds.Contains(item.PurchaseReturnId)).ToArray(),
+            cancellationToken);
+        results.AddRange(factureOutPreparation.SkippedDocuments);
+        skippedFactureOuts.AddRange(factureOutPreparation.SkippedFactureOuts);
+        var skippedReturns = factureOutPreparation.SkippedDocuments.Select(item => item.SourceDocumentId).ToHashSet();
+        readyForRecreationIds = readyForRecreationIds.Where(id => !skippedReturns.Contains(id)).ToArray();
+        if (readyForRecreationIds.Count == 0)
+            return Result();
 
         var documents = await _repository.GetRequiredDocumentsAsync(
             accountId, readyForRecreationIds, cancellationToken);
@@ -114,9 +140,12 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
             }
             catch (Exception exception) when (exception is JsonException or InvalidOperationException or KeyNotFoundException)
             {
+                if (factureOutPreparation.PayloadsByPurchaseReturn.TryGetValue(purchaseReturnId, out var invoices))
+                    skippedFactureOuts.AddRange(invoices.Select(invoice => new FactureOutSkippedDocumentResult(
+                        invoice.SourceDocumentId, "Skipped", "PURCHASERETURN_PAYLOAD_INVALID", exception.Message)));
                 results.Add(Failed(
                     purchaseReturnId,
-                    "CreateFailed",
+                    factureOutPreparation.PayloadsByPurchaseReturn.ContainsKey(purchaseReturnId) ? "Skipped" : "CreateFailed",
                     "PURCHASERETURN_PAYLOAD_INVALID",
                     exception.Message));
                 _logger.LogWarning(
@@ -127,11 +156,43 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
             }
         }
 
-        var createdDocuments = new List<PurchaseReturnVerificationInput>();
+        if (prepared.Count == 0)
+            return Result();
+        var detached = await _factureRelationsService.CheckAsync(
+            accountId, prepared.Select(item => item.SourceDocumentId).ToArray(), cancellationToken);
+        results.AddRange(detached.Failed.Select(item => Failed(item.PurchaseReturnId, item.Status,
+            item.ErrorCode ?? "PURCHASERETURN_FACTURE_RELATIONS_FAILED",
+            item.Error ?? "Payment relations could not be detached.")));
+        readyForRecreationIds = detached.ReadyForRecreationIds;
+        var detachedIds = readyForRecreationIds.ToHashSet();
+        prepared = prepared.Where(item => detachedIds.Contains(item.SourceDocumentId)).ToList();
+
         foreach (var batch in prepared.Chunk(MoySkladPurchaseReturnGateway.BatchSize))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var batchItems = batch.ToArray();
+            var invoicePayloads = batchItems.SelectMany(item =>
+                factureOutPreparation.PayloadsByPurchaseReturn.GetValueOrDefault(item.SourceDocumentId) ?? []).ToArray();
+            var invoiceDeletion = await _factureOutService.DeleteAsync(accountId, invoicePayloads, cancellationToken);
+            var deletedInvoiceIds = invoiceDeletion.ReadyToCreatePayloads.Select(item => item.SourceDocumentId).ToHashSet();
+            var invoiceFailures = invoiceDeletion.FailedDocuments.ToDictionary(item => item.SourceDocumentId);
+            var blockedReturns = new HashSet<Guid>();
+            foreach (var item in batchItems)
+            {
+                var invoices = factureOutPreparation.PayloadsByPurchaseReturn.GetValueOrDefault(item.SourceDocumentId) ?? [];
+                var notDeleted = invoices.Where(invoice => !deletedInvoiceIds.Contains(invoice.SourceDocumentId)).ToArray();
+                if (notDeleted.Length == 0)
+                    continue;
+                blockedReturns.Add(item.SourceDocumentId);
+                results.Add(Failed(item.SourceDocumentId, "DeleteFailed", "PURCHASERETURN_FACTUREOUT_DELETE_FAILED",
+                    string.Join(" | ", notDeleted.Select(invoice =>
+                        $"factureout {invoice.SourceDocumentId:D}: " +
+                        (invoiceFailures.GetValueOrDefault(invoice.SourceDocumentId)?.Error ??
+                         "Deletion was not confirmed.")))));
+            }
+            batchItems = batchItems.Where(item => !blockedReturns.Contains(item.SourceDocumentId)).ToArray();
+            if (batchItems.Length == 0)
+                continue;
 
             var deleteResult = await DeleteWithRetryAsync(
                 accountId,
@@ -167,11 +228,15 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
         }
 
         if (createdDocuments.Count == 0)
-            return new PurchaseReturnVerificationResult(results);
+            return Result();
 
         var oldToNewPurchaseReturnIds = createdDocuments
             .GroupBy(item => item.SourceDocumentId)
             .ToDictionary(group => group.Key, group => group.Last().NewDocumentId);
+        var invoiceCreation = await _factureOutService.CreateAsync(accountId, mainCounterpartyId,
+            factureOutPreparation.PayloadsByPurchaseReturn, oldToNewPurchaseReturnIds, cancellationToken);
+        recreatedFactureOuts.AddRange(invoiceCreation.RecreatedDocuments);
+        var createdFailures = invoiceCreation.FailedDocuments.ToDictionary(item => item.SourceDocumentId);
         PurchaseReturnRelationsReattachResult reattachResult;
         try
         {
@@ -209,17 +274,21 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
             if (!reattachBySourceId.TryGetValue(item.SourceDocumentId, out var relation) ||
                 !relation.IsSuccessful)
             {
-                results.Add(Failed(
+                var failure = Failed(
                     item.SourceDocumentId,
                     "CreatedWithError",
                     relation?.ErrorCode ?? "PURCHASERETURN_PAYMENT_RELATIONS_REATTACH_FAILED",
                     relation?.Error ?? "The purchasereturn was created but related payment documents could not be reattached.",
-                    item.NewDocumentId));
+                    item.NewDocumentId);
+                createdFailures[item.SourceDocumentId] = createdFailures.TryGetValue(item.SourceDocumentId, out var existing)
+                    ? existing with { Error = existing.Error + " | " + failure.Error }
+                    : failure;
             }
         }
 
+        results.AddRange(createdFailures.Values);
         var documentsForVerification = createdDocuments
-            .Where(item => reattachBySourceId.TryGetValue(item.SourceDocumentId, out var relation) && relation.IsSuccessful)
+            .Where(item => !createdFailures.ContainsKey(item.SourceDocumentId))
             .ToArray();
         foreach (var verificationBatch in documentsForVerification.Chunk(MoySkladPurchaseReturnGateway.BatchSize))
         {
@@ -259,7 +328,7 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
             }
         }
 
-        return new PurchaseReturnVerificationResult(results);
+        return Result();
     }
 
     private async Task<(IReadOnlyList<PurchaseReturnVerificationInput> Created,

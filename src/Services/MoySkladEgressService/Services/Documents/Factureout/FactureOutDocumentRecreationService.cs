@@ -1,3 +1,5 @@
+using System.Text.Json;
+using MsContractor.MoySkladEgressService.Models.Exceptions;
 using MsContractor.MoySkladEgressService.Gateways.Documents.Factureout;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Repositories;
@@ -6,7 +8,10 @@ namespace MsContractor.MoySkladEgressService.Services.Documents.Factureout;
 
 public sealed record FactureOutDocumentRecreationResult(
     IReadOnlyList<Guid> TransferredDocumentIds,
-    IReadOnlyList<FactureOutFailedDocumentResult> FailedDocuments);
+    IReadOnlyList<FactureOutFailedDocumentResult> FailedDocuments)
+{
+    public IReadOnlyDictionary<Guid, Guid> CreatedDocumentIds { get; init; } = new Dictionary<Guid, Guid>();
+}
 
 public sealed record FactureOutDocumentDeletionResult(
     IReadOnlyList<FactureOutPayload> ReadyToCreatePayloads,
@@ -77,11 +82,20 @@ public sealed class FactureOutDocumentRecreationService : IFactureOutDocumentRec
         if (documentsPayload.Count == 0)
             return new FactureOutDocumentDeletionResult([], []);
 
-        var deleteResults = await _gateway.DeleteBatchAsync(
-            accountId,
-            correlationId,
-            documentsPayload.Select(item => item.SourceDocumentId).ToArray(),
-            cancellationToken);
+        IReadOnlyList<MoySkladFactureOutBatchDeleteResult> deleteResults;
+        try
+        {
+            deleteResults = await _gateway.DeleteBatchAsync(
+                accountId,
+                correlationId,
+                documentsPayload.Select(item => item.SourceDocumentId).ToArray(),
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is EgressException or InvalidOperationException or JsonException)
+        {
+            return new FactureOutDocumentDeletionResult([], documentsPayload.Select(payload =>
+                ToFailed(payload, "FACTUREOUT_DELETE_UNKNOWN_RESULT", SafeError(exception))).ToArray());
+        }
         var deleteResultsById = deleteResults
             .GroupBy(result => result.SourceDocumentId)
             .ToDictionary(group => group.Key, group => group.ToArray());
@@ -124,51 +138,64 @@ public sealed class FactureOutDocumentRecreationService : IFactureOutDocumentRec
 
         var transferredDocumentIds = new Dictionary<Guid, Guid>();
         var failed = new List<FactureOutFailedDocumentResult>(deletionFailures);
-        if (documentsPayload.Count > 0)
+        IReadOnlyList<FactureOutPayload> pending = documentsPayload;
+        for (var attempt = 0; attempt < 2 && pending.Count > 0; attempt++)
         {
-            var createResponse = await CreateBatchAsync(accountId, correlationId, documentsPayload, cancellationToken);
-            var verification = _verifier.Verify(documentsPayload, createResponse);
+            IReadOnlyList<MoySkladFactureOutBatchCreateResult> response;
+            FactureOutDocumentRecreationVerificationResult verification;
+            try
+            {
+                response = await CreateBatchAsync(accountId, correlationId, pending, cancellationToken);
+                verification = _verifier.Verify(pending, response);
+            }
+            catch (Exception exception) when (exception is EgressException or InvalidOperationException or JsonException)
+            {
+                failed.AddRange(pending.Select(payload => ToFailed(
+                    payload, "FACTUREOUT_CREATE_UNKNOWN_RESULT", SafeError(exception))));
+                break;
+            }
+
             foreach (var created in verification.CreatedDocumentIds)
                 transferredDocumentIds.Add(created.Key, created.Value);
+            pending = verification.MissingDocuments;
+            if (attempt == 0)
+                continue;
 
-            if (verification.MissingDocuments.Count > 0)
+            foreach (var payload in pending)
             {
-                var retryResponse = await CreateBatchAsync(
-                    accountId,
-                    correlationId,
-                    verification.MissingDocuments,
-                    cancellationToken);
-                var retryVerification = _verifier.Verify(verification.MissingDocuments, retryResponse);
-                foreach (var created in retryVerification.CreatedDocumentIds)
-                    transferredDocumentIds.Add(created.Key, created.Value);
-
-                foreach (var payload in retryVerification.MissingDocuments)
-                {
-                    var matchingErrors = retryResponse
-                        .Where(result => result.ReturnedSyncId == payload.NewSyncId &&
-                                         (result.ErrorCode is not null || result.Error is not null))
-                        .ToArray();
-                    var errorCode = matchingErrors.Length == 1
-                        ? matchingErrors[0].ErrorCode ?? CreateSyncIdMissing
-                        : CreateSyncIdMissing;
-                    var error = matchingErrors.Length == 1
-                        ? matchingErrors[0].Error ??
-                          "MoySklad did not return a successful result with the expected syncId after retry."
-                        : "MoySklad did not return a successful result with the expected syncId after retry.";
-                    failed.Add(ToFailed(payload, errorCode, error));
-                }
+                var matchingErrors = response.Where(result => result.ReturnedSyncId == payload.NewSyncId &&
+                    (result.ErrorCode is not null || result.Error is not null)).ToArray();
+                failed.Add(ToFailed(
+                    payload,
+                    matchingErrors.Length == 1 ? matchingErrors[0].ErrorCode ?? CreateSyncIdMissing : CreateSyncIdMissing,
+                    matchingErrors.Length == 1 && matchingErrors[0].Error is string error
+                        ? error
+                        : "MoySklad did not return a successful result with the expected syncId after retry."));
             }
         }
 
-        await _recreationItems.SaveRecreationResultsAsync(
-            accountId,
-            transferredDocumentIds,
-            failed.Select(item => item.SourceDocumentId).ToArray(),
-            cancellationToken);
+        try
+        {
+            await _recreationItems.SaveRecreationResultsAsync(
+                accountId,
+                transferredDocumentIds,
+                failed.Select(item => item.SourceDocumentId).ToArray(),
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            failed.AddRange(documentsPayload.Where(item => transferredDocumentIds.ContainsKey(item.SourceDocumentId))
+                .Select(item => new FactureOutFailedDocumentResult(item.SourceDocumentId, item.NewSyncId,
+                    transferredDocumentIds[item.SourceDocumentId], "Failed", "FACTUREOUT_RESULTS_SAVE_FAILED",
+                    "Factureout was created but its recreation result could not be saved.")));
+        }
 
         return new FactureOutDocumentRecreationResult(
-            transferredDocumentIds.Keys.ToArray(),
-            failed);
+            transferredDocumentIds.Keys.Except(failed.Select(item => item.SourceDocumentId)).ToArray(),
+            failed)
+        {
+            CreatedDocumentIds = transferredDocumentIds
+        };
     }
 
     private Task<IReadOnlyList<MoySkladFactureOutBatchCreateResult>> CreateBatchAsync(
@@ -184,6 +211,9 @@ public sealed class FactureOutDocumentRecreationService : IFactureOutDocumentRec
                 item.NewSyncId,
                 item.PayloadJson)).ToArray(),
             cancellationToken);
+
+    private static string SafeError(Exception exception) =>
+        exception is EgressException egress ? egress.SafeMessage : exception.Message;
 
     private static FactureOutFailedDocumentResult ToFailed(
         FactureOutPayload payload,

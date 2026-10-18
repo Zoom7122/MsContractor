@@ -9,6 +9,11 @@ namespace MsContractor.MoySkladEgressService.Services.Documents.Purchasereturn;
 
 public interface IPurchaseReturnFactureRelationsService
 {
+    Task<PurchaseReturnFactureRelationsResult> InspectAsync(
+        Guid accountId,
+        IReadOnlyCollection<Guid> purchaseReturnIds,
+        CancellationToken cancellationToken);
+
     Task<PurchaseReturnFactureRelationsResult> CheckAsync(
         Guid accountId,
         IReadOnlyCollection<Guid> purchaseReturnIds,
@@ -28,6 +33,7 @@ public sealed class PurchaseReturnFactureRelationsService : IPurchaseReturnFactu
     private const string Detached = "Detached";
     private const string RelationsPresent = "PURCHASERETURN_FACTURE_RELATIONS_PRESENT";
     private const string SnapshotLoadFailed = "PURCHASERETURN_FACTURE_SNAPSHOT_LOAD_FAILED";
+    private const string SnapshotInvalid = "PURCHASERETURN_FACTURE_SNAPSHOT_INVALID";
     private const string MoneyRelationsLoadFailed = "PURCHASERETURN_PAYMENT_RELATIONS_LOAD_FAILED";
     private const string MoneyRelationNotFound = "PURCHASERETURN_PAYMENT_RELATION_NOT_FOUND";
     private const string MoneyRelationsDetachFailed = "PURCHASERETURN_PAYMENT_RELATIONS_DETACH_FAILED";
@@ -52,10 +58,23 @@ public sealed class PurchaseReturnFactureRelationsService : IPurchaseReturnFactu
         _moneyRepository = moneyRepository;
     }
 
-    public async Task<PurchaseReturnFactureRelationsResult> CheckAsync(
+    public Task<PurchaseReturnFactureRelationsResult> InspectAsync(
         Guid accountId,
         IReadOnlyCollection<Guid> purchaseReturnIds,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        CheckCoreAsync(accountId, purchaseReturnIds, cancellationToken, detachMoneyRelations: false);
+
+    public Task<PurchaseReturnFactureRelationsResult> CheckAsync(
+        Guid accountId,
+        IReadOnlyCollection<Guid> purchaseReturnIds,
+        CancellationToken cancellationToken) =>
+        CheckCoreAsync(accountId, purchaseReturnIds, cancellationToken, detachMoneyRelations: true);
+
+    private async Task<PurchaseReturnFactureRelationsResult> CheckCoreAsync(
+        Guid accountId,
+        IReadOnlyCollection<Guid> purchaseReturnIds,
+        CancellationToken cancellationToken,
+        bool detachMoneyRelations)
     {
         var ids = purchaseReturnIds.Distinct().ToArray();
         ValidateIds(ids, nameof(purchaseReturnIds));
@@ -86,7 +105,7 @@ public sealed class PurchaseReturnFactureRelationsService : IPurchaseReturnFactu
                     exception.Message)).ToArray());
         }
 
-        return await ProcessAsync(accountId, ids, snapshots, cancellationToken);
+        return await ProcessAsync(accountId, ids, snapshots, cancellationToken, detachMoneyRelations);
     }
 
     public Task<PurchaseReturnFactureRelationsResult> CheckAsync(
@@ -390,20 +409,24 @@ public sealed class PurchaseReturnFactureRelationsService : IPurchaseReturnFactu
         Guid accountId,
         IReadOnlyList<Guid> ids,
         IReadOnlyDictionary<Guid, PurchaseReturnFactureRelationsSnapshot> snapshots,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool detachMoneyRelations = true)
     {
-        var states = ids.Select(id =>
+        var states = new List<SourceState>(ids.Count);
+        var factureOutRelations = new List<PurchaseReturnFactureOutRelation>();
+        foreach (var id in ids)
         {
             if (!snapshots.TryGetValue(id, out var snapshot))
             {
-                return new SourceState(
+                states.Add(new SourceState(
                     id,
                     new PurchaseReturnFactureRelationsSnapshot(id, [], []),
                     "PURCHASERETURN_FACTURE_SNAPSHOT_MISSING",
-                    "The facture relation snapshot is missing.");
+                    "The facture relation snapshot is missing."));
+                continue;
             }
 
-            if (snapshot.FactureIn.Count != 0 || snapshot.FactureOut.Count != 0)
+            if (snapshot.FactureIn.Count != 0)
             {
                 var relationDescription =
                     $"factureIn={snapshot.FactureIn.Count}, factureOut={snapshot.FactureOut.Count}";
@@ -412,15 +435,45 @@ public sealed class PurchaseReturnFactureRelationsService : IPurchaseReturnFactu
                     accountId,
                     id,
                     relationDescription);
-                return new SourceState(
+                states.Add(new SourceState(
                     id,
                     snapshot,
                     RelationsPresent,
-                    $"The purchasereturn has facture relations ({relationDescription}).");
+                    $"The purchasereturn has facture relations ({relationDescription})."));
+                continue;
             }
 
-            return new SourceState(id, snapshot);
-        }).ToArray();
+            try
+            {
+                var documentRelations = snapshot.FactureOut
+                    .Select(rawJson => new PurchaseReturnFactureOutRelation(
+                        id,
+                        ReadFactureOutId(rawJson)))
+                    .ToArray();
+                factureOutRelations.AddRange(documentRelations);
+                states.Add(new SourceState(id, snapshot));
+            }
+            catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+            {
+                _logger.LogWarning(
+                    exception,
+                    "purchasereturn factureOut relation snapshot is invalid: account_id={AccountId}, purchasereturn_id={PurchaseReturnId}",
+                    accountId,
+                    id);
+                states.Add(new SourceState(
+                    id,
+                    snapshot,
+                    SnapshotInvalid,
+                    $"The purchasereturn factureOut relation snapshot is invalid: {exception.Message}"));
+            }
+        }
+
+        if (!detachMoneyRelations)
+        {
+            foreach (var state in states.Where(state => !state.HasFailure))
+                state.Status = "Checked";
+            return ToResult(states, factureOutRelations);
+        }
 
         var moneyStates = states
             .Where(state => !state.HasFailure && state.HasMoneyRelations)
@@ -429,7 +482,7 @@ public sealed class PurchaseReturnFactureRelationsService : IPurchaseReturnFactu
             state.Status = NoRelations;
 
         if (moneyStates.Length == 0)
-            return ToResult(states);
+            return ToResult(states, factureOutRelations);
 
         if (_gateway is null || _moneyRepository is null)
         {
@@ -440,7 +493,7 @@ public sealed class PurchaseReturnFactureRelationsService : IPurchaseReturnFactu
                     MoneyRelationsLoadFailed,
                     "The purchasereturn money relations gateway or repository is not configured.");
             }
-            return ToResult(states);
+            return ToResult(states, factureOutRelations);
         }
 
         await LoadMoneyRelationsAsync(accountId, moneyStates, cancellationToken);
@@ -476,7 +529,7 @@ public sealed class PurchaseReturnFactureRelationsService : IPurchaseReturnFactu
                     snapshotRelations.Length);
                 foreach (var state in moneyStates.Where(state => !state.HasFailure))
                     MarkFailure(state, MoneyRelationsLoadFailed, exception.Message);
-                return ToResult(states);
+                return ToResult(states, factureOutRelations);
             }
 
             var detachableStates = moneyStates.Where(state => !state.HasFailure).ToArray();
@@ -493,7 +546,7 @@ public sealed class PurchaseReturnFactureRelationsService : IPurchaseReturnFactu
         foreach (var state in moneyStates.Where(state => !state.HasFailure))
             state.Status = Detached;
 
-        return ToResult(states);
+        return ToResult(states, factureOutRelations);
     }
 
     private async Task LoadMoneyRelationsAsync(
@@ -866,12 +919,41 @@ public sealed class PurchaseReturnFactureRelationsService : IPurchaseReturnFactu
         return null;
     }
 
-    private static PurchaseReturnFactureRelationsResult ToResult(IEnumerable<SourceState> states) =>
-        new(states.Select(state => new PurchaseReturnFactureRelationResult(
+    private static PurchaseReturnFactureRelationsResult ToResult(
+        IEnumerable<SourceState> states,
+        IReadOnlyList<PurchaseReturnFactureOutRelation> factureOutRelations) =>
+        new PurchaseReturnFactureRelationsResult(states.Select(state => new PurchaseReturnFactureRelationResult(
             state.PurchaseReturnId,
             state.Status ?? (state.HasFailure ? Skipped : Detached),
             state.ErrorCode,
-            state.Error)).ToArray());
+            state.Error)).ToArray())
+        {
+            FactureOutRelations = factureOutRelations
+        };
+
+    private static Guid ReadFactureOutId(string rawJson)
+    {
+        using var document = JsonDocument.Parse(rawJson);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("meta", out var meta) ||
+            meta.ValueKind != JsonValueKind.Object ||
+            !meta.TryGetProperty("type", out var type) ||
+            type.ValueKind != JsonValueKind.String ||
+            !string.Equals(type.GetString(), "factureout", StringComparison.OrdinalIgnoreCase) ||
+            !meta.TryGetProperty("href", out var href) ||
+            href.ValueKind != JsonValueKind.String ||
+            !Uri.TryCreate(href.GetString(), UriKind.Absolute, out var uri))
+        {
+            throw new JsonException("A factureOut relation has invalid meta.type or meta.href.");
+        }
+
+        var rawId = uri.AbsolutePath.TrimEnd('/').Split('/').LastOrDefault();
+        if (!Guid.TryParse(rawId, out var documentId) || documentId == Guid.Empty)
+            throw new JsonException("A factureOut relation meta.href has no valid document id.");
+
+        return documentId;
+    }
 
     private static void MarkFailure(SourceState state, string errorCode, string error)
     {

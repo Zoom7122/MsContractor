@@ -77,7 +77,18 @@ public sealed record PurchaseReturnRecreationResponse(
     IReadOnlyList<Guid> TransferredDocumentIds,
     IReadOnlyList<Guid> SkippedDocumentIds,
     IReadOnlyList<PurchaseReturnSkippedDocumentResponse>? SkippedDocuments = null,
-    IReadOnlyList<PurchaseReturnCreatedWithErrorResponse>? CreatedWithErrors = null);
+    IReadOnlyList<PurchaseReturnCreatedWithErrorResponse>? CreatedWithErrors = null)
+{
+    public IReadOnlyList<RecreatedPurchaseReturnResponse> RecreatedPurchaseReturns { get; init; } = [];
+    public IReadOnlyList<RecreatedPurchaseReturnFactureOutResponse> RecreatedFactureOuts { get; init; } = [];
+}
+
+public sealed record RecreatedPurchaseReturnResponse(Guid SourceDocumentId, Guid NewDocumentId);
+
+public sealed record RecreatedPurchaseReturnFactureOutResponse(
+    Guid SourcePurchaseReturnId,
+    Guid SourceDocumentId,
+    Guid NewDocumentId);
 
 public sealed record PurchaseReturnSkippedDocumentResponse(
     Guid DocumentId,

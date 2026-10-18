@@ -88,7 +88,14 @@ public sealed class InternalPurchaseReturnsController : ControllerBase
                         document.Status,
                         document.ErrorCode,
                         document.Error))
-                    .ToArray());
+                    .ToArray())
+            {
+                RecreatedPurchaseReturns = result.RecreatedPurchaseReturns.Select(item =>
+                    new RecreatedPurchaseReturnResponse(item.SourceDocumentId, item.NewDocumentId)).ToArray(),
+                RecreatedFactureOuts = result.RecreatedFactureOuts.Select(item =>
+                    new RecreatedPurchaseReturnFactureOutResponse(
+                        item.SourcePurchaseReturnId, item.SourceDocumentId, item.NewDocumentId)).ToArray()
+            };
             return Accepted(response);
         }
         catch (EgressException exception)

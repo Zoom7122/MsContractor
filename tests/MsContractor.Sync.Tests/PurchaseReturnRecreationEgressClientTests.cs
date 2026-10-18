@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Microsoft.Extensions.Configuration;
 using MsContractor.Contracts.Internal;
 using MsContractor.DuplicatesMergeService.Clients;
+using MsContractor.DuplicatesMergeService.Models.Exceptions;
 
 namespace MsContractor.Sync.Tests;
 
@@ -73,6 +74,42 @@ public sealed class PurchaseReturnRecreationEgressClientTests
         Assert.Equal(purchaseReturnIds[1], skipped.DocumentId);
         Assert.Equal("PURCHASERETURN_SKIPPED", skipped.ErrorCode);
         Assert.Equal("not ready", skipped.Error);
+    }
+
+    [Theory]
+    [InlineData("transport")]
+    [InlineData("timeout")]
+    [InlineData("server")]
+    [InlineData("invalid-json")]
+    public async Task RecreateAsync_UnknownResultCannotBeAutomaticallyRetried(string kind)
+    {
+        var configuration = new ConfigurationBuilder().Build();
+        var client = new PurchaseReturnRecreationEgressClient(new HttpClient(new CallbackHandler(_ =>
+        {
+            if (kind == "transport") throw new HttpRequestException("Connection lost.");
+            if (kind == "timeout") throw new OperationCanceledException();
+            return Task.FromResult(new HttpResponseMessage(kind == "server" ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.Accepted)
+            { Content = new StringContent(kind == "server" ? "{}" : "invalid-json") });
+        })) { BaseAddress = new Uri("http://egress.test/") }, configuration);
+        var exception = await Assert.ThrowsAsync<MergeEgressException>(() => client.RecreateAsync(
+            Guid.NewGuid(), Guid.NewGuid(), [Guid.NewGuid()], Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None));
+        Assert.Equal(MergeEgressException.PurchaseReturnUnknownResult, exception.Code);
+        Assert.False(exception.IsRetryable);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_CallerCancellationPropagates()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var client = new PurchaseReturnRecreationEgressClient(new HttpClient(new CallbackHandler(_ =>
+            throw new OperationCanceledException(cancellation.Token))) { BaseAddress = new Uri("http://egress.test/") },
+            new ConfigurationBuilder().Build());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.RecreateAsync(
+            Guid.NewGuid(), Guid.NewGuid(), [Guid.NewGuid()], Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid(), cancellation.Token));
+        Assert.True(new MergeEgressException("OTHER_OPERATION", "Retryable.", 503).IsRetryable);
     }
 
     private sealed class CallbackHandler(

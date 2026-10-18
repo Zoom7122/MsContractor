@@ -4,9 +4,9 @@
 
 MSContractor is a multi-tenant integration with МойСклад. The backend is a .NET 10 solution (`MsContractor.sln`), the iframe UI is Vue 3/Vite under `src/frontend-Iframe`, and local infrastructure is defined in `docker-compose.yml`.
 
-The solution contains seven services, two shared libraries, and two xUnit test projects:
+The solution contains five services, two shared libraries, and two xUnit test projects:
 
-- `src/Services/{Gateway.Bff,VendorService,MoySkladEgressService,CatalogSyncService,DuplicatesMergeService,NotificationService,AuditService}`;
+- `src/Services/{Gateway.Bff,VendorService,MoySkladEgressService,CatalogSyncService,DuplicatesMergeService}`;
 - `src/Shared/MsContractor.Contracts` for shared HTTP/Kafka DTOs and `MsContractor.BuildingBlocks` for cross-cutting infrastructure;
 - `tests/MsContractor.Sync.Tests` and `tests/MsContractor.VendorService.Tests`.
 
@@ -41,8 +41,6 @@ Public requests enter through Gateway. Internal HTTP endpoints require `X-Intern
 | `MoySkladEgressService` | The only outbound gateway to MoySklad JSON API 1.2; token retrieval, HTTP mapping, pagination and rate-limit hooks. |
 | `CatalogSyncService` | Full/incremental counterparty synchronization, durable sync runs/watermarks/catalog, Kafka consumer and sync-event outbox. |
 | `DuplicatesMergeService` | Duplicate preview, selection preview, durable merge jobs/operations, merge outbox/consumer, main update and duplicate archive. |
-| `NotificationService` | Currently only a placeholder `BackgroundService` plus health/OpenAPI; no real notification contract exists yet. |
-| `AuditService` | Currently only a placeholder `BackgroundService` plus health/OpenAPI; no real audit persistence/consumer exists yet. |
 | `frontend-Iframe` | Vue iframe UI; calls `/api/*` with session cookies through Gateway. |
 
 `DuplicatesMergeService` currently references `CatalogSyncService` and uses its `CatalogSyncDbContext`/`catalog_sync` schema. Treat this as an explicit current coupling, not permission for new services to read another service's private persistence.
@@ -154,7 +152,7 @@ Use scopes/fields already present in the flow: `correlation_id`, `account_id`, `
 
 Prerequisites reflected by the repository are .NET SDK 10, Docker with Compose, Node 20/npm, `curl`, and Bash. Local configuration comes from `.env.dev`; `.env.prod` is present but is not a validated production stack.
 
-Default host ports in `.env.dev`: Gateway `8080`, Egress `8082`, Catalog `8083`, Duplicates `8084`, Notification `8085`, Audit `8086`, frontend preview `4174`, PostgreSQL `5432`, Redis `6379`, Kafka `29092`, Kafka UI `8090`, RedisInsight `5540`, and Dozzle `8089`. `VENDOR_SERVICE_PORT=8081` exists in the env file, but Compose does not publish Vendor Service to the host. Caddy is configured separately on `8088` and is not a Compose service.
+Default host ports in `.env.dev`: Gateway `8080`, Egress `8082`, Catalog `8083`, Duplicates `8084`, frontend preview `4174`, PostgreSQL `5432`, Redis `6379`, Kafka `29092`, Kafka UI `8090`, RedisInsight `5540`, and Dozzle `8089`. `VENDOR_SERVICE_PORT=8081` exists in the env file, but Compose does not publish Vendor Service to the host. Caddy is configured separately on `8088` and is not a Compose service.
 
 ## Build and Run
 
@@ -230,8 +228,6 @@ vendor-service -> mscontractor-vendor-service
 moysklad-egress-service -> mscontractor-moysklad-egress-service
 catalog-sync-service -> mscontractor-catalog-sync-service
 duplicates-merge-service -> mscontractor-duplicates-merge-service
-notification-service -> mscontractor-notification-service
-audit-service -> mscontractor-audit-service
 frontend-iframe -> mscontractor-frontend-iframe
 dozzle -> mscontractor-dozzle
 ```
@@ -278,7 +274,7 @@ For Merge changes, preserve preview -> durable pending job/ordered operations + 
 ## Forbidden Changes
 
 - Trusting frontend `account_id`, omitting tenant filters, or introducing cross-account keys/relationships.
-- Direct MoySklad JSON API calls from Gateway, Sync, Merge, Catalog, frontend, Notification, or Audit.
+- Direct MoySklad JSON API calls from Gateway, Sync, Merge, Catalog, or frontend.
 - Persisting access tokens outside encrypted Vendor storage; putting tokens/secrets in frontend, Kafka, logs, source, Dockerfiles, or committed settings.
 - Treating Kafka/Redis as authoritative operation storage, auto-committing before durable processing, or ignoring duplicate delivery.
 - Blind retries of unsafe writes, swallowing cancellation, unbounded HTTP calls, or per-request `new HttpClient()`.

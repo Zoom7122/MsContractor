@@ -67,7 +67,6 @@ flowchart LR
 | **CatalogSyncService** | Полная/инкрементальная синхронизация, снимок каталога, настройки и состояние запусков. | Получает команды через Kafka, читает МойСклад через Egress, сохраняет данные в PostgreSQL (`catalog_sync`). |
 | **DuplicatesMergeService** | Поиск и предпросмотр дублей, очередь задач merge, пошаговый перенос. | Читает каталог в `catalog_sync`, публикует и обрабатывает команды Kafka, вызывает Egress. |
 | **MoySkladEgressService** | Единый адаптер к МойСклад JSON API: поиск, изменение и пересоздание документов, изменение и архивирование контрагентов. | Получает токен от VendorService; использует PostgreSQL (`egress`) для снимков и операций, Redis для данных ограничения запросов. |
-| **AuditService / NotificationService** | Сейчас содержат health endpoints и фоновые заготовки `Worker`. | Обработка аудита и уведомлений пока не подключена к основным потокам. |
 
 ### Данные и обмен сообщениями
 
@@ -109,14 +108,12 @@ Egress владеет HTTP-взаимодействием с JSON API и про�
 .
 ├── src/
 │   ├── frontend-Iframe/          # Vue-приложение, маршруты, страницы и API-клиент
-│   ├── Services/                # семь .NET-сервисов
+│   ├── Services/                # пять .NET-сервисов
 │   │   ├── Gateway.Bff/
 │   │   ├── VendorService/
 │   │   ├── CatalogSyncService/
 │   │   ├── DuplicatesMergeService/
-│   │   ├── MoySkladEgressService/
-│   │   ├── AuditService/
-│   │   └── NotificationService/
+│   │   └── MoySkladEgressService/
 │   └── Shared/                  # межсервисные контракты и общая инфраструктура
 ├── tests/                       # xUnit-тесты backend
 ├── docker/                      # Dockerfile для .NET-сервисов

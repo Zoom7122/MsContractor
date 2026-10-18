@@ -18,8 +18,6 @@ x-service-env: &service-env
   Services__MoySkladEgressService__BaseUrl: http://moysklad-egress-service:${SERVICE_INTERNAL_PORT}
   Services__CatalogSyncService__BaseUrl: http://catalog-sync-service:${SERVICE_INTERNAL_PORT}
   Services__DuplicatesMergeService__BaseUrl: http://duplicates-merge-service:${SERVICE_INTERNAL_PORT}
-  Services__NotificationService__BaseUrl: http://notification-service:${SERVICE_INTERNAL_PORT}
-  Services__AuditService__BaseUrl: http://audit-service:${SERVICE_INTERNAL_PORT}
   Merge__DocumentDiscoveryTimeout: ${MERGE_DOCUMENT_DISCOVERY_TIMEOUT:-00:10:00}
   Kafka__MergeConsumerMaxPollIntervalMs: ${MERGE_CONSUMER_MAX_POLL_INTERVAL_MS:-660000}
 
@@ -143,8 +141,6 @@ services:
       ReverseProxy__Clusters__openapi-moysklad-egress-service-cluster__Destinations__moysklad-egress-service__Address: http://moysklad-egress-service:${SERVICE_INTERNAL_PORT}/
       ReverseProxy__Clusters__openapi-catalog-sync-service-cluster__Destinations__catalog-sync-service__Address: http://catalog-sync-service:${SERVICE_INTERNAL_PORT}/
       ReverseProxy__Clusters__openapi-duplicates-merge-service-cluster__Destinations__duplicates-merge-service__Address: http://duplicates-merge-service:${SERVICE_INTERNAL_PORT}/
-      ReverseProxy__Clusters__openapi-notification-service-cluster__Destinations__notification-service__Address: http://notification-service:${SERVICE_INTERNAL_PORT}/
-      ReverseProxy__Clusters__openapi-audit-service-cluster__Destinations__audit-service__Address: http://audit-service:${SERVICE_INTERNAL_PORT}/
     depends_on:
       redis:
         condition: service_healthy
@@ -265,60 +261,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:${SERVICE_INTERNAL_PORT}/health/live > /dev/null || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    networks:
-      - mscontractor-net
-
-  notification-service:
-    container_name: mscontractor-notification-service
-    restart: unless-stopped
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.service
-      args:
-        PROJECT_PATH: src/Services/NotificationService/MsContractor.NotificationService.csproj
-        PROJECT_DLL: MsContractor.NotificationService.dll
-    ports:
-      - "${NOTIFICATION_SERVICE_PORT}:${SERVICE_INTERNAL_PORT}"
-    environment:
-      <<: *service-env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:${SERVICE_INTERNAL_PORT}/health/live > /dev/null || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    networks:
-      - mscontractor-net
-
-  audit-service:
-    container_name: mscontractor-audit-service
-    restart: unless-stopped
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.service
-      args:
-        PROJECT_PATH: src/Services/AuditService/MsContractor.AuditService.csproj
-        PROJECT_DLL: MsContractor.AuditService.dll
-    ports:
-      - "${AUDIT_SERVICE_PORT}:${SERVICE_INTERNAL_PORT}"
-    environment:
-      <<: *service-env
-    depends_on:
-      postgres:
         condition: service_healthy
       kafka:
         condition: service_healthy

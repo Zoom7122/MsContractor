@@ -40,9 +40,6 @@ check vendor-service "${COMPOSE[@]}" exec -T vendor-service \
 check_http moysklad-egress-service "$MOYSKLAD_EGRESS_SERVICE_PORT"
 check_http catalog-sync-service "$CATALOG_SYNC_SERVICE_PORT"
 check_http duplicates-merge-service "$DUPLICATES_MERGE_SERVICE_PORT"
-check_http notification-service "$NOTIFICATION_SERVICE_PORT"
-check_http audit-service "$AUDIT_SERVICE_PORT"
-
 check postgres "${COMPOSE[@]}" exec -T postgres \
   pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 check redis bash -o pipefail -c \

@@ -76,8 +76,6 @@ app.UseMsContractorSwaggerUi(options =>
     options.SwaggerEndpoint("/_openapi/moysklad-egress/openapi/v1.json", "MoySklad Egress Service");
     options.SwaggerEndpoint("/_openapi/catalog-sync/openapi/v1.json", "Catalog Sync Service");
     options.SwaggerEndpoint("/_openapi/duplicates-merge/openapi/v1.json", "Duplicates Merge Service");
-    options.SwaggerEndpoint("/_openapi/notification/openapi/v1.json", "Notification Service");
-    options.SwaggerEndpoint("/_openapi/audit/openapi/v1.json", "Audit Service");
 });
 
 app.UseVendorRequestCorrelation();

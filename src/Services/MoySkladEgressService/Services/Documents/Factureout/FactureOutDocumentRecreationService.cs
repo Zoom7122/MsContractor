@@ -8,6 +8,10 @@ public sealed record FactureOutDocumentRecreationResult(
     IReadOnlyList<Guid> TransferredDocumentIds,
     IReadOnlyList<FactureOutFailedDocumentResult> FailedDocuments);
 
+public sealed record FactureOutDocumentDeletionResult(
+    IReadOnlyList<FactureOutPayload> ReadyToCreatePayloads,
+    IReadOnlyList<FactureOutFailedDocumentResult> FailedDocuments);
+
 public interface IFactureOutDocumentRecreationService
 {
     Task<FactureOutDocumentRecreationResult> RecreateAsync(
@@ -48,12 +52,36 @@ public sealed class FactureOutDocumentRecreationService : IFactureOutDocumentRec
             return new FactureOutDocumentRecreationResult([], []);
 
         var correlationId = Guid.NewGuid().ToString("D");
+        var deletion = await DeleteDocumentsAsync(
+            accountId,
+            correlationId,
+            documentsPayload,
+            cancellationToken);
+
+        return await CreateAndVerifyDocumentsAsync(
+            accountId,
+            mainCounterpartyId,
+            correlationId,
+            deletion.ReadyToCreatePayloads,
+            deletion.FailedDocuments,
+            cancellationToken);
+    }
+
+    public async Task<FactureOutDocumentDeletionResult> DeleteDocumentsAsync(
+        Guid accountId,
+        string correlationId,
+        IReadOnlyList<FactureOutPayload> documentsPayload,
+        CancellationToken cancellationToken)
+    {
+        ValidatePayloadInput(accountId, documentsPayload);
+        if (documentsPayload.Count == 0)
+            return new FactureOutDocumentDeletionResult([], []);
+
         var deleteResults = await _gateway.DeleteBatchAsync(
             accountId,
             correlationId,
             documentsPayload.Select(item => item.SourceDocumentId).ToArray(),
             cancellationToken);
-
         var deleteResultsById = deleteResults
             .GroupBy(result => result.SourceDocumentId)
             .ToDictionary(group => group.Key, group => group.ToArray());
@@ -81,11 +109,25 @@ public sealed class FactureOutDocumentRecreationService : IFactureOutDocumentRec
             readyToCreate.Add(payload);
         }
 
+        return new FactureOutDocumentDeletionResult(readyToCreate, failed);
+    }
+
+    public async Task<FactureOutDocumentRecreationResult> CreateAndVerifyDocumentsAsync(
+        Guid accountId,
+        Guid mainCounterpartyId,
+        string correlationId,
+        IReadOnlyList<FactureOutPayload> documentsPayload,
+        IReadOnlyList<FactureOutFailedDocumentResult> deletionFailures,
+        CancellationToken cancellationToken)
+    {
+        ValidateInput(accountId, mainCounterpartyId, documentsPayload);
+
         var transferredDocumentIds = new Dictionary<Guid, Guid>();
-        if (readyToCreate.Count > 0)
+        var failed = new List<FactureOutFailedDocumentResult>(deletionFailures);
+        if (documentsPayload.Count > 0)
         {
-            var createResponse = await CreateBatchAsync(accountId, correlationId, readyToCreate, cancellationToken);
-            var verification = _verifier.Verify(readyToCreate, createResponse);
+            var createResponse = await CreateBatchAsync(accountId, correlationId, documentsPayload, cancellationToken);
+            var verification = _verifier.Verify(documentsPayload, createResponse);
             foreach (var created in verification.CreatedDocumentIds)
                 transferredDocumentIds.Add(created.Key, created.Value);
 
@@ -154,10 +196,17 @@ public sealed class FactureOutDocumentRecreationService : IFactureOutDocumentRec
         Guid mainCounterpartyId,
         IReadOnlyList<FactureOutPayload> documentsPayload)
     {
-        if (accountId == Guid.Empty)
-            throw new ArgumentException("A non-empty account id is required.", nameof(accountId));
         if (mainCounterpartyId == Guid.Empty)
             throw new ArgumentException("A non-empty main counterparty id is required.", nameof(mainCounterpartyId));
+        ValidatePayloadInput(accountId, documentsPayload);
+    }
+
+    private static void ValidatePayloadInput(
+        Guid accountId,
+        IReadOnlyList<FactureOutPayload> documentsPayload)
+    {
+        if (accountId == Guid.Empty)
+            throw new ArgumentException("A non-empty account id is required.", nameof(accountId));
         if (documentsPayload.Count > MoySkladFactureOutGateway.BatchSize)
             throw new ArgumentOutOfRangeException(
                 nameof(documentsPayload),

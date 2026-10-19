@@ -76,11 +76,11 @@ async function loadDocumentsInOperation() {
   documentsError.value = null
 
   try {
-    const response = await getMergeJobDocumentsInOperation(mergeJobId, { signal: controller.signal })
+    const rows = await getMergeJobDocumentsInOperation(mergeJobId, { signal: controller.signal })
     if (requestVersion !== documentsRequestVersion || props.job?.id !== mergeJobId) {
       return
     }
-    documentsInOperation.value = Array.isArray(response.data) ? response.data : []
+    documentsInOperation.value = Array.isArray(rows) ? rows : []
   } catch (error) {
     if (requestVersion !== documentsRequestVersion || controller.signal.aborted) {
       return

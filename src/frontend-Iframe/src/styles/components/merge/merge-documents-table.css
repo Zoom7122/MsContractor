@@ -76,6 +76,15 @@
   overflow-wrap: anywhere;
 }
 
+.merge-documents__document-link {
+  color: var(--app-color-primary);
+  text-decoration: none;
+}
+
+.merge-documents__document-link:hover {
+  text-decoration: underline;
+}
+
 .merge-documents__new-link {
   color: var(--app-color-primary);
   text-decoration: none;

@@ -47,6 +47,14 @@ test('links recreated document ids using their document type', () => {
   )
 })
 
+test('accepts MoySklad UUIDs with non-RFC version and variant bits', () => {
+  const id = '857f803f-cbbc-11f1-0a80-1f6b00e7c5b6'
+  assert.equal(
+    moySkladDocumentUrl('commissionreportout', id),
+    `https://online.moysklad.ru/app/#commissionreportout/edit?id=${id}`
+  )
+})
+
 test('uses factureout type for related documents returned during purchase return recreation', () => {
   const newDocumentId = '123e4567-e89b-42d3-a456-426614174001'
   const groups = normalizeDocumentsInOperation([{

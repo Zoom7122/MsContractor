@@ -95,6 +95,10 @@ function rowClassName({ row }) {
 function newDocumentUrl(row) {
   return moySkladDocumentUrl(row.type, row.newDocumentId)
 }
+
+function documentUrl(row) {
+  return moySkladDocumentUrl(row.type, row.id)
+}
 </script>
 
 <template>
@@ -125,7 +129,16 @@ function newDocumentUrl(row) {
       <el-table-column label="Документ" min-width="140">
         <template #default="{ row }">
           <div class="merge-documents__doc">
-            <span class="merge-documents__number">№ {{ row.name || row.id || '—' }}</span>
+            <a
+              v-if="documentUrl(row)"
+              class="merge-documents__number merge-documents__document-link"
+              :href="documentUrl(row)"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              № {{ row.name || row.id || '—' }}
+            </a>
+            <span v-else class="merge-documents__number">№ {{ row.name || row.id || '—' }}</span>
             <span class="merge-documents__doc-meta app-meta">{{ formatDateTime(row.moment) }}<template v-if="row.stateName"> · {{ row.stateName }}</template></span>
           </div>
         </template>

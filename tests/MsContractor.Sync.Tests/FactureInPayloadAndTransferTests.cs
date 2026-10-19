@@ -133,6 +133,10 @@ public sealed class FactureInDocumentTransferServiceTests
         var result = await service.TransferAsync(successful.AccountId, [successful, deleteFailed], CancellationToken.None);
 
         Assert.Equal([successful.SourceFactureInId], result.TransferredDocumentIds);
+        var transferred = Assert.Single(result.TransferredDocuments);
+        Assert.Equal(successful.SourceFactureInId, transferred.SourceDocumentId);
+        Assert.NotEqual(Guid.Empty, transferred.NewDocumentId);
+        Assert.Empty(result.UnCreatedButDeleted);
         Assert.Equal("Completed", successful.Stage);
         Assert.Equal("DeleteFailed", deleteFailed.Stage);
         Assert.Single(gateway.CreateRequests);
@@ -152,6 +156,9 @@ public sealed class FactureInDocumentTransferServiceTests
         var failed = Assert.Single(result.FailedDocuments);
         Assert.Equal("FACTUREIN_RESPONSE_MAPPING_FAILED", failed.ErrorCode);
         Assert.Equal("ResponseMappingFailed", item.Stage);
+        var unCreated = Assert.Single(result.UnCreatedButDeleted);
+        Assert.Equal(item.SourceFactureInId, unCreated.SourceDocumentId);
+        Assert.Equal("Failed", unCreated.Status);
     }
 
     private static FactureInRecreationItem Item(string stage) => new()

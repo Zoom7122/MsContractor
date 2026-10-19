@@ -227,14 +227,12 @@ public sealed class MergeProcessor(
 
         var createdWithError = response.CreatedWithErrors!.FirstOrDefault();
         var unCreatedButDeleted = response.UnCreatedButDeleted!.FirstOrDefault();
-        var skipped = response.SkippedDocuments!.FirstOrDefault();
-        if (createdWithError is not null || unCreatedButDeleted is not null || skipped is not null)
+        if (response.CreatedWithErrors!.Count + response.UnCreatedButDeleted!.Count > 0)
         {
             throw new MergeEgressException(
-                createdWithError?.ErrorCode ?? unCreatedButDeleted?.ErrorCode ?? skipped?.ErrorCode ??
-                "SALESRETURN_RECREATION_INCOMPLETE",
-                createdWithError?.Error ?? unCreatedButDeleted?.Error ?? skipped?.Error ??
-                "Salesreturn recreation skipped or failed one or more documents.",
+                unCreatedButDeleted?.ErrorCode ?? createdWithError?.ErrorCode ?? "SALESRETURN_RECREATION_INCOMPLETE",
+                unCreatedButDeleted?.Error ?? createdWithError?.Error ??
+                "Salesreturn recreation left a deleted source document without a successful replacement or returned a created document with errors.",
                 400);
         }
     }
@@ -337,13 +335,21 @@ public sealed class MergeProcessor(
         ValidatePurchaseReturnResponse(purchaseReturns.Select(item => item.DocumentId).ToArray(), response);
         var returnIds = response.RecreatedPurchaseReturns.ToDictionary(item => item.SourceDocumentId, item => item.NewDocumentId);
         var invoiceIds = response.RecreatedFactureOuts.ToDictionary(item => item.SourceDocumentId, item => item.NewDocumentId);
+        var unCreatedButDeletedIds = response.UnCreatedButDeleted!
+            .Select(item => item.SourceDocumentId)
+            .ToHashSet();
         var changedRows = rows.Where(row =>
             row.DocumentType == "purchasereturn" && returnIds.ContainsKey(row.DocumentId) ||
             row.DocumentType == "factureout" && invoiceIds.ContainsKey(row.DocumentId)).ToArray();
-        if (changedRows.Length > 0)
+        var removedRows = rows.Where(row =>
+            row.DocumentType == "purchasereturn" && unCreatedButDeletedIds.Contains(row.DocumentId)).ToArray();
+        if (changedRows.Length > 0 || removedRows.Length > 0)
         {
             await documentSnapshots.ReplaceDocumentRowsAsync(job.AccountId,
-                changedRows.Select(row => row.DocumentId).ToArray(),
+                changedRows.Select(row => row.DocumentId)
+                    .Concat(removedRows.Select(row => row.DocumentId))
+                    .Distinct()
+                    .ToArray(),
                 changedRows.Select(row => new CounterpartyDocument
                 {
                     AccountId = job.AccountId,
@@ -354,12 +360,15 @@ public sealed class MergeProcessor(
                 }).ToArray(), cancellationToken);
         }
 
-        if (!response.TransferredDocumentIds.ToHashSet().SetEquals(purchaseReturns.Select(item => item.DocumentId)))
+        var createdWithErrors = response.CreatedWithErrors ?? [];
+        var unCreatedButDeleted = response.UnCreatedButDeleted ?? [];
+        if (createdWithErrors.Count + unCreatedButDeleted.Count > 0)
         {
-            var failed = response.CreatedWithErrors?.FirstOrDefault();
-            var skipped = response.SkippedDocuments?.FirstOrDefault();
-            throw new MergeEgressException(failed?.ErrorCode ?? skipped?.ErrorCode ?? "PURCHASERETURN_RECREATION_INCOMPLETE",
-                failed?.Error ?? skipped?.Error ?? "Purchasereturn recreation skipped or failed one or more documents.", 400);
+            var failed = createdWithErrors.FirstOrDefault();
+            var unCreated = unCreatedButDeleted.FirstOrDefault();
+            throw new MergeEgressException(unCreated?.ErrorCode ?? failed?.ErrorCode ?? "PURCHASERETURN_RECREATION_INCOMPLETE",
+                unCreated?.Error ?? failed?.Error ??
+                "Purchasereturn recreation left a deleted source document without a successful replacement or returned a created document with errors.", 400);
         }
     }
 
@@ -367,20 +376,25 @@ public sealed class MergeProcessor(
     {
         static MergeEgressException Invalid() => new(MergeEgressException.PurchaseReturnUnknownResult,
             "MoySklad Egress Service returned an inconsistent purchasereturn recreation response; the remote result is unknown.", 502);
-        if (response is null || response.TransferredDocumentIds is null || response.SkippedDocumentIds is null ||
+        if (response is null || response.TransferredDocumentIds is null || response.TransferredDocuments is null ||
+            response.SkippedDocumentIds is null || response.UnCreatedButDeleted is null ||
             response.RecreatedPurchaseReturns is null || response.RecreatedFactureOuts is null)
             throw Invalid();
         var skipped = response.SkippedDocuments ?? [];
         var failed = response.CreatedWithErrors ?? [];
+        var unCreated = response.UnCreatedButDeleted;
         var requested = requestedIds.ToHashSet();
         if (skipped.Any(item => item is null) || failed.Any(item => item is null) ||
+            unCreated.Any(item => item is null) || response.TransferredDocuments.Any(item => item is null) ||
             response.RecreatedPurchaseReturns.Any(item => item is null) || response.RecreatedFactureOuts.Any(item => item is null))
             throw Invalid();
         var returned = response.TransferredDocumentIds.Concat(response.SkippedDocumentIds)
-            .Concat(failed.Select(item => item.SourceDocumentId)).ToArray();
+            .Concat(failed.Select(item => item.SourceDocumentId))
+            .Concat(unCreated.Select(item => item.SourceDocumentId)).ToArray();
         var createdIds = response.TransferredDocumentIds.Concat(failed.Select(item => item.SourceDocumentId)).ToHashSet();
         var mappings = response.RecreatedPurchaseReturns;
         var invoices = response.RecreatedFactureOuts;
+        var transferredMappings = response.TransferredDocuments;
         if (mappings.Select(item => item.SourceDocumentId).Distinct().Count() != mappings.Count)
             throw Invalid();
         var mappingBySource = mappings.ToDictionary(item => item.SourceDocumentId, item => item.NewDocumentId);
@@ -392,10 +406,16 @@ public sealed class MergeProcessor(
             skipped.Any(item => string.IsNullOrWhiteSpace(item.Status) || item.Status is "Verified" or "NeedsManualReview") ||
             failed.Any(item => item.NewDocumentId == Guid.Empty || string.IsNullOrWhiteSpace(item.Status) ||
                 item.Status is "Verified" or "NeedsManualReview") ||
+            unCreated.Any(item => item.Status != "Failed") ||
+            transferredMappings.Count != response.TransferredDocumentIds.Count ||
+            transferredMappings.Select(item => item.SourceDocumentId).Distinct().Count() != transferredMappings.Count ||
+            !transferredMappings.Select(item => item.SourceDocumentId).ToHashSet().SetEquals(response.TransferredDocumentIds) ||
+            transferredMappings.Any(item => item.NewDocumentId == Guid.Empty || item.NewDocumentId == item.SourceDocumentId) ||
             mappings.Count != createdIds.Count ||
             !mappings.Select(item => item.SourceDocumentId).ToHashSet().SetEquals(createdIds) ||
             mappings.Any(item => item.NewDocumentId == Guid.Empty || item.NewDocumentId == item.SourceDocumentId) ||
             failed.Any(item => !mappingBySource.TryGetValue(item.SourceDocumentId, out var newId) || newId != item.NewDocumentId) ||
+            transferredMappings.Any(item => !mappingBySource.TryGetValue(item.SourceDocumentId, out var newId) || newId != item.NewDocumentId) ||
             invoices.Select(item => item.SourceDocumentId).Distinct().Count() != invoices.Count ||
             invoices.Any(item => item.SourceDocumentId == Guid.Empty || item.NewDocumentId == Guid.Empty || item.NewDocumentId == item.SourceDocumentId ||
                 requested.Contains(item.SourceDocumentId) || !createdIds.Contains(item.SourcePurchaseReturnId)) ||
@@ -446,19 +466,92 @@ public sealed class MergeProcessor(
             "MoySklad Egress Service returned an empty facturein recreation response.",
             "MoySklad Egress Service returned an invalid facturein recreation response.");
 
-        var skipped = response.SkippedDocumentIds.ToHashSet();
-        var failed = response.FailedDocuments?.Select(item => item.SourceDocumentId).ToHashSet() ?? [];
-        var createdWithErrors = response.CreatedWithErrors?.Select(item => item.SourceDocumentId).ToHashSet() ?? [];
-        var transferred = response.TransferredDocumentIds.ToHashSet();
-        if (!transferred.SetEquals(sourceIds) || skipped.Count != 0 || failed.Count != 0 || createdWithErrors.Count != 0)
+        ValidateFactureInResponse(sourceIds, response);
+
+        var createdWithErrors = response.CreatedWithErrors ?? [];
+        var unCreatedButDeleted = response.UnCreatedButDeleted!;
+        var replacements = response.TransferredDocuments!
+            .Select(item => (item.SourceDocumentId, item.NewDocumentId))
+            .Concat(createdWithErrors.Select(item => (item.SourceDocumentId, item.NewDocumentId)))
+            .ToDictionary(item => item.SourceDocumentId, item => item.NewDocumentId);
+        var changedRows = rows.Where(item =>
+            item.DocumentType == "facturein" && replacements.ContainsKey(item.DocumentId)).ToArray();
+        var removedRows = rows.Where(item =>
+            item.DocumentType == "facturein" && unCreatedButDeleted.Any(outcome => outcome.SourceDocumentId == item.DocumentId))
+            .ToArray();
+        if (changedRows.Length > 0 || removedRows.Length > 0)
         {
-            var failedItem = response.FailedDocuments?.FirstOrDefault();
-            var createdWithError = response.CreatedWithErrors?.FirstOrDefault();
+            await documentSnapshots.ReplaceDocumentRowsAsync(
+                job.AccountId,
+                changedRows.Select(item => item.DocumentId)
+                    .Concat(removedRows.Select(item => item.DocumentId))
+                    .Distinct()
+                    .ToArray(),
+                changedRows.Select(item => new CounterpartyDocument
+                {
+                    AccountId = item.AccountId,
+                    CounterpartyId = job.MainCounterpartyId,
+                    DocumentType = item.DocumentType,
+                    DocumentId = replacements[item.DocumentId],
+                    UpdatedAt = DateTimeOffset.UtcNow
+                }).ToArray(),
+                cancellationToken);
+        }
+
+        if (createdWithErrors.Count + unCreatedButDeleted.Count > 0)
+        {
+            var unCreated = unCreatedButDeleted.FirstOrDefault();
+            var createdWithError = createdWithErrors.FirstOrDefault();
             throw new MergeEgressException(
-                failedItem?.ErrorCode ?? createdWithError?.ErrorCode ?? "FACTUREIN_RECREATION_INCOMPLETE",
-                failedItem?.Error ?? createdWithError?.Error ?? "Facturein recreation skipped or failed one or more documents.",
+                unCreated?.ErrorCode ?? createdWithError?.ErrorCode ?? "FACTUREIN_RECREATION_INCOMPLETE",
+                unCreated?.Error ?? createdWithError?.Error ??
+                "Facturein recreation left a deleted source document without a successful replacement or returned a created document with errors.",
                 400);
         }
+    }
+
+    private static void ValidateFactureInResponse(
+        IReadOnlyList<Guid> requestedIds,
+        FactureInRecreationResponse response)
+    {
+        static MergeEgressException Invalid() => new(
+            "EGRESS_INVALID_RESPONSE",
+            "MoySklad Egress Service returned an inconsistent facturein recreation response.",
+            502);
+
+        if (response is null || response.TransferredDocumentIds is null || response.TransferredDocuments is null ||
+            response.SkippedDocumentIds is null || response.UnCreatedButDeleted is null)
+            throw Invalid();
+
+        var transferred = response.TransferredDocumentIds;
+        var skipped = response.SkippedDocumentIds;
+        var transferredDetails = response.TransferredDocuments;
+        var skippedDetails = response.SkippedDocuments ?? [];
+        var createdWithErrors = response.CreatedWithErrors ?? [];
+        var unCreatedButDeleted = response.UnCreatedButDeleted;
+        if (transferredDetails.Any(item => item is null) || skippedDetails.Any(item => item is null) ||
+            createdWithErrors.Any(item => item is null) || unCreatedButDeleted.Any(item => item is null))
+            throw Invalid();
+
+        var requested = requestedIds.ToHashSet();
+        var outcomeIds = transferred.Concat(skipped)
+            .Concat(createdWithErrors.Select(item => item.SourceDocumentId))
+            .Concat(unCreatedButDeleted.Select(item => item.SourceDocumentId))
+            .ToArray();
+        var skippedDetailIds = skippedDetails.Select(item => item.DocumentId).ToArray();
+        if (outcomeIds.Length != requested.Count || outcomeIds.Distinct().Count() != outcomeIds.Length ||
+            !outcomeIds.ToHashSet().SetEquals(requested) ||
+            transferred.Any(item => item == Guid.Empty) || skipped.Any(item => item == Guid.Empty) ||
+            skippedDetailIds.Length != skipped.Count || skippedDetailIds.Distinct().Count() != skippedDetailIds.Length ||
+            !skippedDetailIds.ToHashSet().SetEquals(skipped) ||
+            transferredDetails.Count != transferred.Count ||
+            transferredDetails.Select(item => item.SourceDocumentId).Distinct().Count() != transferredDetails.Count ||
+            !transferredDetails.Select(item => item.SourceDocumentId).ToHashSet().SetEquals(transferred) ||
+            transferredDetails.Any(item => item.SourceDocumentId == Guid.Empty || item.NewDocumentId == Guid.Empty ||
+                                           item.NewDocumentId == item.SourceDocumentId) ||
+            createdWithErrors.Any(item => item.NewDocumentId == Guid.Empty || item.Status != "CreatedWithError") ||
+            unCreatedButDeleted.Any(item => item.Status != "Failed"))
+            throw Invalid();
     }
 
     private static async Task RecreateFactureOutsAsync(
@@ -505,18 +598,46 @@ public sealed class MergeProcessor(
 
         ValidateFactureOutResponse(sourceIds, response);
 
-        if (response.TransferredDocumentIds.ToHashSet().SetEquals(sourceIds))
-            return;
+        var createdWithErrors = response.CreatedWithErrors;
+        var unCreatedButDeleted = response.UnCreatedButDeleted;
+        var replacements = response.TransferredDocuments
+            .Select(item => (item.SourceDocumentId, item.NewDocumentId))
+            .Concat(createdWithErrors.Select(item => (item.SourceDocumentId, item.NewDocumentId)))
+            .ToDictionary(item => item.SourceDocumentId, item => item.NewDocumentId);
+        var changedRows = rows.Where(item =>
+            item.DocumentType == "factureout" && replacements.ContainsKey(item.DocumentId)).ToArray();
+        var removedRows = rows.Where(item =>
+            item.DocumentType == "factureout" && unCreatedButDeleted.Any(outcome => outcome.SourceDocumentId == item.DocumentId))
+            .ToArray();
+        if (changedRows.Length > 0 || removedRows.Length > 0)
+        {
+            await documentSnapshots.ReplaceDocumentRowsAsync(
+                job.AccountId,
+                changedRows.Select(item => item.DocumentId)
+                    .Concat(removedRows.Select(item => item.DocumentId))
+                    .Distinct()
+                    .ToArray(),
+                changedRows.Select(item => new CounterpartyDocument
+                {
+                    AccountId = item.AccountId,
+                    CounterpartyId = job.MainCounterpartyId,
+                    DocumentType = item.DocumentType,
+                    DocumentId = replacements[item.DocumentId],
+                    UpdatedAt = DateTimeOffset.UtcNow
+                }).ToArray(),
+                cancellationToken);
+        }
 
-        var failed = response.FailedDocuments.FirstOrDefault();
-        var createdWithError = response.CreatedWithErrors.FirstOrDefault();
-        var skipped = response.SkippedDocuments.FirstOrDefault();
-        throw new MergeEgressException(
-            failed?.ErrorCode ?? createdWithError?.ErrorCode ?? skipped?.ErrorCode ??
-            "FACTUREOUT_RECREATION_INCOMPLETE",
-            failed?.Error ?? createdWithError?.Error ?? skipped?.Error ??
-            "Factureout recreation skipped or failed one or more documents.",
-            400);
+        if (createdWithErrors.Count + unCreatedButDeleted.Count > 0)
+        {
+            var unCreated = unCreatedButDeleted.FirstOrDefault();
+            var createdWithError = createdWithErrors.FirstOrDefault();
+            throw new MergeEgressException(
+                unCreated?.ErrorCode ?? createdWithError?.ErrorCode ?? "FACTUREOUT_RECREATION_INCOMPLETE",
+                unCreated?.Error ?? createdWithError?.Error ??
+                "Factureout recreation left a deleted source document without a successful replacement or returned a created document with errors.",
+                400);
+        }
     }
 
     private static void ValidateFactureOutResponse(
@@ -527,12 +648,21 @@ public sealed class MergeProcessor(
             throw InvalidFactureOutResponse();
 
         var transferred = response.TransferredDocumentIds;
+        var transferredDocuments = response.TransferredDocuments;
         var skippedIds = response.SkippedDocumentIds;
         var skippedDocuments = response.SkippedDocuments;
         var createdWithErrors = response.CreatedWithErrors;
-        var failedDocuments = response.FailedDocuments;
-        if (transferred is null || skippedIds is null || skippedDocuments is null ||
-            createdWithErrors is null || failedDocuments is null)
+        var unCreatedButDeleted = response.UnCreatedButDeleted;
+        if (transferred is null || transferredDocuments is null || skippedIds is null || skippedDocuments is null ||
+            createdWithErrors is null || unCreatedButDeleted is null)
+        {
+            throw InvalidFactureOutResponse();
+        }
+
+        if (transferredDocuments.Any(item => item is null) ||
+            skippedDocuments.Any(item => item is null) ||
+            createdWithErrors.Any(item => item is null) ||
+            unCreatedButDeleted.Any(item => item is null))
         {
             throw InvalidFactureOutResponse();
         }
@@ -540,7 +670,7 @@ public sealed class MergeProcessor(
         var returnedIds = transferred
             .Concat(skippedIds)
             .Concat(createdWithErrors.Select(item => item.SourceDocumentId))
-            .Concat(failedDocuments.Select(item => item.SourceDocumentId))
+            .Concat(unCreatedButDeleted.Select(item => item.SourceDocumentId))
             .ToArray();
         var requested = requestedIds.ToHashSet();
         var skippedDetailIds = skippedDocuments.Select(item => item.DocumentId).ToArray();
@@ -551,8 +681,13 @@ public sealed class MergeProcessor(
             skippedDetailIds.Distinct().Count() != skippedDetailIds.Length ||
             !skippedDetailIds.ToHashSet().SetEquals(skippedIds) ||
             skippedDocuments.Any(item => item.Status != "Skipped") ||
-            createdWithErrors.Any(item => item.Status != "CreatedWithErrors") ||
-            failedDocuments.Any(item => item.Status != "Failed"))
+            transferredDocuments.Count != transferred.Count ||
+            transferredDocuments.Select(item => item.SourceDocumentId).Distinct().Count() != transferredDocuments.Count ||
+            !transferredDocuments.Select(item => item.SourceDocumentId).ToHashSet().SetEquals(transferred) ||
+            transferredDocuments.Any(item => item.SourceDocumentId == Guid.Empty || item.NewDocumentId == Guid.Empty ||
+                                              item.NewDocumentId == item.SourceDocumentId) ||
+            createdWithErrors.Any(item => item.Status != "CreatedWithError" || item.NewDocumentId == Guid.Empty) ||
+            unCreatedButDeleted.Any(item => item.Status != "Failed"))
         {
             throw InvalidFactureOutResponse();
         }

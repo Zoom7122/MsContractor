@@ -68,17 +68,24 @@ public sealed class InternalFactureInsControllerTests
                     "Failed",
                     "FACTUREIN_CREATE_FAILED",
                     "MoySklad rejected facturein creation.")])
+            {
+                TransferredDocuments = [new DocumentRecreationTransferredDocumentResult(
+                    transferredId, Guid.NewGuid())],
+                UnCreatedButDeleted = [new DocumentRecreationUnCreatedButDeletedResult(
+                    creationFailedSourceId, "Failed", "FACTUREIN_CREATE_FAILED", "MoySklad rejected facturein creation.")]
+            }
         };
         var controller = Controller(orchestrator, authorized: true);
 
         var result = await controller.RecreateAsync(
             Guid.NewGuid(),
-            new FactureInRecreationRequest(Guid.NewGuid(), [transferredId, skippedId, failedSourceId]),
+            new FactureInRecreationRequest(Guid.NewGuid(), [transferredId, skippedId, failedSourceId, creationFailedSourceId]),
             CancellationToken.None);
 
         var response = Assert.IsType<AcceptedResult>(result);
         var body = Assert.IsType<FactureInRecreationResponse>(response.Value);
         Assert.Equal([transferredId], body.TransferredDocumentIds);
+        Assert.Equal(transferredId, Assert.Single(body.TransferredDocuments).SourceDocumentId);
         Assert.Equal([skippedId], body.SkippedDocumentIds);
         var skipped = Assert.Single(body.SkippedDocuments!);
         Assert.Equal(skippedId, skipped.DocumentId);
@@ -89,6 +96,9 @@ public sealed class InternalFactureInsControllerTests
         Assert.Equal(failedNewId, createdWithError.NewDocumentId);
         Assert.Equal("FACTUREIN_RELATIONS_REATTACH_FAILED", createdWithError.ErrorCode);
         Assert.DoesNotContain(failedSourceId, body.TransferredDocumentIds);
+        var unCreated = Assert.Single(body.UnCreatedButDeleted);
+        Assert.Equal(creationFailedSourceId, unCreated.SourceDocumentId);
+        Assert.Equal("Failed", unCreated.Status);
         var creationFailed = Assert.Single(body.FailedDocuments!);
         Assert.Equal(creationFailedSourceId, creationFailed.SourceDocumentId);
         Assert.Equal(creationSyncId, creationFailed.NewSyncId);

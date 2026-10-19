@@ -69,6 +69,7 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
             .ToList();
 
         var createdDocuments = new List<PurchaseReturnVerificationInput>();
+        var unCreatedButDeleted = new List<DocumentRecreationUnCreatedButDeletedResult>();
         var recreatedFactureOuts = new List<RecreatedPurchaseReturnFactureOut>();
         var skippedFactureOuts = new List<FactureOutSkippedDocumentResult>();
         PurchaseReturnVerificationResult Result() => new(results)
@@ -76,7 +77,8 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
             RecreatedPurchaseReturns = createdDocuments.Select(item =>
                 new RecreatedPurchaseReturn(item.SourceDocumentId, item.NewDocumentId)).ToArray(),
             RecreatedFactureOuts = recreatedFactureOuts,
-            SkippedFactureOuts = skippedFactureOuts
+            SkippedFactureOuts = skippedFactureOuts,
+            UnCreatedButDeleted = unCreatedButDeleted
         };
 
         LogSkipped(preparation, accountId);
@@ -216,6 +218,12 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
 
             var createPrepared = batchItems.Where(item => deleted.Contains(item.SourceDocumentId)).ToArray();
             var createResult = await CreateWithRetryAsync(accountId, createPrepared, createItems, cancellationToken);
+            unCreatedButDeleted.AddRange(createResult.Failed.Select(item =>
+                new DocumentRecreationUnCreatedButDeletedResult(
+                    item.SourceDocumentId,
+                    "Failed",
+                    item.ErrorCode,
+                    item.Error)));
             results.AddRange(createResult.Failed.Select(item => Failed(
                 item.SourceDocumentId,
                 "CreateFailed",

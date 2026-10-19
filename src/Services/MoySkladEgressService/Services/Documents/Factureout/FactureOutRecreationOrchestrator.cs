@@ -40,6 +40,9 @@ public sealed class FactureOutRecreationOrchestrator : IFactureOutRecreationOrch
 
         var skipped = new List<FactureOutSkippedDocumentResult>(preparation.SkippedDocuments);
         var transferredDocumentIds = new List<Guid>();
+        var transferredDocuments = new List<DocumentRecreationTransferredDocumentResult>();
+        var createdWithErrors = new List<FactureOutCreatedWithErrorResult>();
+        var unCreatedButDeleted = new List<DocumentRecreationUnCreatedButDeletedResult>();
         var failedDocuments = new List<FactureOutFailedDocumentResult>();
         foreach (var batch in preparation.DocumentIds.Chunk(1000))
         {
@@ -60,14 +63,26 @@ public sealed class FactureOutRecreationOrchestrator : IFactureOutRecreationOrch
                 documentsPayload.Payloads,
                 cancellationToken);
             transferredDocumentIds.AddRange(recreation.TransferredDocumentIds);
+            transferredDocuments.AddRange(recreation.TransferredDocuments);
+            skipped.AddRange(recreation.SkippedDocuments);
+            createdWithErrors.AddRange(recreation.CreatedWithErrors);
+            unCreatedButDeleted.AddRange(recreation.UnCreatedButDeleted);
             failedDocuments.AddRange(recreation.FailedDocuments);
         }
 
         return new FactureOutRecreationResult(
-            transferredDocumentIds,
+            transferredDocumentIds.Distinct().ToArray(),
             skipped,
-            [],
-            failedDocuments);
+            createdWithErrors,
+            failedDocuments)
+        {
+            TransferredDocuments = transferredDocuments
+                .DistinctBy(item => item.SourceDocumentId)
+                .ToArray(),
+            UnCreatedButDeleted = unCreatedButDeleted
+                .DistinctBy(item => item.SourceDocumentId)
+                .ToArray()
+        };
     }
 
     private Task<FactureOutPayloadBuildResult> BuildBatchAsync(

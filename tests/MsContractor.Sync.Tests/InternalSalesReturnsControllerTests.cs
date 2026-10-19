@@ -26,13 +26,14 @@ public sealed class InternalSalesReturnsControllerTests
             CancellationToken.None);
 
         var response = Assert.IsType<OkObjectResult>(result);
-        var body = Assert.IsType<SalesReturnRecreationResult>(response.Value);
+        var body = Assert.IsType<SalesReturnRecreationResponse>(response.Value);
         Assert.Equal(accountId, service.AccountId);
         Assert.Equal(mainAgentId, service.MainAgentId);
         Assert.Equal(documentIds, service.DocumentIds);
         Assert.Equal(documentIds, body.TransferredDocumentIds);
-        Assert.Equal(documentIds, body.TransferredDocuments.Select(item => item.SourceDocumentId));
-        Assert.Equal(body.OperationId.ToString("D"), controller.Response.Headers[InternalApiHeaders.CorrelationId]);
+        Assert.Equal(documentIds, body.TransferredDocuments!.Select(item => item.SourceDocumentId));
+        Assert.True(Guid.TryParse(controller.Response.Headers[InternalApiHeaders.CorrelationId], out var operationId));
+        Assert.NotEqual(Guid.Empty, operationId);
 
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(body, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         var root = json.RootElement;
@@ -97,8 +98,8 @@ public sealed class InternalSalesReturnsControllerTests
 
         var response = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status207MultiStatus, response.StatusCode);
-        var body = Assert.IsType<SalesReturnRecreationResult>(response.Value);
-        var document = Assert.Single(body.SkippedDocuments);
+        var body = Assert.IsType<SalesReturnRecreationResponse>(response.Value);
+        var document = Assert.Single(body.SkippedDocuments!);
         Assert.Equal(skippedId, document.DocumentId);
         Assert.Equal("Skipped", document.Status);
         Assert.Equal("SALESRETURN_FACTURE_OUT_PRESENT", document.ErrorCode);

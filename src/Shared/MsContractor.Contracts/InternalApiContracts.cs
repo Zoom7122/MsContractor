@@ -79,9 +79,19 @@ public sealed record PurchaseReturnRecreationResponse(
     IReadOnlyList<PurchaseReturnSkippedDocumentResponse>? SkippedDocuments = null,
     IReadOnlyList<PurchaseReturnCreatedWithErrorResponse>? CreatedWithErrors = null)
 {
+    public IReadOnlyList<DocumentRecreationTransferredDocumentResponse> TransferredDocuments { get; init; } = [];
+    public IReadOnlyList<DocumentRecreationUnCreatedButDeletedResponse> UnCreatedButDeleted { get; init; } = [];
     public IReadOnlyList<RecreatedPurchaseReturnResponse> RecreatedPurchaseReturns { get; init; } = [];
     public IReadOnlyList<RecreatedPurchaseReturnFactureOutResponse> RecreatedFactureOuts { get; init; } = [];
 }
+
+public sealed record DocumentRecreationTransferredDocumentResponse(Guid SourceDocumentId, Guid NewDocumentId);
+
+public sealed record DocumentRecreationUnCreatedButDeletedResponse(
+    Guid SourceDocumentId,
+    string Status,
+    string? ErrorCode,
+    string? Error);
 
 public sealed record RecreatedPurchaseReturnResponse(Guid SourceDocumentId, Guid NewDocumentId);
 
@@ -108,7 +118,11 @@ public sealed record FactureInRecreationResponse(
     IReadOnlyList<Guid> SkippedDocumentIds,
     IReadOnlyList<FactureInSkippedDocumentResponse>? SkippedDocuments = null,
     IReadOnlyList<FactureInCreatedWithErrorResponse>? CreatedWithErrors = null,
-    IReadOnlyList<FactureInFailedDocumentResponse>? FailedDocuments = null);
+    IReadOnlyList<FactureInFailedDocumentResponse>? FailedDocuments = null)
+{
+    public IReadOnlyList<DocumentRecreationTransferredDocumentResponse> TransferredDocuments { get; init; } = [];
+    public IReadOnlyList<DocumentRecreationUnCreatedButDeletedResponse> UnCreatedButDeleted { get; init; } = [];
+}
 
 public sealed record FactureInSkippedDocumentResponse(
     Guid DocumentId,
@@ -136,7 +150,11 @@ public sealed record FactureOutRecreationResponse(
     IReadOnlyList<Guid> SkippedDocumentIds,
     IReadOnlyList<FactureOutSkippedDocumentResponse> SkippedDocuments,
     IReadOnlyList<FactureOutCreatedWithErrorResponse> CreatedWithErrors,
-    IReadOnlyList<FactureOutFailedDocumentResponse> FailedDocuments);
+    IReadOnlyList<FactureOutFailedDocumentResponse> FailedDocuments)
+{
+    public IReadOnlyList<DocumentRecreationTransferredDocumentResponse> TransferredDocuments { get; init; } = [];
+    public IReadOnlyList<DocumentRecreationUnCreatedButDeletedResponse> UnCreatedButDeleted { get; init; } = [];
+}
 
 public sealed record FactureOutSkippedDocumentResponse(
     Guid DocumentId,

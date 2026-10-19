@@ -161,6 +161,13 @@ public sealed class FactureOutDocumentRecreationServiceTests
             gateway.CreateCorrelationIds[1]);
         Assert.Equal(gateway.DeleteCorrelationId, gateway.CreateCorrelationIds[0]);
         Assert.Equal([first.SourceDocumentId], result.TransferredDocumentIds);
+        var transferred = Assert.Single(result.TransferredDocuments);
+        Assert.Equal(first.SourceDocumentId, transferred.SourceDocumentId);
+        Assert.Equal(newDocumentId, transferred.NewDocumentId);
+        Assert.Contains(result.SkippedDocuments, item => item.DocumentId == deleteRejected.SourceDocumentId);
+        var unCreated = Assert.Single(result.UnCreatedButDeleted);
+        Assert.Equal(createRejected.SourceDocumentId, unCreated.SourceDocumentId);
+        Assert.Equal("Failed", unCreated.Status);
         Assert.Collection(
             result.FailedDocuments,
             item =>

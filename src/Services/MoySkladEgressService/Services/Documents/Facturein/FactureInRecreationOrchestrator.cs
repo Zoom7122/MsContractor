@@ -56,11 +56,48 @@ public sealed class FactureInRecreationOrchestrator : IFactureInRecreationOrches
             preparation.Documents.Count,
             preparation.SkippedDocuments.Count + payloads.SkippedDocuments.Count);
 
+        var failedDocuments = payloads.FailedDocuments.Concat(transfer.FailedDocuments).ToArray();
+        var unCreatedButDeleted = payloads.UnCreatedButDeleted
+            .Concat(transfer.UnCreatedButDeleted)
+            .DistinctBy(item => item.SourceDocumentId)
+            .ToArray();
+        var unCreatedIds = unCreatedButDeleted.Select(item => item.SourceDocumentId).ToHashSet();
+        var createdWithErrors = payloads.CreatedWithErrors
+            .Concat(transfer.CreatedWithErrors)
+            .DistinctBy(item => item.SourceDocumentId)
+            .ToArray();
+        var createdWithErrorIds = createdWithErrors.Select(item => item.SourceDocumentId).ToHashSet();
+        var transferredDocuments = payloads.CompletedDocuments
+            .Where(item => item.NewFactureInId is not null)
+            .Select(item => new DocumentRecreationTransferredDocumentResult(
+                item.SourceFactureInId,
+                item.NewFactureInId!.Value))
+            .Concat(transfer.TransferredDocuments)
+            .DistinctBy(item => item.SourceDocumentId)
+            .ToArray();
+        var transferredIds = transferredDocuments.Select(item => item.SourceDocumentId).ToHashSet();
+        var skippedDocuments = preparation.SkippedDocuments
+            .Concat(payloads.SkippedDocuments)
+            .Concat(failedDocuments
+                .Where(item => !transferredIds.Contains(item.SourceDocumentId) &&
+                               !createdWithErrorIds.Contains(item.SourceDocumentId) &&
+                               !unCreatedIds.Contains(item.SourceDocumentId))
+                .Select(item => new FactureInSkippedDocumentResult(
+                    item.SourceDocumentId,
+                    "Skipped",
+                    item.ErrorCode,
+                    item.Error)))
+            .DistinctBy(item => item.DocumentId)
+            .ToArray();
+
         return new FactureInRecreationResult(
-            payloads.CompletedDocuments.Select(item => item.SourceFactureInId)
-                .Concat(transfer.TransferredDocumentIds).Distinct().ToArray(),
-            preparation.SkippedDocuments.Concat(payloads.SkippedDocuments).ToArray(),
-            [],
-            payloads.FailedDocuments.Concat(transfer.FailedDocuments).ToArray());
+            transferredDocuments.Select(item => item.SourceDocumentId).ToArray(),
+            skippedDocuments,
+            createdWithErrors,
+            failedDocuments)
+        {
+            TransferredDocuments = transferredDocuments,
+            UnCreatedButDeleted = unCreatedButDeleted
+        };
     }
 }

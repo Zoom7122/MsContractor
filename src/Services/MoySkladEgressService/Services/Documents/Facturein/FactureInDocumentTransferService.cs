@@ -8,7 +8,12 @@ namespace MsContractor.MoySkladEgressService.Services.Documents.Facturein;
 
 public sealed record FactureInTransferResult(
     IReadOnlyList<Guid> TransferredDocumentIds,
-    IReadOnlyList<FactureInFailedDocumentResult> FailedDocuments);
+    IReadOnlyList<FactureInFailedDocumentResult> FailedDocuments)
+{
+    public IReadOnlyList<DocumentRecreationTransferredDocumentResult> TransferredDocuments { get; init; } = [];
+    public IReadOnlyList<FactureInCreatedWithErrorResult> CreatedWithErrors { get; init; } = [];
+    public IReadOnlyList<DocumentRecreationUnCreatedButDeletedResult> UnCreatedButDeleted { get; init; } = [];
+}
 
 public interface IFactureInDocumentTransferService
 {
@@ -43,11 +48,40 @@ public sealed class FactureInDocumentTransferService : IFactureInDocumentTransfe
                      .Chunk(MoySkladFactureInGateway.BatchSize))
             await CreateAsync(accountId, batch, cancellationToken);
 
+        var failedDocuments = documents
+            .Where(item => item.Stage is "DeleteFailed" or "CreateFailed" or "ResponseMappingFailed")
+            .Select(ToFailed)
+            .ToArray();
         return new FactureInTransferResult(
             documents.Where(item => item.Stage == "Completed")
                 .Select(item => item.SourceFactureInId).ToArray(),
-            documents.Where(item => item.Stage is "DeleteFailed" or "CreateFailed" or "ResponseMappingFailed")
-                .Select(ToFailed).ToArray());
+            failedDocuments)
+        {
+            TransferredDocuments = documents
+                .Where(item => item.Stage == "Completed" && item.NewFactureInId is not null)
+                .Select(item => new DocumentRecreationTransferredDocumentResult(
+                    item.SourceFactureInId,
+                    item.NewFactureInId!.Value))
+                .ToArray(),
+            CreatedWithErrors = documents
+                .Where(item => (item.Stage is "CreateFailed" or "ResponseMappingFailed") && item.NewFactureInId is not null)
+                .Select(item => new FactureInCreatedWithErrorResult(
+                    item.SourceFactureInId,
+                    item.NewFactureInId!.Value,
+                    "CreatedWithError",
+                    item.ErrorCode,
+                    item.Error))
+                .ToArray(),
+            UnCreatedButDeleted = documents
+                .Where(item => item.NewFactureInId is null &&
+                               (item.Stage is "CreateFailed" or "ResponseMappingFailed"))
+                .Select(item => new DocumentRecreationUnCreatedButDeletedResult(
+                    item.SourceFactureInId,
+                    "Failed",
+                    item.ErrorCode,
+                    item.Error))
+                .ToArray()
+        };
     }
 
     private async Task DeleteAsync(Guid accountId, IReadOnlyList<FactureInRecreationItem> batch,

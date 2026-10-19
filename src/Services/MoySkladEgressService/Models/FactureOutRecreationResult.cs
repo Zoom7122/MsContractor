@@ -4,7 +4,11 @@ public sealed record FactureOutRecreationResult(
     IReadOnlyList<Guid> TransferredDocumentIds,
     IReadOnlyList<FactureOutSkippedDocumentResult> SkippedDocuments,
     IReadOnlyList<FactureOutCreatedWithErrorResult> CreatedWithErrors,
-    IReadOnlyList<FactureOutFailedDocumentResult> FailedDocuments);
+    IReadOnlyList<FactureOutFailedDocumentResult> FailedDocuments)
+{
+    public IReadOnlyList<DocumentRecreationTransferredDocumentResult> TransferredDocuments { get; init; } = [];
+    public IReadOnlyList<DocumentRecreationUnCreatedButDeletedResult> UnCreatedButDeleted { get; init; } = [];
+}
 
 public sealed record FactureOutSkippedDocumentResult(
     Guid DocumentId,

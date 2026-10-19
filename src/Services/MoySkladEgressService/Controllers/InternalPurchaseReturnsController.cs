@@ -61,19 +61,25 @@ public sealed class InternalPurchaseReturnsController : ControllerBase
                 request.MainCounterpartyId,
                 request.PurchaseReturnIds,
                 cancellationToken);
+            var unCreatedButDeletedIds = result.UnCreatedButDeleted
+                .Select(document => document.SourceDocumentId)
+                .ToHashSet();
+            var transferredDocumentIds = result.Documents
+                .Where(IsSuccessfullyCreated)
+                .Select(document => document.SourceDocumentId)
+                .Distinct()
+                .ToArray();
             var response = new PurchaseReturnRecreationResponse(
+                transferredDocumentIds,
                 result.Documents
-                    .Where(IsSuccessfullyCreated)
+                    .Where(document => document.NewDocumentId is null &&
+                                       !unCreatedButDeletedIds.Contains(document.SourceDocumentId))
                     .Select(document => document.SourceDocumentId)
                     .Distinct()
                     .ToArray(),
                 result.Documents
-                    .Where(document => document.NewDocumentId is null)
-                    .Select(document => document.SourceDocumentId)
-                    .Distinct()
-                    .ToArray(),
-                result.Documents
-                    .Where(document => document.NewDocumentId is null)
+                    .Where(document => document.NewDocumentId is null &&
+                                       !unCreatedButDeletedIds.Contains(document.SourceDocumentId))
                     .Select(document => new PurchaseReturnSkippedDocumentResponse(
                         document.SourceDocumentId,
                         document.Status,
@@ -90,6 +96,19 @@ public sealed class InternalPurchaseReturnsController : ControllerBase
                         document.Error))
                     .ToArray())
             {
+                TransferredDocuments = result.Documents
+                    .Where(IsSuccessfullyCreated)
+                    .Select(item => new DocumentRecreationTransferredDocumentResponse(
+                        item.SourceDocumentId,
+                        item.NewDocumentId!.Value))
+                    .ToArray(),
+                UnCreatedButDeleted = result.UnCreatedButDeleted
+                    .Select(item => new DocumentRecreationUnCreatedButDeletedResponse(
+                        item.SourceDocumentId,
+                        item.Status,
+                        item.ErrorCode,
+                        item.Error))
+                    .ToArray(),
                 RecreatedPurchaseReturns = result.RecreatedPurchaseReturns.Select(item =>
                     new RecreatedPurchaseReturnResponse(item.SourceDocumentId, item.NewDocumentId)).ToArray(),
                 RecreatedFactureOuts = result.RecreatedFactureOuts.Select(item =>

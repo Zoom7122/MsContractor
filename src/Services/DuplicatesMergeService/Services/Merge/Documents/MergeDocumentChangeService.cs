@@ -54,7 +54,7 @@ public sealed class MergeDocumentChangeService(
                 var requested = documents.Select(item => new MoySkladDocumentChangeItem(item.DocumentType, item.DocumentId)).ToArray();
                 ValidateDocumentChangeResponse(job.MainCounterpartyId, requested, response);
                 await ApplyChangedDocumentsAsync(chunk, response, job.MainCounterpartyId, cancellationToken);
-                ThrowIfDocumentChangeFailed(response);
+                ThrowIfDocumentChangeIncomplete(response, documents.Length);
             }
         }
 
@@ -83,7 +83,7 @@ public sealed class MergeDocumentChangeService(
                 "MoySklad Egress Service returned an invalid document change response.");
             ValidateDocumentChangeResponse(job.MainCounterpartyId, documents, response);
             await ApplyChangedDocumentsAsync(ordinaryRows, response, job.MainCounterpartyId, cancellationToken);
-            ThrowIfDocumentChangeFailed(response);
+            ThrowIfDocumentChangeIncomplete(response, documents.Length);
         }
     }
 
@@ -100,16 +100,34 @@ public sealed class MergeDocumentChangeService(
         await documentSnapshots.SaveProgressAsync(rows[0].AccountId, cancellationToken);
     }
 
-    private static void ThrowIfDocumentChangeFailed(MoySkladDocumentChangeCounterpartyResponse response)
+    private static void ThrowIfDocumentChangeIncomplete(
+        MoySkladDocumentChangeCounterpartyResponse response,
+        int requestedCount)
     {
-        if (response.Failures.Count == 0) return;
-        var allRetryable = response.Failures.All(item => item.Retryable);
-        var representative = response.Failures.FirstOrDefault(item => !item.Retryable) ?? response.Failures[0];
-        throw new MergeEgressException(representative.Code,
-            $"Document counterparty change failed for {response.Failures.Count} document(s). " +
-            $"document_type={representative.DocumentType}, document_id={representative.DocumentId:D}, " +
-            $"endpoint={representative.Endpoint ?? "unknown"}, http_status={representative.StatusCode}, " +
-            $"retryable={representative.Retryable}. {representative.Message}", allRetryable ? 503 : 400);
+        if (response.ChangedDocuments.Count == requestedCount)
+            return;
+
+        var representative = response.Failures.FirstOrDefault(item => !item.Retryable) ??
+                             response.Failures.FirstOrDefault();
+        if (representative is not null)
+        {
+            var allFailuresRetryable = response.SkippedCount == 0 &&
+                                       response.Failures.All(item => item.Retryable);
+            throw new MergeEgressException(representative.Code,
+                $"Document counterparty change transferred {response.ChangedDocuments.Count} of {requestedCount} document(s). " +
+                $"document_type={representative.DocumentType}, document_id={representative.DocumentId:D}, " +
+                $"endpoint={representative.Endpoint ?? "unknown"}, http_status={representative.StatusCode}, " +
+                $"retryable={representative.Retryable}. {representative.Message}", allFailuresRetryable ? 503 : 400);
+        }
+
+        var skipped = response.SkippedDocuments.FirstOrDefault();
+        throw new MergeEgressException(
+            "DOCUMENT_COUNTERPARTY_CHANGE_INCOMPLETE",
+            skipped is null
+                ? $"Document counterparty change transferred {response.ChangedDocuments.Count} of {requestedCount} document(s)."
+                : $"Document counterparty change transferred {response.ChangedDocuments.Count} of {requestedCount} document(s). " +
+                  $"document_type={skipped.DocumentType}, document_id={skipped.DocumentId:D}, reason={skipped.Reason}",
+            400);
     }
 
     private static void ValidateDocumentChangeResponse(Guid mainCounterpartyId,

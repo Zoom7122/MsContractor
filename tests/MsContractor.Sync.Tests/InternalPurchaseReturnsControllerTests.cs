@@ -57,6 +57,8 @@ public sealed class InternalPurchaseReturnsControllerTests
         var body = Assert.IsType<PurchaseReturnRecreationResponse>(response.Value);
         Assert.Equal([transferredId], body.TransferredDocumentIds);
         Assert.Equal([skippedId], body.SkippedDocumentIds);
+        Assert.Equal(transferredId, Assert.Single(body.TransferredDocuments).SourceDocumentId);
+        Assert.Empty(body.UnCreatedButDeleted);
         var skipped = Assert.Single(body.SkippedDocuments!);
         Assert.Equal(skippedId, skipped.DocumentId);
         Assert.Equal("Skipped", skipped.Status);
@@ -101,6 +103,34 @@ public sealed class InternalPurchaseReturnsControllerTests
         Assert.Equal(failedNewId, createdWithError.NewDocumentId);
         Assert.Equal("PURCHASERETURN_PAYMENT_RELATIONS_REATTACH_FAILED", createdWithError.ErrorCode);
         Assert.Contains("cashin", createdWithError.Error);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_ReturnsUnCreatedButDeletedInCommonOutcomeContract()
+    {
+        var sourceId = Guid.NewGuid();
+        var serviceResult = new PurchaseReturnVerificationResult(
+        [new PurchaseReturnDocumentVerificationResult(
+            sourceId, null, "CreateFailed", [], [], [], "PURCHASERETURN_CREATE_FAILED", "MoySklad rejected creation.")])
+        {
+            UnCreatedButDeleted = [new DocumentRecreationUnCreatedButDeletedResult(
+                sourceId, "Failed", "PURCHASERETURN_CREATE_FAILED", "MoySklad rejected creation.")]
+        };
+        var orchestrator = new CapturingOrchestrator { Result = serviceResult };
+        var controller = Controller(orchestrator, authorized: true);
+
+        var result = await controller.RecreateAsync(
+            Guid.NewGuid(),
+            new PurchaseReturnRecreationRequest(Guid.NewGuid(), [sourceId]),
+            CancellationToken.None);
+
+        var body = Assert.IsType<PurchaseReturnRecreationResponse>(Assert.IsType<AcceptedResult>(result).Value);
+        Assert.Empty(body.TransferredDocumentIds);
+        Assert.Empty(body.SkippedDocumentIds);
+        var unCreated = Assert.Single(body.UnCreatedButDeleted);
+        Assert.Equal(sourceId, unCreated.SourceDocumentId);
+        Assert.Equal("Failed", unCreated.Status);
+        Assert.Empty(body.CreatedWithErrors!);
     }
 
     [Fact]

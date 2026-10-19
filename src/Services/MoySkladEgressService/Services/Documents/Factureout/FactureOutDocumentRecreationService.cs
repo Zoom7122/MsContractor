@@ -11,6 +11,10 @@ public sealed record FactureOutDocumentRecreationResult(
     IReadOnlyList<FactureOutFailedDocumentResult> FailedDocuments)
 {
     public IReadOnlyDictionary<Guid, Guid> CreatedDocumentIds { get; init; } = new Dictionary<Guid, Guid>();
+    public IReadOnlyList<DocumentRecreationTransferredDocumentResult> TransferredDocuments { get; init; } = [];
+    public IReadOnlyList<FactureOutSkippedDocumentResult> SkippedDocuments { get; init; } = [];
+    public IReadOnlyList<FactureOutCreatedWithErrorResult> CreatedWithErrors { get; init; } = [];
+    public IReadOnlyList<DocumentRecreationUnCreatedButDeletedResult> UnCreatedButDeleted { get; init; } = [];
 }
 
 public sealed record FactureOutDocumentDeletionResult(
@@ -190,11 +194,39 @@ public sealed class FactureOutDocumentRecreationService : IFactureOutDocumentRec
                     "Factureout was created but its recreation result could not be saved.")));
         }
 
-        return new FactureOutDocumentRecreationResult(
-            transferredDocumentIds.Keys.Except(failed.Select(item => item.SourceDocumentId)).ToArray(),
-            failed)
+        var failedIds = failed.Select(item => item.SourceDocumentId).ToHashSet();
+        var transferredIds = transferredDocumentIds.Keys.Except(failedIds).ToArray();
+        var deletedIds = documentsPayload.Select(item => item.SourceDocumentId).ToHashSet();
+        return new FactureOutDocumentRecreationResult(transferredIds, failed)
         {
-            CreatedDocumentIds = transferredDocumentIds
+            CreatedDocumentIds = transferredDocumentIds,
+            TransferredDocuments = transferredIds
+                .Select(id => new DocumentRecreationTransferredDocumentResult(id, transferredDocumentIds[id]))
+                .ToArray(),
+            SkippedDocuments = deletionFailures
+                .Select(item => new FactureOutSkippedDocumentResult(
+                    item.SourceDocumentId,
+                    "Skipped",
+                    item.ErrorCode,
+                    item.Error))
+                .ToArray(),
+            CreatedWithErrors = failed
+                .Where(item => item.NewDocumentId is not null)
+                .Select(item => new FactureOutCreatedWithErrorResult(
+                    item.SourceDocumentId,
+                    item.NewDocumentId!.Value,
+                    "CreatedWithError",
+                    item.ErrorCode,
+                    item.Error))
+                .ToArray(),
+            UnCreatedButDeleted = failed
+                .Where(item => deletedIds.Contains(item.SourceDocumentId) && item.NewDocumentId is null)
+                .Select(item => new DocumentRecreationUnCreatedButDeletedResult(
+                    item.SourceDocumentId,
+                    "Failed",
+                    item.ErrorCode,
+                    item.Error))
+                .ToArray()
         };
     }
 

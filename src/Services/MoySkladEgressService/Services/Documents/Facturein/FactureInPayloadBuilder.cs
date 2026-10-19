@@ -44,6 +44,8 @@ public sealed class FactureInPayloadBuilder : IFactureInPayloadBuilder
         var prepared = new List<FactureInRecreationItem>();
         var completed = new List<FactureInRecreationItem>();
         var failed = new List<FactureInFailedDocumentResult>();
+        var createdWithErrors = new List<FactureInCreatedWithErrorResult>();
+        var unCreatedButDeleted = new List<DocumentRecreationUnCreatedButDeletedResult>();
         var freshIds = new List<Guid>();
 
         foreach (var documentId in factureInIds)
@@ -58,22 +60,54 @@ public sealed class FactureInPayloadBuilder : IFactureInPayloadBuilder
             {
                 failed.Add(Failed(item, "FACTUREIN_RECREATION_MAIN_COUNTERPARTY_MISMATCH",
                     "The facturein recreation was started for another main counterparty."));
+                if (item.NewFactureInId is Guid newDocumentId)
+                    createdWithErrors.Add(new FactureInCreatedWithErrorResult(
+                        item.SourceFactureInId,
+                        newDocumentId,
+                        "CreatedWithError",
+                        "FACTUREIN_RECREATION_MAIN_COUNTERPARTY_MISMATCH",
+                        "The facturein recreation was started for another main counterparty."));
+                else if (item.Stage == "ResponseMappingFailed")
+                    unCreatedButDeleted.Add(new DocumentRecreationUnCreatedButDeletedResult(
+                        item.SourceFactureInId,
+                        "Failed",
+                        item.ErrorCode,
+                        item.Error));
                 continue;
             }
 
             switch (item.Stage)
             {
                 case "Completed": completed.Add(item); break;
-                case "ResponseMappingFailed": failed.Add(Failed(item,
-                    item.ErrorCode ?? "FACTUREIN_RESPONSE_MAPPING_FAILED",
-                    item.Error ?? "The created facturein could not be mapped safely.")); break;
+                case "ResponseMappingFailed":
+                    failed.Add(Failed(item,
+                        item.ErrorCode ?? "FACTUREIN_RESPONSE_MAPPING_FAILED",
+                        item.Error ?? "The created facturein could not be mapped safely."));
+                    if (item.NewFactureInId is Guid mappedDocumentId)
+                        createdWithErrors.Add(new FactureInCreatedWithErrorResult(
+                            item.SourceFactureInId,
+                            mappedDocumentId,
+                            "CreatedWithError",
+                            item.ErrorCode ?? "FACTUREIN_RESPONSE_MAPPING_FAILED",
+                            item.Error ?? "The created facturein could not be mapped safely."));
+                    else
+                        unCreatedButDeleted.Add(new DocumentRecreationUnCreatedButDeletedResult(
+                            item.SourceFactureInId,
+                            "Failed",
+                            item.ErrorCode ?? "FACTUREIN_RESPONSE_MAPPING_FAILED",
+                            item.Error ?? "The created facturein could not be mapped safely."));
+                    break;
                 default: prepared.Add(item); break;
             }
         }
 
         var skipped = new List<FactureInSkippedDocumentResult>();
         if (freshIds.Count == 0)
-            return new FactureInPayloadBuildResult(prepared, skipped, completed, failed);
+            return new FactureInPayloadBuildResult(prepared, skipped, completed, failed)
+            {
+                CreatedWithErrors = createdWithErrors,
+                UnCreatedButDeleted = unCreatedButDeleted
+            };
 
         IReadOnlyDictionary<Guid, string> rawDocuments;
         try
@@ -83,7 +117,11 @@ public sealed class FactureInPayloadBuilder : IFactureInPayloadBuilder
         catch (InvalidOperationException exception)
         {
             skipped.AddRange(freshIds.Select(id => Skip(id, "FACTUREIN_PAYLOAD_INVALID", exception.Message)));
-            return new FactureInPayloadBuildResult(prepared, skipped, completed, failed);
+            return new FactureInPayloadBuildResult(prepared, skipped, completed, failed)
+            {
+                CreatedWithErrors = createdWithErrors,
+                UnCreatedButDeleted = unCreatedButDeleted
+            };
         }
 
         var candidates = new List<BuildCandidate>();
@@ -141,7 +179,11 @@ public sealed class FactureInPayloadBuilder : IFactureInPayloadBuilder
             }
         }
 
-        return new FactureInPayloadBuildResult(prepared, skipped, completed, failed);
+        return new FactureInPayloadBuildResult(prepared, skipped, completed, failed)
+        {
+            CreatedWithErrors = createdWithErrors,
+            UnCreatedButDeleted = unCreatedButDeleted
+        };
     }
 
     private static IReadOnlyList<FactureInBaseReference> ReadBases(JsonObject source)

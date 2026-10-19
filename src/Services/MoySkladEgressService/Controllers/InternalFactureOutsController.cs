@@ -92,7 +92,21 @@ public sealed class InternalFactureOutsController : ControllerBase
                         document.Status,
                         document.ErrorCode,
                         document.Error))
-                    .ToArray());
+                    .ToArray())
+            {
+                TransferredDocuments = result.TransferredDocuments
+                    .Select(item => new DocumentRecreationTransferredDocumentResponse(
+                        item.SourceDocumentId,
+                        item.NewDocumentId))
+                    .ToArray(),
+                UnCreatedButDeleted = result.UnCreatedButDeleted
+                    .Select(item => new DocumentRecreationUnCreatedButDeletedResponse(
+                        item.SourceDocumentId,
+                        item.Status,
+                        item.ErrorCode,
+                        item.Error))
+                    .ToArray()
+            };
 
             return Accepted(response);
         }

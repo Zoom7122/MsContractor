@@ -177,6 +177,33 @@ public sealed class MergeProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_SkippedSalesReturnDoesNotStopMerge()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var salesReturnId = Guid.NewGuid();
+        fixture.Documents.Documents =
+        [new MoySkladDocumentReference("salesreturn", salesReturnId, fixture.Duplicates[0].Id)];
+        fixture.SalesReturns.Response = (_, _) => SalesReturnResult(
+            [],
+            [],
+            [salesReturnId],
+            [new SalesReturnSkippedDocumentResponse(
+                salesReturnId, "Skipped", "SALESRETURN_DOCUMENT_SKIPPED", "The source remains available.")]);
+        var command = await fixture.CreateJobAsync();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        Assert.Single(fixture.Egress.ArchiveCalls);
+        fixture.Db.ChangeTracker.Clear();
+        var job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
+        Assert.Equal(MergeJobStatuses.Completed, job.Status);
+        Assert.Equal(MergeOperationStatuses.Completed,
+            job.Operations.Single(item => item.OperationType == MergeOperationTypes.RecreateSalesReturns).Status);
+        var row = await fixture.Db.CounterpartyDocuments.SingleAsync(item => item.DocumentId == salesReturnId);
+        Assert.Equal(fixture.Duplicates[0].Id, row.CounterpartyId);
+    }
+
+    [Fact]
     public async Task ProcessAsync_GroupsDocumentChangeAndRecreationRepliesByEndpoint()
     {
         await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
@@ -233,6 +260,58 @@ public sealed class MergeProcessorTests
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.NotNull(parsed);
         Assert.Contains(factureOutId, parsed!.TransferredDocumentIds);
+    }
+
+    [Theory]
+    [InlineData("skipped")]
+    [InlineData("created-with-errors")]
+    [InlineData("uncreated-after-delete")]
+    public async Task ProcessAsync_OnlyCreatedWithErrorsOrUnCreatedButDeletedFactureOutOutcomesStopMerge(string outcome)
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var factureOutId = Guid.NewGuid();
+        var newDocumentId = Guid.NewGuid();
+        fixture.Documents.Documents =
+        [new MoySkladDocumentReference("factureout", factureOutId, fixture.Duplicates[0].Id)];
+        fixture.FactureOuts.Response = _ => outcome switch
+        {
+            "created-with-errors" => new FactureOutRecreationResponse(
+                [], [], [], [new(factureOutId, newDocumentId, "CreatedWithError", "FACTUREOUT_POST_CREATE_FAILED", "Post-create step failed.")], []),
+            "uncreated-after-delete" => new FactureOutRecreationResponse([], [], [], [], [])
+            {
+                UnCreatedButDeleted = [new(factureOutId, "Failed", "FACTUREOUT_CREATE_FAILED", "The replacement was not created.")]
+            },
+            _ => new FactureOutRecreationResponse(
+                [],
+                [factureOutId],
+                [new(factureOutId, "Skipped", "FACTUREOUT_NOT_READY", "The source remains available.")],
+                [],
+                [])
+        };
+        var command = await fixture.CreateJobAsync();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        var blocksMerge = outcome != "skipped";
+        Assert.Equal(blocksMerge ? 0 : 1, fixture.Egress.ArchiveCalls.Count);
+        fixture.Db.ChangeTracker.Clear();
+        var job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
+        Assert.Equal(blocksMerge ? MergeJobStatuses.Failed : MergeJobStatuses.Completed, job.Status);
+        Assert.Equal(blocksMerge ? MergeOperationStatuses.Failed : MergeOperationStatuses.Completed,
+            job.Operations.Single(item => item.OperationType == MergeOperationTypes.RecreateFactureOuts).Status);
+        var snapshot = await fixture.Db.CounterpartyDocuments.FirstOrDefaultAsync(item => item.DocumentType == "factureout");
+        if (outcome == "uncreated-after-delete")
+            Assert.Null(snapshot);
+        else if (outcome == "created-with-errors")
+        {
+            Assert.Equal(newDocumentId, snapshot!.DocumentId);
+            Assert.Equal(fixture.Main.Id, snapshot.CounterpartyId);
+        }
+        else
+        {
+            Assert.Equal(factureOutId, snapshot!.DocumentId);
+            Assert.Equal(fixture.Duplicates[0].Id, snapshot.CounterpartyId);
+        }
     }
 
     [Fact]
@@ -372,6 +451,7 @@ public sealed class MergeProcessorTests
          new("factureout", otherInvoiceId, fixture.Duplicates[0].Id)];
         fixture.PurchaseReturns.Response = ids => new PurchaseReturnRecreationResponse(ids, [])
         {
+            TransferredDocuments = [new(sourceId, newReturnId)],
             RecreatedPurchaseReturns = [new(sourceId, newReturnId)],
             RecreatedFactureOuts = [new(sourceId, invoiceId, newInvoiceId), new(sourceId, foreignInvoiceId, Guid.NewGuid())]
         };
@@ -406,28 +486,43 @@ public sealed class MergeProcessorTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ProcessAsync_IncompleteReturnStopsBeforeInvoiceStageAndArchive(bool createdWithError)
+    [InlineData("skipped")]
+    [InlineData("created-with-errors")]
+    [InlineData("uncreated-after-delete")]
+    public async Task ProcessAsync_OnlyCreatedWithErrorsOrUnCreatedButDeletedStopBeforeInvoiceStageAndArchive(string outcome)
     {
         await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
         var sourceId = Guid.NewGuid(); var invoiceId = Guid.NewGuid(); var newId = Guid.NewGuid();
         fixture.Documents.Documents = [new("purchasereturn", sourceId, fixture.Duplicates[0].Id),
             new("factureout", invoiceId, fixture.Duplicates[0].Id)];
-        fixture.PurchaseReturns.Response = _ => createdWithError
-            ? new PurchaseReturnRecreationResponse([], [], [], [new(sourceId, newId, "CreatedWithError", "INVOICE_FAILED", "Invoice failed.")])
-              { RecreatedPurchaseReturns = [new(sourceId, newId)] }
-            : new PurchaseReturnRecreationResponse([], [sourceId], [new(sourceId, "Skipped", "SHARED_INVOICE", "Shared invoice.")]);
+        fixture.PurchaseReturns.Response = _ => outcome switch
+        {
+            "created-with-errors" => new PurchaseReturnRecreationResponse(
+                [], [], [], [new(sourceId, newId, "CreatedWithError", "INVOICE_FAILED", "Invoice failed.")])
+            {
+                RecreatedPurchaseReturns = [new(sourceId, newId)]
+            },
+            "uncreated-after-delete" => new PurchaseReturnRecreationResponse([], [])
+            {
+                UnCreatedButDeleted = [new(sourceId, "Failed", "CREATE_FAILED", "The replacement was not created.")]
+            },
+            _ => new PurchaseReturnRecreationResponse(
+                [], [sourceId], [new(sourceId, "Skipped", "SHARED_INVOICE", "Shared invoice.")])
+        };
         var command = await fixture.CreateJobAsync();
         await fixture.Processor.ProcessAsync(command, CancellationToken.None);
-        Assert.Empty(fixture.FactureOuts.Calls);
-        Assert.Empty(fixture.Egress.ArchiveCalls);
+        var blocksMerge = outcome != "skipped";
+        Assert.Equal(blocksMerge ? 0 : 1, fixture.FactureOuts.Calls.Count);
+        Assert.Equal(blocksMerge ? 0 : 1, fixture.Egress.ArchiveCalls.Count);
         fixture.Db.ChangeTracker.Clear();
         var operation = await fixture.Db.MergeOperations.SingleAsync(item => item.OperationType == MergeOperationTypes.RecreatePurchaseReturns);
-        Assert.Equal(MergeOperationStatuses.Failed, operation.Status);
-        Assert.Equal(1, operation.AttemptCount);
-        var returned = await fixture.Db.CounterpartyDocuments.SingleAsync(row => row.AccountId == fixture.AccountId && row.DocumentType == "purchasereturn");
-        Assert.Equal(createdWithError ? newId : sourceId, returned.DocumentId);
+        Assert.Equal(blocksMerge ? MergeOperationStatuses.Failed : MergeOperationStatuses.Completed, operation.Status);
+        var returned = await fixture.Db.CounterpartyDocuments.FirstOrDefaultAsync(row =>
+            row.AccountId == fixture.AccountId && row.DocumentType == "purchasereturn");
+        if (outcome == "uncreated-after-delete")
+            Assert.Null(returned);
+        else
+            Assert.Equal(outcome == "created-with-errors" ? newId : sourceId, returned!.DocumentId);
     }
 
     [Theory]
@@ -442,6 +537,7 @@ public sealed class MergeProcessorTests
         fixture.Documents.Documents = [new("purchasereturn", sourceId, fixture.Duplicates[0].Id)];
         fixture.PurchaseReturns.Response = _ => new PurchaseReturnRecreationResponse([sourceId], [])
         {
+            TransferredDocuments = [new(sourceId, newId)],
             RecreatedPurchaseReturns = kind == "missing-map" ? [] : kind == "duplicate"
                 ? [new(sourceId, newId), new(sourceId, Guid.NewGuid())] : [new(sourceId, newId)],
             RecreatedFactureOuts = kind == "foreign-parent" ? [new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid())] : []
@@ -517,28 +613,56 @@ public sealed class MergeProcessorTests
             operations.Where(item => item.Sequence >= 3).Select(item => item.OperationType));
     }
 
-    [Fact]
-    public async Task ProcessAsync_IncompleteFactureInRecreationDoesNotArchiveDuplicates()
+    [Theory]
+    [InlineData("skipped")]
+    [InlineData("created-with-errors")]
+    [InlineData("uncreated-after-delete")]
+    public async Task ProcessAsync_OnlyCreatedWithErrorsOrUnCreatedButDeletedFactureInOutcomesStopMerge(string outcome)
     {
         await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
         var factureInId = Guid.NewGuid();
         fixture.Documents.Documents =
         [new MoySkladDocumentReference("facturein", factureInId, fixture.Duplicates[0].Id)];
-        fixture.FactureIns.Response = documentIds => new FactureInRecreationResponse(
-            [],
-            documentIds,
-            [new FactureInSkippedDocumentResponse(
-                factureInId, "Skipped", "FACTUREIN_BASE_DOCUMENT_MISSING", "Base document was not found.")]);
+        var newDocumentId = Guid.NewGuid();
+        fixture.FactureIns.Response = documentIds => outcome switch
+        {
+            "created-with-errors" => new FactureInRecreationResponse(
+                [], [], [], [new FactureInCreatedWithErrorResponse(
+                    factureInId, newDocumentId, "CreatedWithError", "FACTUREIN_CREATE_WITH_ERRORS", "Post-create step failed.")]),
+            "uncreated-after-delete" => new FactureInRecreationResponse([], [])
+            {
+                UnCreatedButDeleted = [new(factureInId, "Failed", "FACTUREIN_CREATE_FAILED", "The replacement was not created.")]
+            },
+            _ => new FactureInRecreationResponse(
+                [],
+                documentIds,
+                [new FactureInSkippedDocumentResponse(
+                    factureInId, "Skipped", "FACTUREIN_BASE_DOCUMENT_MISSING", "Base document was not found.")])
+        };
         var command = await fixture.CreateJobAsync();
 
         await fixture.Processor.ProcessAsync(command, CancellationToken.None);
 
-        Assert.Empty(fixture.Egress.ArchiveCalls);
+        var blocksMerge = outcome != "skipped";
+        Assert.Equal(blocksMerge ? 0 : 1, fixture.Egress.ArchiveCalls.Count);
         fixture.Db.ChangeTracker.Clear();
         var job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
-        Assert.Equal(MergeJobStatuses.Failed, job.Status);
-        Assert.Equal(MergeOperationStatuses.Failed,
+        Assert.Equal(blocksMerge ? MergeJobStatuses.Failed : MergeJobStatuses.Completed, job.Status);
+        Assert.Equal(blocksMerge ? MergeOperationStatuses.Failed : MergeOperationStatuses.Completed,
             job.Operations.Single(item => item.OperationType == MergeOperationTypes.RecreateFactureIns).Status);
+        var snapshot = await fixture.Db.CounterpartyDocuments.FirstOrDefaultAsync(item => item.DocumentType == "facturein");
+        if (outcome == "uncreated-after-delete")
+            Assert.Null(snapshot);
+        else if (outcome == "created-with-errors")
+        {
+            Assert.Equal(newDocumentId, snapshot!.DocumentId);
+            Assert.Equal(fixture.Main.Id, snapshot.CounterpartyId);
+        }
+        else
+        {
+            Assert.Equal(factureInId, snapshot!.DocumentId);
+            Assert.Equal(fixture.Duplicates[0].Id, snapshot.CounterpartyId);
+        }
     }
 
     [Fact]
@@ -818,6 +942,36 @@ public sealed class MergeProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_SkippedCounterpartyPutStopsMergeBeforeRecreationAndArchive()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var demandId = Guid.NewGuid();
+        fixture.Documents.Documents =
+        [new MoySkladDocumentReference("demand", demandId, fixture.Duplicates[0].Id)];
+        fixture.DocumentChanges.Response = (mainId, requested) => new MoySkladDocumentChangeCounterpartyResponse(
+            mainId,
+            requested.Count,
+            0,
+            requested.Count,
+            0,
+            [],
+            requested.Select(item => new MoySkladDocumentChangeSkippedItem(
+                item.DocumentType, item.DocumentId, "DOCUMENT_TYPE_NOT_CONFIGURED")).ToArray(),
+            []);
+        var command = await fixture.CreateJobAsync();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        Assert.Empty(fixture.SalesReturns.Calls);
+        Assert.Empty(fixture.Egress.ArchiveCalls);
+        fixture.Db.ChangeTracker.Clear();
+        var job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
+        Assert.Equal(MergeJobStatuses.Failed, job.Status);
+        Assert.Equal(MergeOperationStatuses.Failed,
+            job.Operations.Single(item => item.OperationType == MergeOperationTypes.ChangeDocumentCounterparties).Status);
+    }
+
+    [Fact]
     public async Task ProcessAsync_AddsMissingDocumentChangeOperationToLegacyActiveJob()
     {
         await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
@@ -1059,11 +1213,19 @@ public sealed class MergeProcessorTests
             Calls.Add((mainCounterpartyId, documentType, documentIds.ToArray()));
             CallOrder.Add("purchasereturn");
             return Exception is null
-                ? Task.FromResult(EgressResponse(Response?.Invoke(documentIds) ?? new PurchaseReturnRecreationResponse(documentIds, [])
-                {
-                    RecreatedPurchaseReturns = documentIds.Select(id => new RecreatedPurchaseReturnResponse(id, Guid.NewGuid())).ToArray()
-                }))
+                ? Task.FromResult(EgressResponse(Response?.Invoke(documentIds) ?? DefaultResponse(documentIds)))
                 : Task.FromException<MergeEgressHttpResponse>(Exception);
+        }
+
+        private static PurchaseReturnRecreationResponse DefaultResponse(IReadOnlyList<Guid> documentIds)
+        {
+            var mappings = documentIds.Select(id => new RecreatedPurchaseReturnResponse(id, Guid.NewGuid())).ToArray();
+            return new PurchaseReturnRecreationResponse(documentIds, [])
+            {
+                TransferredDocuments = mappings.Select(item =>
+                    new DocumentRecreationTransferredDocumentResponse(item.SourceDocumentId, item.NewDocumentId)).ToArray(),
+                RecreatedPurchaseReturns = mappings
+            };
         }
     }
 
@@ -1088,14 +1250,19 @@ public sealed class MergeProcessorTests
             if (Exception is not null)
                 return Task.FromException<MergeEgressHttpResponse>(Exception);
 
-            return Task.FromResult(EgressResponse(Response?.Invoke(documentIds) ??
-                new FactureInRecreationResponse(documentIds, [])));
+            return Task.FromResult(EgressResponse(Response?.Invoke(documentIds) ?? new FactureInRecreationResponse(documentIds, [])
+            {
+                TransferredDocuments = documentIds
+                    .Select(id => new DocumentRecreationTransferredDocumentResponse(id, Guid.NewGuid()))
+                    .ToArray()
+            }));
         }
     }
 
     private sealed class FakeFactureOutRecreationSender : IFactureOutRecreationSender
     {
         public List<(Guid MainCounterpartyId, string DocumentType, IReadOnlyList<Guid> DocumentIds)> Calls { get; } = [];
+        public Func<IReadOnlyList<Guid>, FactureOutRecreationResponse>? Response { get; set; }
 
         public Task<MergeEgressHttpResponse> SendAsync(
             Guid accountId,
@@ -1109,7 +1276,12 @@ public sealed class MergeProcessorTests
             CancellationToken cancellationToken)
         {
             Calls.Add((mainCounterpartyId, documentType, documentIds.ToArray()));
-            return Task.FromResult(EgressResponse(new FactureOutRecreationResponse(documentIds, [], [], [], [])));
+            return Task.FromResult(EgressResponse(Response?.Invoke(documentIds) ?? new FactureOutRecreationResponse(documentIds, [], [], [], [])
+            {
+                TransferredDocuments = documentIds
+                    .Select(id => new DocumentRecreationTransferredDocumentResponse(id, Guid.NewGuid()))
+                    .ToArray()
+            }));
         }
     }
 

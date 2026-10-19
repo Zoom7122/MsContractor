@@ -6,6 +6,7 @@ public sealed record PurchaseReturnVerificationResult(
     public IReadOnlyList<RecreatedPurchaseReturn> RecreatedPurchaseReturns { get; init; } = [];
     public IReadOnlyList<RecreatedPurchaseReturnFactureOut> RecreatedFactureOuts { get; init; } = [];
     public IReadOnlyList<FactureOutSkippedDocumentResult> SkippedFactureOuts { get; init; } = [];
+    public IReadOnlyList<DocumentRecreationUnCreatedButDeletedResult> UnCreatedButDeleted { get; init; } = [];
 
     public bool Passed => Documents.All(document => document.Status == "Verified");
 }

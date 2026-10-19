@@ -23,8 +23,8 @@ public sealed class InternalSalesReturnsController : ControllerBase
     }
 
     [HttpPost("recreate")]
-    [ProducesResponseType<SalesReturnRecreationResult>(StatusCodes.Status200OK)]
-    [ProducesResponseType<SalesReturnRecreationResult>(StatusCodes.Status207MultiStatus)]
+    [ProducesResponseType<SalesReturnRecreationResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<SalesReturnRecreationResponse>(StatusCodes.Status207MultiStatus)]
     public async Task<IActionResult> RecreateAsync(
         Guid accountId,
         [FromBody] SalesReturnRecreationRequest request,
@@ -62,9 +62,31 @@ public sealed class InternalSalesReturnsController : ControllerBase
                                        result.SkippedDocuments.Count != 0 ||
                                        result.CreatedWithErrors.Count != 0 ||
                                        result.UnCreatedButDeleted.Count != 0;
+            var response = new SalesReturnRecreationResponse(
+                result.TransferredDocumentIds,
+                result.TransferredDocuments.Select(item => new SalesReturnTransferredDocumentResponse(
+                    item.SourceDocumentId,
+                    item.NewDocumentId)).ToArray(),
+                result.SkippedDocumentIds,
+                result.SkippedDocuments.Select(item => new SalesReturnSkippedDocumentResponse(
+                    item.DocumentId,
+                    item.Status,
+                    item.ErrorCode,
+                    item.Error)).ToArray(),
+                result.CreatedWithErrors.Select(item => new SalesReturnCreatedWithErrorResponse(
+                    item.SourceDocumentId,
+                    item.NewDocumentId,
+                    item.Status,
+                    item.ErrorCode,
+                    item.Error)).ToArray(),
+                result.UnCreatedButDeleted.Select(item => new SalesReturnUnCreatedButDeletedResponse(
+                    item.SourceDocumentId,
+                    item.Status,
+                    item.ErrorCode,
+                    item.Error)).ToArray());
             return allDocumentsTransferred && !hasIncompleteOutcome
-                ? Ok(result)
-                : StatusCode(StatusCodes.Status207MultiStatus, result);
+                ? Ok(response)
+                : StatusCode(StatusCodes.Status207MultiStatus, response);
         }
         catch (EgressException exception)
         {

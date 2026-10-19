@@ -311,6 +311,9 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
             factureRelations: new LinkedFactureRelations(events, [new(sourceId, invoiceId)]), factureOutService: invoices.Service);
         var result = await orchestrator.ExecuteAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
         Assert.Equal(deleteFailure ? "DeleteFailed" : "CreateFailed", Assert.Single(result.Documents).Status);
+        Assert.Equal(deleteFailure ? 0 : 1, result.UnCreatedButDeleted.Count);
+        if (!deleteFailure)
+            Assert.Equal(sourceId, Assert.Single(result.UnCreatedButDeleted).SourceDocumentId);
         Assert.Empty(invoices.Gateway.CreatedItems);
     }
 

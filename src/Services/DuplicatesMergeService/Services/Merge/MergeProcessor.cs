@@ -24,6 +24,7 @@ public sealed class MergeProcessor(
     IFactureInRecreationSender factureInRecreationSender,
     IFactureOutRecreationSender factureOutRecreationSender,
     IDocumentSnapshotRepository documentSnapshots,
+    IDocumentsInOperationRepository documentsInOperation,
     IMergeCounterpartyArchiveService counterpartyArchive,
     ILogger<MergeProcessor> logger) : IMergeProcessor
 {
@@ -79,6 +80,7 @@ public sealed class MergeProcessor(
                     command.DuplicateCounterpartyIds,
                     salesReturnRecreationSender,
                     documentSnapshots,
+                    documentsInOperation,
                     token),
                 "Salesreturn recreation will be retried.", cancellationToken))
             return;
@@ -92,6 +94,7 @@ public sealed class MergeProcessor(
                     command.DuplicateCounterpartyIds,
                     purchaseReturnRecreationSender,
                     documentSnapshots,
+                    documentsInOperation,
                     token),
                 "Purchasereturn recreation will be retried.", cancellationToken))
             return;
@@ -105,6 +108,7 @@ public sealed class MergeProcessor(
                     command.DuplicateCounterpartyIds,
                     factureInRecreationSender,
                     documentSnapshots,
+                    documentsInOperation,
                     token),
                 "Facturein recreation will be retried.", cancellationToken))
             return;
@@ -118,6 +122,7 @@ public sealed class MergeProcessor(
                     command.DuplicateCounterpartyIds,
                     factureOutRecreationSender,
                     documentSnapshots,
+                    documentsInOperation,
                     token),
                 "Factureout recreation will be retried.", cancellationToken))
             return;
@@ -151,6 +156,7 @@ public sealed class MergeProcessor(
         IReadOnlyList<Guid> duplicateCounterpartyIds,
         ISalesReturnRecreationSender sender,
         IDocumentSnapshotRepository documentSnapshots,
+        IDocumentsInOperationRepository documentsInOperation,
         CancellationToken cancellationToken)
     {
         var rows = await documentSnapshots.GetForCounterpartiesAsync(
@@ -162,7 +168,7 @@ public sealed class MergeProcessor(
             return;
 
         var sourceIds = salesReturns.Select(item => item.DocumentId).ToArray();
-        var response = await sender.SendAsync(
+        var egressResult = await sender.SendAsync(
             job.AccountId,
             job.MainCounterpartyId,
             "salesreturn",
@@ -172,15 +178,36 @@ public sealed class MergeProcessor(
             job.RequestedByUserId,
             job.CorrelationId,
             cancellationToken);
+        await documentsInOperation.AppendEgressResponseAsync(
+            job.AccountId,
+            job.Id,
+            DocumentsInOperationTypes.RecreateSalesReturn,
+            egressResult.StatusCode,
+            egressResult.Body,
+            cancellationToken);
 
-        ValidateSalesReturnResponse(job.MainCounterpartyId, sourceIds, response);
+        var response = MergeEgressResponseReader.Read<SalesReturnRecreationResponse>(
+            egressResult,
+            "EGRESS_INVALID_RESPONSE",
+            "MoySklad Egress Service returned an empty salesreturn recreation response.",
+            "MoySklad Egress Service returned an invalid salesreturn recreation response.");
+        ValidateSalesReturnResponse(sourceIds, response);
 
-        var responseBySourceId = response.Documents.ToDictionary(item => item.SourceDocumentId);
+        var transferredBySourceId = response.TransferredDocuments!
+            .ToDictionary(item => item.SourceDocumentId, item => item.NewDocumentId);
+        var createdWithErrorsBySourceId = response.CreatedWithErrors!
+            .ToDictionary(item => item.SourceDocumentId, item => item.NewDocumentId);
+        var unCreatedButDeletedIds = response.UnCreatedButDeleted!
+            .Select(item => item.SourceDocumentId)
+            .ToHashSet();
         var now = DateTimeOffset.UtcNow;
-        var replacements = salesReturns.Select(row =>
+        var replacements = salesReturns
+            .Where(row => !unCreatedButDeletedIds.Contains(row.DocumentId))
+            .Select(row =>
         {
-            var item = responseBySourceId[row.DocumentId];
-            return item.Status == "Completed" && item.NewDocumentId is Guid newDocumentId
+            var hasReplacement = transferredBySourceId.TryGetValue(row.DocumentId, out var newDocumentId) ||
+                                 createdWithErrorsBySourceId.TryGetValue(row.DocumentId, out newDocumentId);
+            return hasReplacement
                 ? new CounterpartyDocument
                 {
                     AccountId = row.AccountId,
@@ -198,33 +225,70 @@ public sealed class MergeProcessor(
             replacements,
             cancellationToken);
 
-        var failed = response.Documents.FirstOrDefault(item =>
-            item.Status != "Completed" || item.NewDocumentId is null);
-        if (failed is not null)
+        var createdWithError = response.CreatedWithErrors!.FirstOrDefault();
+        var unCreatedButDeleted = response.UnCreatedButDeleted!.FirstOrDefault();
+        var skipped = response.SkippedDocuments!.FirstOrDefault();
+        if (createdWithError is not null || unCreatedButDeleted is not null || skipped is not null)
         {
             throw new MergeEgressException(
-                failed.ErrorCode ?? "SALESRETURN_RECREATION_FAILED",
-                failed.Error ?? $"Salesreturn recreation failed for document {failed.SourceDocumentId:D}.",
+                createdWithError?.ErrorCode ?? unCreatedButDeleted?.ErrorCode ?? skipped?.ErrorCode ??
+                "SALESRETURN_RECREATION_INCOMPLETE",
+                createdWithError?.Error ?? unCreatedButDeleted?.Error ?? skipped?.Error ??
+                "Salesreturn recreation skipped or failed one or more documents.",
                 400);
         }
     }
 
     private static void ValidateSalesReturnResponse(
-        Guid mainAgentId,
         IReadOnlyList<Guid> requestedIds,
         SalesReturnRecreationResponse response)
     {
+        static MergeEgressException Invalid() => new(
+            "EGRESS_INVALID_RESPONSE",
+            "MoySklad Egress Service returned an inconsistent salesreturn recreation response.",
+            502);
+
+        if (response is null || response.TransferredDocumentIds is null ||
+            response.TransferredDocuments is null || response.SkippedDocumentIds is null ||
+            response.SkippedDocuments is null || response.CreatedWithErrors is null ||
+            response.UnCreatedButDeleted is null)
+            throw Invalid();
+
+        if (response.TransferredDocuments.Any(item => item is null) ||
+            response.SkippedDocuments.Any(item => item is null || item.Status is not ("Skipped" or "Failed")) ||
+            response.CreatedWithErrors.Any(item => item is null) ||
+            response.UnCreatedButDeleted.Any(item => item is null))
+            throw Invalid();
+
         var requested = requestedIds.ToHashSet();
-        var returned = response.Documents.Select(item => item.SourceDocumentId).ToArray();
-        if (response.MainAgentId != mainAgentId ||
-            returned.Length != requested.Count ||
-            returned.Distinct().Count() != returned.Length ||
-            !returned.ToHashSet().SetEquals(requested))
+        var transferred = response.TransferredDocumentIds.ToArray();
+        var transferredMappings = response.TransferredDocuments.ToArray();
+        var skippedIds = response.SkippedDocumentIds.ToArray();
+        var skippedDetails = response.SkippedDocuments.Select(item => item.DocumentId).ToArray();
+        var createdWithErrors = response.CreatedWithErrors.ToArray();
+        var unCreatedButDeleted = response.UnCreatedButDeleted.ToArray();
+        var outcomeSourceIds = transferred
+            .Concat(skippedIds)
+            .Concat(createdWithErrors.Select(item => item.SourceDocumentId))
+            .Concat(unCreatedButDeleted.Select(item => item.SourceDocumentId))
+            .ToArray();
+        var replacementIds = transferredMappings.Select(item => item.NewDocumentId)
+            .Concat(createdWithErrors.Select(item => item.NewDocumentId))
+            .ToArray();
+
+        if (transferred.Any(id => id == Guid.Empty) || skippedIds.Any(id => id == Guid.Empty) ||
+            outcomeSourceIds.Length != requested.Count || outcomeSourceIds.Distinct().Count() != outcomeSourceIds.Length ||
+            !outcomeSourceIds.ToHashSet().SetEquals(requested) ||
+            skippedDetails.Length != skippedIds.Length || skippedDetails.Distinct().Count() != skippedDetails.Length ||
+            !skippedDetails.ToHashSet().SetEquals(skippedIds) ||
+            transferredMappings.Length != transferred.Length ||
+            transferredMappings.Select(item => item.SourceDocumentId).Distinct().Count() != transferredMappings.Length ||
+            !transferredMappings.Select(item => item.SourceDocumentId).ToHashSet().SetEquals(transferred) ||
+            createdWithErrors.Any(item => item.Status != "CreatedWithError" || item.NewDocumentId == Guid.Empty) ||
+            unCreatedButDeleted.Any(item => item.Status != "Failed") ||
+            replacementIds.Any(id => id == Guid.Empty) || replacementIds.Distinct().Count() != replacementIds.Length)
         {
-            throw new MergeEgressException(
-                "EGRESS_INVALID_RESPONSE",
-                "MoySklad Egress Service returned an inconsistent salesreturn recreation response.",
-                502);
+            throw Invalid();
         }
     }
 
@@ -234,6 +298,7 @@ public sealed class MergeProcessor(
         IReadOnlyList<Guid> duplicateCounterpartyIds,
         IPurchaseReturnRecreationSender sender,
         IDocumentSnapshotRepository documentSnapshots,
+        IDocumentsInOperationRepository documentsInOperation,
         CancellationToken cancellationToken)
     {
         var rows = await documentSnapshots.GetForCounterpartiesAsync(
@@ -244,7 +309,7 @@ public sealed class MergeProcessor(
         if (purchaseReturns.Length == 0)
             return;
 
-        var response = await sender.SendAsync(
+        var egressResponse = await sender.SendAsync(
             job.AccountId,
             job.MainCounterpartyId,
             "purchasereturn",
@@ -254,6 +319,20 @@ public sealed class MergeProcessor(
             job.RequestedByUserId,
             job.CorrelationId,
             cancellationToken);
+
+        await documentsInOperation.AppendEgressResponseAsync(
+            job.AccountId,
+            job.Id,
+            DocumentsInOperationTypes.RecreatePurchaseReturn,
+            egressResponse.StatusCode,
+            egressResponse.Body,
+            cancellationToken);
+        var response = MergeEgressResponseReader.Read<PurchaseReturnRecreationResponse>(
+            egressResponse,
+            MergeEgressException.PurchaseReturnUnknownResult,
+            "MoySklad Egress Service returned an empty purchasereturn recreation response.",
+            "MoySklad Egress Service returned an invalid purchasereturn recreation response.",
+            unknownResultOnServerError: true);
 
         ValidatePurchaseReturnResponse(purchaseReturns.Select(item => item.DocumentId).ToArray(), response);
         var returnIds = response.RecreatedPurchaseReturns.ToDictionary(item => item.SourceDocumentId, item => item.NewDocumentId);
@@ -331,6 +410,7 @@ public sealed class MergeProcessor(
         IReadOnlyList<Guid> duplicateCounterpartyIds,
         IFactureInRecreationSender sender,
         IDocumentSnapshotRepository documentSnapshots,
+        IDocumentsInOperationRepository documentsInOperation,
         CancellationToken cancellationToken)
     {
         var rows = await documentSnapshots.GetForCounterpartiesAsync(
@@ -342,7 +422,7 @@ public sealed class MergeProcessor(
             return;
 
         var sourceIds = factureIns.Select(item => item.DocumentId).ToArray();
-        var response = await sender.SendAsync(
+        var egressResponse = await sender.SendAsync(
             job.AccountId,
             job.MainCounterpartyId,
             "facturein",
@@ -352,6 +432,19 @@ public sealed class MergeProcessor(
             job.RequestedByUserId,
             job.CorrelationId,
             cancellationToken);
+
+        await documentsInOperation.AppendEgressResponseAsync(
+            job.AccountId,
+            job.Id,
+            DocumentsInOperationTypes.RecreateFactureIn,
+            egressResponse.StatusCode,
+            egressResponse.Body,
+            cancellationToken);
+        var response = MergeEgressResponseReader.Read<FactureInRecreationResponse>(
+            egressResponse,
+            "EGRESS_INVALID_RESPONSE",
+            "MoySklad Egress Service returned an empty facturein recreation response.",
+            "MoySklad Egress Service returned an invalid facturein recreation response.");
 
         var skipped = response.SkippedDocumentIds.ToHashSet();
         var failed = response.FailedDocuments?.Select(item => item.SourceDocumentId).ToHashSet() ?? [];
@@ -374,6 +467,7 @@ public sealed class MergeProcessor(
         IReadOnlyList<Guid> duplicateCounterpartyIds,
         IFactureOutRecreationSender sender,
         IDocumentSnapshotRepository documentSnapshots,
+        IDocumentsInOperationRepository documentsInOperation,
         CancellationToken cancellationToken)
     {
         var rows = await documentSnapshots.GetForCounterpartiesAsync(
@@ -385,7 +479,7 @@ public sealed class MergeProcessor(
             return;
 
         var sourceIds = factureOuts.Select(item => item.DocumentId).ToArray();
-        var response = await sender.SendAsync(
+        var egressResponse = await sender.SendAsync(
             job.AccountId,
             job.MainCounterpartyId,
             "factureout",
@@ -395,6 +489,19 @@ public sealed class MergeProcessor(
             job.RequestedByUserId,
             job.CorrelationId,
             cancellationToken);
+
+        await documentsInOperation.AppendEgressResponseAsync(
+            job.AccountId,
+            job.Id,
+            DocumentsInOperationTypes.RecreateFactureOut,
+            egressResponse.StatusCode,
+            egressResponse.Body,
+            cancellationToken);
+        var response = MergeEgressResponseReader.Read<FactureOutRecreationResponse>(
+            egressResponse,
+            "EGRESS_INVALID_RESPONSE",
+            "MoySklad Egress Service returned an empty factureout recreation response.",
+            "MoySklad Egress Service returned an invalid factureout recreation response.");
 
         ValidateFactureOutResponse(sourceIds, response);
 

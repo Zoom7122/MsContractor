@@ -92,7 +92,7 @@ public sealed class MigrationSnapshotDiagnosticTests
             "20260914120000_RemoveSalesReturnRecreationRequest",
             "20260916120000_RemoveDocumentAdditionalData"
         ];
-        Assert.Equal([.. expected, "20260924120000_AddMergeCounterpartyLocks", "20260927120000_AddCounterpartySyncStaging", "20260927130000_AddCatalogSettings", "20260927140000_ReworkCatalogSettings"],
+        Assert.Equal([.. expected, "20260924120000_AddMergeCounterpartyLocks", "20260927120000_AddCounterpartySyncStaging", "20260927130000_AddCatalogSettings", "20260927140000_ReworkCatalogSettings", "20261019113834_AddDocumentsInOperationResponses"],
             context.GetService<IMigrationsAssembly>().Migrations.Keys);
     }
 
@@ -111,6 +111,39 @@ public sealed class MigrationSnapshotDiagnosticTests
         Assert.Equal("catalog_settings", table.Name);
         Assert.Equal(["AccountId"], table.PrimaryKey!.Columns);
         Assert.Contains(table.Columns, column => column.Name == "Payload" && column.ColumnType == "jsonb");
+
+        var sql = string.Join(Environment.NewLine,
+            migration.UpOperations.OfType<SqlOperation>().Select(operation => operation.Sql));
+        Assert.Contains("ENABLE ROW LEVEL SECURITY", sql);
+        Assert.Contains("FORCE ROW LEVEL SECURITY", sql);
+        Assert.Contains("CREATE POLICY account_isolation", sql);
+        Assert.Contains("current_setting('app.account_id', true)", sql);
+    }
+
+    [Fact]
+    public void DocumentsInOperationMigration_CreatesTenantScopedEgressResponseLog()
+    {
+        using var context = new CatalogSyncDbContext(new DbContextOptionsBuilder<CatalogSyncDbContext>()
+            .UseNpgsql("Host=localhost;Database=test;Username=postgres;Password=postgres").Options);
+        var migrationsAssembly = context.GetService<IMigrationsAssembly>();
+        var migration = migrationsAssembly.CreateMigration(
+            migrationsAssembly.Migrations["20261019113834_AddDocumentsInOperationResponses"],
+            context.Database.ProviderName!);
+
+        var table = Assert.Single(migration.UpOperations.OfType<CreateTableOperation>());
+        Assert.Equal("catalog_sync", table.Schema);
+        Assert.Equal("documents_in_operation", table.Name);
+        Assert.Contains(table.Columns, column => column.Name == "RawJson" && column.ColumnType == "jsonb");
+        Assert.Contains(table.Columns, column => column.Name == "OperationType" && column.MaxLength == 64);
+        var foreignKey = Assert.Single(table.ForeignKeys);
+        Assert.Equal(["MergeJobId", "AccountId"], foreignKey.Columns!);
+        Assert.Equal("merge_jobs", foreignKey.PrincipalTable);
+        Assert.Equal(["Id", "AccountId"], foreignKey.PrincipalColumns!);
+        Assert.Equal(ReferentialAction.Cascade, foreignKey.OnDelete);
+
+        var groupIndex = Assert.Single(migration.UpOperations.OfType<CreateIndexOperation>(),
+            index => index.Table == "documents_in_operation" && index.IsUnique);
+        Assert.Equal(["AccountId", "MergeJobId", "OperationType"], groupIndex.Columns);
 
         var sql = string.Join(Environment.NewLine,
             migration.UpOperations.OfType<SqlOperation>().Select(operation => operation.Sql));

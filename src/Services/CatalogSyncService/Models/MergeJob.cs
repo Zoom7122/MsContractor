@@ -28,4 +28,5 @@ public sealed class MergeJob
     public DateTimeOffset? CompletedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public ICollection<MergeOperation> Operations { get; set; } = [];
+    public ICollection<DocumentsInOperation> DocumentsInOperation { get; set; } = [];
 }

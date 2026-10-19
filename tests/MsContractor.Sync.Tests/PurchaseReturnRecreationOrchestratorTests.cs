@@ -37,24 +37,24 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
                 [firstId] = new Dictionary<Guid, string> { [Guid.NewGuid()] = PositionJson() },
                 [invalidId] = new Dictionary<Guid, string> { [Guid.NewGuid()] = PositionJson() }
             });
-        var verifier = new RecordingVerifier(events);
         var orchestrator = CreateOrchestrator(
-            new PreparationStub([firstId, invalidId]), repository, gateway,
-            verifier: verifier);
+            new PreparationStub([firstId, invalidId]), repository, gateway);
 
-        await orchestrator.ExecuteAsync(
+        var result = await orchestrator.ExecuteAsync(
             Guid.NewGuid(), mainCounterpartyId, [firstId, invalidId], CancellationToken.None);
 
-        Assert.Equal(["delete", "create", "verify"], events);
+        Assert.Equal(["delete", "create"], events);
         Assert.Single(gateway.DeletedBatches);
         Assert.Equal([firstId], gateway.DeletedBatches[0]);
         Assert.Single(gateway.CreatedBatches);
         Assert.Equal([firstId], gateway.CreatedBatches[0].Select(item => item.SourceDocumentId));
-        Assert.Equal([firstId], verifier.VerifiedIds);
+        var recreated = Assert.Single(result.Documents, item => item.SourceDocumentId == firstId);
+        Assert.Equal("Recreated", recreated.Status);
+        Assert.NotNull(recreated.NewDocumentId);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReattachesAfterCreateAndBeforeVerification()
+    public async Task ExecuteAsync_ReattachesAfterCreateWithoutVerification()
     {
         var sourceId = Guid.NewGuid();
         var events = new List<string>();
@@ -64,26 +64,24 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
             CreateResults = items => items.Select(item => new MoySkladPurchaseReturnBatchCreateResult(
                 item.SourceDocumentId, Guid.NewGuid(), item.PayloadJson)).ToArray()
         };
-        var verifier = new RecordingVerifier(events);
         var orchestrator = CreateOrchestrator(
             new PreparationStub([sourceId]),
             RepositoryFor(sourceId),
             gateway,
-            verifier: verifier,
             factureRelations: new RecordingFactureRelationsService(events));
 
-        await orchestrator.ExecuteAsync(
+        var result = await orchestrator.ExecuteAsync(
             Guid.NewGuid(),
             Guid.NewGuid(),
             [sourceId],
             CancellationToken.None);
 
-        Assert.Equal(["delete", "create", "reattach", "verify"], events);
-        Assert.Equal([sourceId], verifier.VerifiedIds);
+        Assert.Equal(["delete", "create", "reattach"], events);
+        Assert.Equal("Recreated", Assert.Single(result.Documents).Status);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ReturnsCreatedWithErrorAndSkipsVerificationWhenReattachFails()
+    public async Task ExecuteAsync_ReturnsCreatedWithErrorWhenReattachFails()
     {
         var sourceId = Guid.NewGuid();
         var newId = Guid.NewGuid();
@@ -94,12 +92,10 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
             CreateResults = items => items.Select(item => new MoySkladPurchaseReturnBatchCreateResult(
                 item.SourceDocumentId, newId, item.PayloadJson)).ToArray()
         };
-        var verifier = new RecordingVerifier(events);
         var orchestrator = CreateOrchestrator(
             new PreparationStub([sourceId]),
             RepositoryFor(sourceId),
             gateway,
-            verifier: verifier,
             factureRelations: new FailingReattachFactureRelationsService());
 
         var result = await orchestrator.ExecuteAsync(
@@ -112,7 +108,6 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
         Assert.Equal(newId, document.NewDocumentId);
         Assert.Equal("CreatedWithError", document.Status);
         Assert.Equal("PURCHASERETURN_PAYMENT_RELATIONS_REATTACH_FAILED", document.ErrorCode);
-        Assert.Empty(verifier.VerifiedIds);
     }
 
     [Fact]
@@ -174,8 +169,7 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
             new PreparationStub([firstId, secondId]),
             repository,
             gateway,
-            new PurchaseReturnRecreationOptions(2, TimeSpan.Zero),
-            new NoopVerifier());
+            new PurchaseReturnRecreationOptions(2, TimeSpan.Zero));
 
         await orchestrator.ExecuteAsync(
             Guid.NewGuid(), Guid.NewGuid(), [firstId, secondId], CancellationToken.None);
@@ -205,8 +199,7 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
             new PreparationStub([documentId]),
             RepositoryFor(documentId),
             gateway,
-            new PurchaseReturnRecreationOptions(2, TimeSpan.Zero),
-            new NoopVerifier());
+            new PurchaseReturnRecreationOptions(2, TimeSpan.Zero));
 
         await orchestrator.ExecuteAsync(Guid.NewGuid(), Guid.NewGuid(), [documentId], CancellationToken.None);
 
@@ -227,8 +220,7 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
             new PreparationStub([documentId]),
             RepositoryFor(documentId),
             gateway,
-            new PurchaseReturnRecreationOptions(3, TimeSpan.Zero),
-            new NoopVerifier());
+            new PurchaseReturnRecreationOptions(3, TimeSpan.Zero));
 
         await orchestrator.ExecuteAsync(Guid.NewGuid(), Guid.NewGuid(), [documentId], CancellationToken.None);
 
@@ -236,7 +228,7 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_RecreatesLinkedInvoicesAfterReturnAndBeforeVerification()
+    public async Task ExecuteAsync_RecreatesLinkedInvoicesAfterReturnWithoutPurchaseReturnVerification()
     {
         var sourceId = Guid.NewGuid(); var newId = Guid.NewGuid(); var mainId = Guid.NewGuid();
         var events = new List<string>();
@@ -244,14 +236,14 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
         var first = invoices.AddInvoice(sourceId); var second = invoices.AddInvoice(sourceId);
         var gateway = SuccessfulGateway(events, newId);
         var orchestrator = CreateOrchestrator(new PreparationStub([sourceId]), RepositoryFor(sourceId), gateway,
-            verifier: new RecordingVerifier(events), factureRelations: new LinkedFactureRelations(events, [new(sourceId, first), new(sourceId, second)]),
+            factureRelations: new LinkedFactureRelations(events, [new(sourceId, first), new(sourceId, second)]),
             factureOutService: invoices.Service);
         var result = await orchestrator.ExecuteAsync(Guid.NewGuid(), mainId, [sourceId], CancellationToken.None);
-        Assert.Equal("Verified", Assert.Single(result.Documents).Status);
+        Assert.Equal("Recreated", Assert.Single(result.Documents).Status);
         Assert.Equal(newId, Assert.Single(result.RecreatedPurchaseReturns).NewDocumentId);
         Assert.Equal(2, result.RecreatedFactureOuts.Count);
         Assert.Equal(["inspect", "invoice-prepare", "invoice-payload", "detach", "invoice-delete", "delete", "create",
-            "invoice-create", "invoice-verify", "reattach", "verify"], events);
+            "invoice-create", "invoice-verify", "reattach"], events);
         Assert.All(invoices.Gateway.CreatedItems, item => Assert.Contains(newId.ToString("D"), item.PayloadJson));
     }
 
@@ -323,21 +315,19 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_InvoiceCreateFailureKeepsNewReturnAndDoesNotVerifyItAsTransferred()
+    public async Task ExecuteAsync_InvoiceCreateFailureKeepsNewReturnAsCreatedWithError()
     {
         var sourceId = Guid.NewGuid(); var newId = Guid.NewGuid(); var events = new List<string>();
         var invoices = new PurchaseReturnFactureOutFixture(events);
         var invoiceId = invoices.AddInvoice(sourceId);
         invoices.Gateway.RejectedCreateIds.Add(invoiceId);
         var gateway = SuccessfulGateway(events, newId);
-        var verifier = new RecordingVerifier(events);
         var orchestrator = CreateOrchestrator(new PreparationStub([sourceId]), RepositoryFor(sourceId), gateway,
-            verifier: verifier, factureRelations: new LinkedFactureRelations(events, [new(sourceId, invoiceId)]),
+            factureRelations: new LinkedFactureRelations(events, [new(sourceId, invoiceId)]),
             factureOutService: invoices.Service);
         var result = await orchestrator.ExecuteAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
         Assert.Equal("CreatedWithError", Assert.Single(result.Documents).Status);
         Assert.Equal(newId, Assert.Single(result.RecreatedPurchaseReturns).NewDocumentId);
-        Assert.Empty(verifier.VerifiedIds);
         Assert.Contains("reattach", events);
     }
 
@@ -397,7 +387,6 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
         IPurchaseReturnPreparationRepository repository,
         RecordingGateway gateway,
         PurchaseReturnRecreationOptions? options = null,
-        IPurchaseReturnVerifier? verifier = null,
         IPurchaseReturnFactureRelationsService? factureRelations = null,
         IPurchaseReturnFactureOutService? factureOutService = null) =>
         new(
@@ -405,7 +394,6 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
             factureRelations ?? new NoopFactureRelationsService(),
             repository,
             gateway,
-            verifier ?? new NoopVerifier(),
             new PurchaseReturnCreateMapper(Options.Create(new EgressOptions
             {
                 JsonApiBaseUrl = new Uri("https://api.example.test/api/remap/1.2/")
@@ -547,36 +535,6 @@ public sealed class PurchaseReturnRecreationOrchestratorTests
                     "PURCHASERETURN_PAYMENT_RELATIONS_REATTACH_FAILED",
                     "Could not reattach cashin 00000000-0000-0000-0000-000000000001 for purchasereturn."))
                     .ToArray()));
-    }
-
-    private sealed class NoopVerifier : IPurchaseReturnVerifier
-    {
-        public Task<PurchaseReturnVerificationResult> VerifyAsync(
-            Guid accountId,
-            Guid mainCounterpartyId,
-            IReadOnlyList<PurchaseReturnVerificationInput> documents,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(new PurchaseReturnVerificationResult(
-                documents.Select(item => new PurchaseReturnDocumentVerificationResult(
-                    item.SourceDocumentId, item.NewDocumentId, "Verified", [], [], [])).ToArray()));
-    }
-
-    private sealed class RecordingVerifier(List<string> events) : IPurchaseReturnVerifier
-    {
-        public List<Guid> VerifiedIds { get; } = [];
-
-        public Task<PurchaseReturnVerificationResult> VerifyAsync(
-            Guid accountId,
-            Guid mainCounterpartyId,
-            IReadOnlyList<PurchaseReturnVerificationInput> documents,
-            CancellationToken cancellationToken)
-        {
-            events.Add("verify");
-            VerifiedIds.AddRange(documents.Select(item => item.SourceDocumentId));
-            return Task.FromResult(new PurchaseReturnVerificationResult(
-                documents.Select(item => new PurchaseReturnDocumentVerificationResult(
-                    item.SourceDocumentId, item.NewDocumentId, "Verified", [], [], [])).ToArray()));
-        }
     }
 
     private static RecordingRepository RepositoryFor(params Guid[] ids) =>

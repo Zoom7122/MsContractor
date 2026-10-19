@@ -9,6 +9,86 @@ namespace MsContractor.Sync.Tests;
 
 public sealed class SalesReturnRecreationOrchestratorTests
 {
+    [Theory]
+    [InlineData("{\"meta\":{\"type\":\"factureout\",\"href\":\"https://api.example.test/entity/factureout/11111111-1111-4111-8111-111111111111\"}}")]
+    [InlineData("null")]
+    [InlineData("\"invalid-reference\"")]
+    public async Task RecreateAsync_SkipsSalesReturnWithFactureOutBeforePreparingRecreation(string factureOut)
+    {
+        var accountId = Guid.NewGuid();
+        var sourceId = Guid.NewGuid();
+        var source = new JsonObject { ["id"] = sourceId, ["factureOut"] = JsonNode.Parse(factureOut) };
+        var gateway = new RecordingGateway([]);
+        var positionsLoader = new RecordingPositionsLoader();
+        var relations = new NoOpRelationsService();
+        var operations = new RecordingOperationsRepository();
+
+        var result = await Service(
+            new Dictionary<Guid, string> { [sourceId] = source.ToJsonString() },
+            new Dictionary<Guid, IReadOnlyDictionary<Guid, string>>(),
+            operations,
+            gateway,
+            positionsLoader: positionsLoader,
+            relations: relations).RecreateAsync(accountId, Guid.NewGuid(), [sourceId], CancellationToken.None);
+
+        Assert.Empty(result.TransferredDocumentIds);
+        Assert.Equal([sourceId], result.SkippedDocumentIds);
+        var document = Assert.Single(result.SkippedDocuments);
+        Assert.Equal(sourceId, document.DocumentId);
+        Assert.Equal("Skipped", document.Status);
+        Assert.Equal("SALESRETURN_FACTURE_OUT_PRESENT", document.ErrorCode);
+        Assert.NotNull(document.Error);
+        Assert.Empty(result.CreatedWithErrors);
+        Assert.Empty(result.UnCreatedButDeleted);
+        Assert.Equal("Completed", operations.Operation!.Status);
+        Assert.False(positionsLoader.WasCalled);
+        Assert.Equal(0, gateway.AgentAccountCalls);
+        Assert.Equal(0, relations.PrepareCalls);
+        Assert.Equal(0, relations.ReattachCalls);
+        Assert.Empty(gateway.Writes);
+        var item = Assert.Single(operations.Operation!.Items);
+        Assert.Equal(accountId, item.AccountId);
+        Assert.Equal("Skipped", item.Stage);
+        Assert.Equal("Skipped", item.RelationsStatus);
+        Assert.Equal("SALESRETURN_FACTURE_OUT_PRESENT", item.ErrorCode);
+        Assert.Equal(source.ToJsonString(), item.SourceRawJson);
+        Assert.Equal("{}", item.NewPayloadJson);
+        Assert.Equal(Guid.Empty, item.NewSyncId);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_RecreatesOtherDocumentsWhenSalesReturnWithFactureOutIsSkipped()
+    {
+        var skippedId = Guid.NewGuid();
+        var readyId = Guid.NewGuid();
+        var gateway = new RecordingGateway([]);
+        var positionsLoader = new RecordingPositionsLoader();
+        var operations = new RecordingOperationsRepository();
+
+        var result = await Service(
+            new Dictionary<Guid, string>
+            {
+                [skippedId] = new JsonObject { ["id"] = skippedId, ["factureOut"] = new JsonObject() }.ToJsonString(),
+                [readyId] = SourceDocument(readyId)
+            },
+            new Dictionary<Guid, IReadOnlyDictionary<Guid, string>> { [readyId] = Positions(readyId) },
+            operations,
+            gateway,
+            positionsLoader: positionsLoader).RecreateAsync(
+            Guid.NewGuid(), Guid.NewGuid(), [skippedId, readyId], CancellationToken.None);
+
+        Assert.Equal([readyId], positionsLoader.DocumentIds);
+        Assert.Equal([readyId], gateway.DeletedIds);
+        Assert.Equal([readyId], gateway.CreatedSourceIds);
+        Assert.Equal([readyId], result.TransferredDocumentIds);
+        Assert.Equal([skippedId], result.SkippedDocumentIds);
+        Assert.Equal("Skipped", result.SkippedDocuments.Single().Status);
+        Assert.Empty(result.CreatedWithErrors);
+        Assert.Empty(result.UnCreatedButDeleted);
+        Assert.Equal("Completed", operations.Operation!.Status);
+        Assert.Equal("Skipped", operations.Operation!.Items.Single(item => item.SourceDocumentId == skippedId).RelationsStatus);
+    }
+
     [Fact]
     public async Task RecreateAsync_DeletesAllBatchesBeforeCreatingNewBatches()
     {
@@ -25,6 +105,8 @@ public sealed class SalesReturnRecreationOrchestratorTests
 
         Assert.Equal(["delete:1000", "delete:1", "create:1000", "create:1"], gateway.Writes);
         Assert.Equal(ids, result.TransferredDocumentIds);
+        Assert.Equal(ids, result.TransferredDocuments.Select(item => item.SourceDocumentId));
+        Assert.All(result.TransferredDocuments, item => Assert.NotEqual(Guid.Empty, item.NewDocumentId));
         Assert.Empty(result.SkippedDocuments);
         Assert.Empty(result.CreatedWithErrors);
         Assert.Empty(result.UnCreatedButDeleted);
@@ -486,11 +568,13 @@ public sealed class SalesReturnRecreationOrchestratorTests
         }
 
         public bool WasCalled { get; private set; }
+        public IReadOnlyList<Guid>? DocumentIds { get; private set; }
 
         public Task LoadAsync(Guid accountId, Guid requestedByUserId, string correlationId,
             IReadOnlyList<Guid> salesReturnIds, CancellationToken cancellationToken)
         {
             WasCalled = true;
+            DocumentIds = salesReturnIds;
             _events?.Add("load-positions");
             return _exception is null ? Task.CompletedTask : Task.FromException(_exception);
         }
@@ -529,6 +613,7 @@ public sealed class SalesReturnRecreationOrchestratorTests
         public List<Guid> CreatedSourceIds { get; } = [];
         public List<string> NewPayloads { get; } = [];
         public List<Guid> CreatedIds { get; } = [];
+        public int AgentAccountCalls { get; private set; }
         public bool ReturnInvalidNewDocument { get; set; }
         public bool ReturnCreateErrorWithoutDocument { get; set; }
         public bool ReturnDeleteError { get; set; }
@@ -541,7 +626,11 @@ public sealed class SalesReturnRecreationOrchestratorTests
             Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
 
         public Task<IReadOnlyList<MoySkladSalesReturnAgentAccount>> GetAgentAccountsAsync(Guid accountId,
-            Guid mainAgentId, string correlationId, CancellationToken cancellationToken) => Task.FromResult(_accounts);
+            Guid mainAgentId, string correlationId, CancellationToken cancellationToken)
+        {
+            AgentAccountCalls++;
+            return Task.FromResult(_accounts);
+        }
 
         public Task<IReadOnlyList<MoySkladSalesReturnBatchDeleteResult>> DeleteBatchAsync(Guid accountId,
             string correlationId, IReadOnlyList<Guid> salesReturnIds, CancellationToken cancellationToken)
@@ -691,12 +780,16 @@ public sealed class SalesReturnRecreationOrchestratorTests
 
     private sealed class NoOpRelationsService : ISalesReturnRelationsService
     {
+        public int PrepareCalls { get; private set; }
+        public int ReattachCalls { get; private set; }
+
         public Task PrepareAndDetachAsync(
             SalesReturnRecreationOperation operation,
             string correlationId,
             CancellationToken cancellationToken)
         {
-            foreach (var item in operation.Items)
+            PrepareCalls++;
+            foreach (var item in operation.Items.Where(item => item.Stage == "Prepared"))
                 item.RelationsStatus = "RelationsDetached";
             return Task.CompletedTask;
         }
@@ -706,6 +799,7 @@ public sealed class SalesReturnRecreationOrchestratorTests
             string correlationId,
             CancellationToken cancellationToken)
         {
+            ReattachCalls++;
             foreach (var item in operation.Items.Where(item => item.Stage == "Created"))
             {
                 item.RelationsStatus = "RelationsReattached";

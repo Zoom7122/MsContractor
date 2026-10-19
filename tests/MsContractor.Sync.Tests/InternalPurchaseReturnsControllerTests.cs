@@ -41,7 +41,7 @@ public sealed class InternalPurchaseReturnsControllerTests
         var serviceResult = new PurchaseReturnVerificationResult(
         [
             new PurchaseReturnDocumentVerificationResult(
-                transferredId, Guid.NewGuid(), "Verified", [], [], []),
+                transferredId, Guid.NewGuid(), "Recreated", [], [], []),
             new PurchaseReturnDocumentVerificationResult(
                 skippedId, null, "Skipped", [], [], [], "PURCHASERETURN_SKIPPED", "not ready")
         ]);

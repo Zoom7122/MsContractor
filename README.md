@@ -36,10 +36,14 @@ docker compose --env-file .env.dev --profile dev-tools ps
 | iframe | `http://localhost:<FRONTEND_IFRAME_PORT>/moysklad/app` |
 | Gateway и Swagger UI в режиме Development | `http://localhost:<GATEWAY_BFF_PORT>/swagger` |
 | Dozzle, логи контейнеров | `http://localhost:<DOZZLE_PORT>` |
+| Kafka UI | `http://localhost:<KAFKA_UI_PORT>` |
+| RedisInsight | `http://localhost:5540` |
 
 У iframe должна быть действующая сессия: МойСклад передаёт `contextKey` при открытии приложения. Для локальной разработки в `Development` у VendorService есть `POST /api/moysklad/session/dev`; он использует `DEV_ACCOUNT_ID`. Без сессии интерфейс показывает ошибку доступа, даже если контейнеры здоровы.
 
-Остановить стек можно командой `make compose-down`. Команда `make compose-down-del` дополнительно удаляет тома dev-стека, включая данные PostgreSQL и Redis.
+Остановить стек разработки можно командой `make compose-down`. Команда `make compose-down-del` дополнительно удаляет тома dev-стека, включая данные PostgreSQL и Redis.
+
+Для запуска в режиме Production используйте `make compose-up-prod`, а для остановки — `make compose-down-prod`. Production-команда загружает `.env.prod`, задаёт `ASPNETCORE_ENVIRONMENT=Production` и перед запуском останавливает Kafka UI, RedisInsight и Dozzle, если они работали из dev-стека. `make compose-down-prod` удаляет контейнеры, но сохраняет именованные volumes. В production маршрут `POST /api/moysklad/session/dev` отвечает `404` и не создаёт сессию или cookie. Этот режим не подтверждает готовность всего стека к публичному production-развёртыванию.
 
 ## Архитектура
 
@@ -163,7 +167,7 @@ Egress владеет HTTP-взаимодействием с JSON API и про�
 | `SERVICE_INTERNAL_PORT` и `*_SERVICE_PORT`, `GATEWAY_BFF_PORT`, `FRONTEND_IFRAME_PORT` | HTTP-порт сервисов внутри Compose и опубликованные порты хоста. |
 | `POSTGRES_*`, `REDIS_PORT`, `KAFKA_*` | Подключение к PostgreSQL, Redis и Kafka. |
 
-`make compose-up` использует `.env.dev` и профиль `dev-tools`. Для прямых команд Compose тоже указывайте `--env-file .env.dev`: без него обязательные переменные не подставятся. `SERVICE_INTERNAL_PORT` — порт внутри контейнеров; адреса снаружи задают `GATEWAY_BFF_PORT` и остальные переменные опубликованных портов. В текущем Compose `POSTGRES_PORT` подставляется по обе стороны проброса порта, а штатный порт PostgreSQL в контейнере — `5432`. Если нужен другой порт хоста, одного изменения `.env.dev` недостаточно: требуется согласовать проброс и внутренний адрес подключения.
+`make compose-up` использует `.env.dev`, явно задаёт `ASPNETCORE_ENVIRONMENT=Development` и включает профиль `dev-tools` с Kafka UI, RedisInsight и Dozzle. `make compose-up-prod` использует `.env.prod`, задаёт `Production` и не включает dev-инструменты. Для прямых команд Compose указывайте соответствующий `--env-file`: без него обязательные переменные не подставятся. `SERVICE_INTERNAL_PORT` — порт внутри контейнеров; адреса снаружи задают `GATEWAY_BFF_PORT` и остальные переменные опубликованных портов. В текущем Compose `POSTGRES_PORT` подставляется по обе стороны проброса порта, а штатный порт PostgreSQL в контейнере — `5432`. Если нужен другой порт хоста, одного изменения `.env.dev` недостаточно: требуется согласовать проброс и внутренний адрес подключения.
 
 ```bash
 # Backend: требуется .NET SDK 10

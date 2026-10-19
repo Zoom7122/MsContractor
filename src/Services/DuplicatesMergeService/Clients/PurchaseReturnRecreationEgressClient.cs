@@ -6,7 +6,7 @@ namespace MsContractor.DuplicatesMergeService.Clients;
 
 public interface IPurchaseReturnRecreationEgressClient
 {
-    Task<PurchaseReturnRecreationResponse> RecreateAsync(
+    Task<MergeEgressHttpResponse> RecreateAsync(
         Guid accountId,
         Guid mainCounterpartyId,
         IReadOnlyList<Guid> purchaseReturnIds,
@@ -21,7 +21,7 @@ public sealed class PurchaseReturnRecreationEgressClient(
     HttpClient httpClient,
     IConfiguration configuration) : IPurchaseReturnRecreationEgressClient
 {
-    public async Task<PurchaseReturnRecreationResponse> RecreateAsync(
+    public async Task<MergeEgressHttpResponse> RecreateAsync(
         Guid accountId,
         Guid mainCounterpartyId,
         IReadOnlyList<Guid> purchaseReturnIds,
@@ -75,41 +75,17 @@ public sealed class PurchaseReturnRecreationEgressClient(
 
         using (response)
         {
-            if (!response.IsSuccessStatusCode)
-            {
-                InternalErrorResponse? error = null;
-                try
-                {
-                    error = await response.Content.ReadFromJsonAsync<InternalErrorResponse>(cancellationToken);
-                }
-                catch (Exception exception) when (exception is System.Text.Json.JsonException or NotSupportedException or IOException or HttpRequestException ||
-                    exception is OperationCanceledException && !cancellationToken.IsCancellationRequested)
-                {
-                    // Use a stable fallback for an untrusted Egress response.
-                }
-
-                throw new MergeEgressException(
-                    (int)response.StatusCode >= 500 || (int)response.StatusCode == 429
-                        ? MergeEgressException.PurchaseReturnUnknownResult
-                        : error?.Code ?? "EGRESS_UNAVAILABLE",
-                    error?.Message ?? "MoySklad Egress Service returned an error.",
-                    (int)response.StatusCode);
-            }
-
             try
             {
-                return await response.Content.ReadFromJsonAsync<PurchaseReturnRecreationResponse>(cancellationToken)
-                    ?? throw new MergeEgressException(
-                        MergeEgressException.PurchaseReturnUnknownResult,
-                        "MoySklad Egress Service returned an empty purchasereturn recreation response.",
-                        502);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                return new MergeEgressHttpResponse((int)response.StatusCode, body);
             }
             catch (Exception exception) when (exception is System.Text.Json.JsonException or NotSupportedException or IOException or HttpRequestException ||
                 exception is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             {
                 throw new MergeEgressException(
                     MergeEgressException.PurchaseReturnUnknownResult,
-                    "MoySklad Egress Service returned an invalid purchasereturn recreation response.",
+                    "Purchasereturn recreation response could not be read; the remote result is unknown.",
                     502);
             }
         }

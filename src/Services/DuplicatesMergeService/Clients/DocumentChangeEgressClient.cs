@@ -5,7 +5,7 @@ namespace MsContractor.DuplicatesMergeService.Clients;
 
 public interface IDocumentChangeEgressClient
 {
-    Task<MoySkladDocumentChangeCounterpartyResponse> ChangeCounterpartyAsync(
+    Task<MergeEgressHttpResponse> ChangeCounterpartyAsync(
         Guid accountId,
         Guid mainCounterpartyId,
         IReadOnlyList<MoySkladDocumentChangeItem> documents,
@@ -15,7 +15,7 @@ public interface IDocumentChangeEgressClient
         Guid correlationId,
         CancellationToken cancellationToken);
 
-    Task<MoySkladDocumentChangeCounterpartyResponse> ChangeAgentAndContractAsync(
+    Task<MergeEgressHttpResponse> ChangeAgentAndContractAsync(
         Guid accountId,
         Guid mainCounterpartyId,
         IReadOnlyList<MoySkladDocumentChangeAgentAndContractItem> documents,
@@ -39,7 +39,7 @@ public sealed class DocumentChangeEgressClient : IDocumentChangeEgressClient
         _configuration = configuration;
     }
 
-    public async Task<MoySkladDocumentChangeCounterpartyResponse> ChangeCounterpartyAsync(
+    public Task<MergeEgressHttpResponse> ChangeCounterpartyAsync(
         Guid accountId,
         Guid mainCounterpartyId,
         IReadOnlyList<MoySkladDocumentChangeItem> documents,
@@ -49,7 +49,7 @@ public sealed class DocumentChangeEgressClient : IDocumentChangeEgressClient
         Guid correlationId,
         CancellationToken cancellationToken)
     {
-        return await SendAsync<MoySkladDocumentChangeCounterpartyRequest, MoySkladDocumentChangeCounterpartyResponse>(
+        return SendAsync(
             accountId,
             "change-counterparty",
             new MoySkladDocumentChangeCounterpartyRequest(mainCounterpartyId, documents),
@@ -60,7 +60,7 @@ public sealed class DocumentChangeEgressClient : IDocumentChangeEgressClient
             cancellationToken);
     }
 
-    public Task<MoySkladDocumentChangeCounterpartyResponse> ChangeAgentAndContractAsync(
+    public Task<MergeEgressHttpResponse> ChangeAgentAndContractAsync(
         Guid accountId,
         Guid mainCounterpartyId,
         IReadOnlyList<MoySkladDocumentChangeAgentAndContractItem> documents,
@@ -69,7 +69,7 @@ public sealed class DocumentChangeEgressClient : IDocumentChangeEgressClient
         Guid userId,
         Guid correlationId,
         CancellationToken cancellationToken) =>
-        SendAsync<MoySkladDocumentChangeAgentAndContractRequest, MoySkladDocumentChangeCounterpartyResponse>(
+        SendAsync(
             accountId,
             "change-agent-and-contract",
             new MoySkladDocumentChangeAgentAndContractRequest(mainCounterpartyId, documents),
@@ -79,7 +79,7 @@ public sealed class DocumentChangeEgressClient : IDocumentChangeEgressClient
             correlationId,
             cancellationToken);
 
-    private async Task<TResponse> SendAsync<TRequest, TResponse>(
+    private async Task<MergeEgressHttpResponse> SendAsync<TRequest>(
         Guid accountId,
         string operation,
         TRequest payload,
@@ -87,7 +87,7 @@ public sealed class DocumentChangeEgressClient : IDocumentChangeEgressClient
         Guid operationId,
         Guid userId,
         Guid correlationId,
-        CancellationToken cancellationToken) where TResponse : class
+        CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
@@ -117,38 +117,8 @@ public sealed class DocumentChangeEgressClient : IDocumentChangeEgressClient
 
         using (response)
         {
-            if (!response.IsSuccessStatusCode)
-            {
-                InternalErrorResponse? error = null;
-                try
-                {
-                    error = await response.Content.ReadFromJsonAsync<InternalErrorResponse>(cancellationToken);
-                }
-                catch (Exception exception) when (exception is System.Text.Json.JsonException or NotSupportedException)
-                {
-                    // Use a stable fallback for an untrusted Egress response.
-                }
-                throw new MergeEgressException(
-                    error?.Code ?? "EGRESS_UNAVAILABLE",
-                    error?.Message ?? "MoySklad Egress Service returned an error.",
-                    (int)response.StatusCode);
-            }
-
-            try
-            {
-                return await response.Content.ReadFromJsonAsync<TResponse>(cancellationToken)
-                    ?? throw new MergeEgressException(
-                        "EGRESS_INVALID_RESPONSE",
-                        "MoySklad Egress Service returned an empty document change response.",
-                        502);
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                throw new MergeEgressException(
-                    "EGRESS_INVALID_RESPONSE",
-                    "MoySklad Egress Service returned an invalid document change response.",
-                    502);
-            }
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            return new MergeEgressHttpResponse((int)response.StatusCode, body);
         }
     }
 }

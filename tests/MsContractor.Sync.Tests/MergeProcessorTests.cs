@@ -24,6 +24,28 @@ namespace MsContractor.Sync.Tests;
 
 public sealed class MergeProcessorTests
 {
+    private static MergeEgressHttpResponse SalesReturnResult(
+        IReadOnlyList<Guid> transferredDocumentIds,
+        IReadOnlyList<SalesReturnTransferredDocumentResponse> transferredDocuments,
+        IReadOnlyList<Guid>? skippedDocumentIds = null,
+        IReadOnlyList<SalesReturnSkippedDocumentResponse>? skippedDocuments = null,
+        IReadOnlyList<SalesReturnCreatedWithErrorResponse>? createdWithErrors = null,
+        IReadOnlyList<SalesReturnUnCreatedButDeletedResponse>? unCreatedButDeleted = null)
+    {
+        var response = new SalesReturnRecreationResponse(
+            transferredDocumentIds,
+            transferredDocuments,
+            skippedDocumentIds ?? [],
+            skippedDocuments ?? [],
+            createdWithErrors ?? [],
+            unCreatedButDeleted ?? []);
+        return EgressResponse(response);
+    }
+
+    private static MergeEgressHttpResponse EgressResponse<T>(T response) => new(
+        (int)HttpStatusCode.OK,
+        JsonSerializer.Serialize(response, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+
     [Fact]
     public async Task ProcessAsync_RejectsCommandThatDoesNotMatchDurableJob()
     {
@@ -124,11 +146,9 @@ public sealed class MergeProcessorTests
         [
             new MoySkladDocumentReference("salesreturn", salesReturnId, fixture.Duplicates[0].Id)
         ];
-        fixture.SalesReturns.Response = (mainAgentId, documentIds) => new SalesReturnRecreationResponse(
-            Guid.NewGuid(),
-            mainAgentId,
-            [new SalesReturnRecreationDocumentResponse(
-                salesReturnId, recreatedId, "Completed", "Completed", null, null)]);
+        fixture.SalesReturns.Response = (_, _) => SalesReturnResult(
+            [salesReturnId],
+            [new SalesReturnTransferredDocumentResponse(salesReturnId, recreatedId)]);
         var command = await fixture.CreateJobAsync();
 
         await fixture.Processor.ProcessAsync(command, CancellationToken.None);
@@ -143,6 +163,200 @@ public sealed class MergeProcessorTests
         var document = await fixture.Db.CounterpartyDocuments.SingleAsync();
         Assert.Equal(recreatedId, document.DocumentId);
         Assert.Equal(fixture.Main.Id, document.CounterpartyId);
+        var audit = await fixture.Db.DocumentsInOperation.SingleAsync();
+        Assert.Equal(command.MergeJobId, audit.MergeJobId);
+        Assert.Equal(fixture.AccountId, audit.AccountId);
+        Assert.Equal(DocumentsInOperationTypes.RecreateSalesReturn, audit.OperationType);
+        using var responseArray = JsonDocument.Parse(audit.RawJson);
+        Assert.Equal(200, responseArray.RootElement[0].GetProperty("statusCode").GetInt32());
+        var storedResponse = JsonSerializer.Deserialize<SalesReturnRecreationResponse>(
+            responseArray.RootElement[0].GetProperty("body").GetRawText(),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(storedResponse);
+        Assert.Equal(recreatedId, Assert.Single(storedResponse!.TransferredDocuments!).NewDocumentId);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_GroupsDocumentChangeAndRecreationRepliesByEndpoint()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var demandId = Guid.NewGuid();
+        var salesReturnId = Guid.NewGuid();
+        var commissionReportId = Guid.NewGuid();
+        var factureInId = Guid.NewGuid();
+        fixture.Documents.Documents =
+        [
+            new MoySkladDocumentReference("demand", demandId, fixture.Duplicates[0].Id),
+            new MoySkladDocumentReference("commissionreportin", commissionReportId, fixture.Duplicates[0].Id),
+            new MoySkladDocumentReference("salesreturn", salesReturnId, fixture.Duplicates[0].Id),
+            new MoySkladDocumentReference("facturein", factureInId, fixture.Duplicates[0].Id)
+        ];
+        var command = await fixture.CreateJobAsync();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        var rows = await fixture.Db.DocumentsInOperation.OrderBy(item => item.OperationType).ToListAsync();
+        Assert.Equal(4, rows.Count);
+        Assert.Equal(
+            [
+                DocumentsInOperationTypes.ChangeAgentAndContract,
+                DocumentsInOperationTypes.ChangeCounterparty,
+                DocumentsInOperationTypes.RecreateFactureIn,
+                DocumentsInOperationTypes.RecreateSalesReturn
+            ],
+            rows.Select(item => item.OperationType).ToArray());
+        Assert.All(rows, row =>
+        {
+            using var json = JsonDocument.Parse(row.RawJson);
+            Assert.Equal(1, json.RootElement.GetArrayLength());
+            Assert.Equal(200, json.RootElement[0].GetProperty("statusCode").GetInt32());
+        });
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsStandaloneFactureOutRecreationResponse()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var factureOutId = Guid.NewGuid();
+        fixture.Documents.Documents =
+        [new MoySkladDocumentReference("factureout", factureOutId, fixture.Duplicates[0].Id)];
+        var command = await fixture.CreateJobAsync();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        var audit = await fixture.Db.DocumentsInOperation.SingleAsync();
+        Assert.Equal(DocumentsInOperationTypes.RecreateFactureOut, audit.OperationType);
+        using var response = JsonDocument.Parse(audit.RawJson);
+        Assert.Equal(200, response.RootElement[0].GetProperty("statusCode").GetInt32());
+        var parsed = JsonSerializer.Deserialize<FactureOutRecreationResponse>(
+            response.RootElement[0].GetProperty("body").GetRawText(),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(parsed);
+        Assert.Contains(factureOutId, parsed!.TransferredDocumentIds);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_PersistsErrorResponseBeforeMappingItToMergeFailure()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1, maxAttempts: 1);
+        const string errorBody = "{\"code\":\"EGRESS_BUSY\",\"message\":\"Try again.\"}";
+        fixture.Documents.Documents =
+        [new MoySkladDocumentReference("demand", Guid.NewGuid(), fixture.Duplicates[0].Id)];
+        fixture.DocumentChanges.CounterpartyRawResponse = new MergeEgressHttpResponse(503, errorBody);
+        var command = await fixture.CreateJobAsync();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        var audit = await fixture.Db.DocumentsInOperation.SingleAsync();
+        Assert.Equal(DocumentsInOperationTypes.ChangeCounterparty, audit.OperationType);
+        using var responseArray = JsonDocument.Parse(audit.RawJson);
+        var response = responseArray.RootElement[0];
+        Assert.Equal(503, response.GetProperty("statusCode").GetInt32());
+        Assert.Equal("EGRESS_BUSY", response.GetProperty("body").GetProperty("code").GetString());
+        var job = await fixture.Db.MergeJobs.SingleAsync(item => item.Id == command.MergeJobId);
+        Assert.Equal(MergeJobStatuses.Failed, job.Status);
+        Assert.Empty(fixture.Egress.ArchiveCalls);
+    }
+
+    [Fact]
+    public async Task DocumentsInOperationRepository_AppendsPerEndpointAndMergeJob()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var command = await fixture.CreateJobAsync();
+        var repository = new DocumentsInOperationRepository(fixture.Db);
+        await repository.AppendEgressResponseAsync(
+            fixture.AccountId, command.MergeJobId, DocumentsInOperationTypes.ChangeCounterparty,
+            200, "{\"batch\":1}", CancellationToken.None);
+        await repository.AppendEgressResponseAsync(
+            fixture.AccountId, command.MergeJobId, DocumentsInOperationTypes.ChangeCounterparty,
+            503, "{\"code\":\"EGRESS_BUSY\"}", CancellationToken.None);
+        await repository.AppendEgressResponseAsync(
+            fixture.AccountId, command.MergeJobId, DocumentsInOperationTypes.RecreateSalesReturn,
+            200, "{\"recreated\":true}", CancellationToken.None);
+
+        var now = DateTimeOffset.UtcNow;
+        var secondJob = new MergeJob
+        {
+            Id = Guid.NewGuid(),
+            MessageId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            AccountId = fixture.AccountId,
+            MainCounterpartyId = fixture.Main.Id,
+            RequestedByUserId = Guid.NewGuid(),
+            Status = MergeJobStatuses.Pending,
+            PayloadVersion = 1,
+            Payload = "{}",
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        fixture.Db.MergeJobs.Add(secondJob);
+        await fixture.Db.SaveChangesAsync();
+        await repository.AppendEgressResponseAsync(
+            fixture.AccountId, secondJob.Id, DocumentsInOperationTypes.ChangeCounterparty,
+            200, "{\"batch\":1}", CancellationToken.None);
+
+        var rows = await fixture.Db.DocumentsInOperation.ToListAsync();
+        Assert.Equal(3, rows.Count);
+        var firstJobChange = Assert.Single(rows, item =>
+            item.MergeJobId == command.MergeJobId &&
+            item.OperationType == DocumentsInOperationTypes.ChangeCounterparty);
+        using var grouped = JsonDocument.Parse(firstJobChange.RawJson);
+        Assert.Equal(2, grouped.RootElement.GetArrayLength());
+        Assert.Equal(200, grouped.RootElement[0].GetProperty("statusCode").GetInt32());
+        Assert.Equal(503, grouped.RootElement[1].GetProperty("statusCode").GetInt32());
+        Assert.Single(rows, item => item.MergeJobId == secondJob.Id);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_StoresAndAppliesMixedSalesReturnOutcomesBeforeFailingTheOperation()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var transferredId = Guid.NewGuid();
+        var createdWithErrorId = Guid.NewGuid();
+        var unCreatedButDeletedId = Guid.NewGuid();
+        var skippedId = Guid.NewGuid();
+        var transferredReplacementId = Guid.NewGuid();
+        var errorReplacementId = Guid.NewGuid();
+        fixture.Documents.Documents =
+        [
+            new MoySkladDocumentReference("salesreturn", transferredId, fixture.Duplicates[0].Id),
+            new MoySkladDocumentReference("salesreturn", createdWithErrorId, fixture.Duplicates[0].Id),
+            new MoySkladDocumentReference("salesreturn", unCreatedButDeletedId, fixture.Duplicates[0].Id),
+            new MoySkladDocumentReference("salesreturn", skippedId, fixture.Duplicates[0].Id)
+        ];
+        fixture.SalesReturns.Response = (_, _) => SalesReturnResult(
+            [transferredId],
+            [new SalesReturnTransferredDocumentResponse(transferredId, transferredReplacementId)],
+            [skippedId],
+            [new SalesReturnSkippedDocumentResponse(skippedId, "Skipped", "SALESRETURN_FACTURE_OUT_PRESENT", "Has factureOut.")],
+            [new SalesReturnCreatedWithErrorResponse(
+                createdWithErrorId, errorReplacementId, "CreatedWithError", "SALESRETURN_RELATIONS_REATTACH_FAILED", "Reattach failed.")],
+            [new SalesReturnUnCreatedButDeletedResponse(
+                unCreatedButDeletedId, "Failed", "SALESRETURN_NEW_CREATE_FAILED", "Create failed.")]);
+        var command = await fixture.CreateJobAsync();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        Assert.Empty(fixture.Egress.ArchiveCalls);
+        fixture.Db.ChangeTracker.Clear();
+        var job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
+        Assert.Equal(MergeJobStatuses.Failed, job.Status);
+        Assert.Equal(MergeOperationStatuses.Failed,
+            job.Operations.Single(item => item.OperationType == MergeOperationTypes.RecreateSalesReturns).Status);
+        var audit = await fixture.Db.DocumentsInOperation.SingleAsync();
+        Assert.Equal(DocumentsInOperationTypes.RecreateSalesReturn, audit.OperationType);
+        using var responseArray = JsonDocument.Parse(audit.RawJson);
+        var savedResponse = JsonSerializer.Deserialize<SalesReturnRecreationResponse>(
+            responseArray.RootElement[0].GetProperty("body").GetRawText(),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(savedResponse);
+        Assert.Equal([skippedId], savedResponse!.SkippedDocumentIds);
+        var documents = await fixture.Db.CounterpartyDocuments.OrderBy(item => item.DocumentId).ToListAsync();
+        Assert.Equal(3, documents.Count);
+        Assert.Contains(documents, item => item.CounterpartyId == fixture.Main.Id && item.DocumentId == transferredReplacementId);
+        Assert.Contains(documents, item => item.CounterpartyId == fixture.Main.Id && item.DocumentId == errorReplacementId);
+        Assert.Contains(documents, item => item.CounterpartyId == fixture.Duplicates[0].Id && item.DocumentId == skippedId);
+        Assert.DoesNotContain(documents, item => item.DocumentId == unCreatedButDeletedId);
     }
 
     [Fact]
@@ -179,6 +393,13 @@ public sealed class MergeProcessorTests
         var rows = await fixture.Db.CounterpartyDocuments.Where(row => row.AccountId == fixture.AccountId).ToListAsync();
         Assert.Contains(rows, row => row.DocumentId == newReturnId && row.CounterpartyId == fixture.Main.Id);
         Assert.Contains(rows, row => row.DocumentId == newInvoiceId && row.CounterpartyId == fixture.Main.Id);
+        var auditTypes = await fixture.Db.DocumentsInOperation
+            .OrderBy(item => item.OperationType)
+            .Select(item => item.OperationType)
+            .ToListAsync();
+        Assert.Equal(
+            [DocumentsInOperationTypes.RecreateFactureOut, DocumentsInOperationTypes.RecreatePurchaseReturn],
+            auditTypes);
         var other = await fixture.Db.CounterpartyDocuments.SingleAsync(row => row.AccountId == otherAccountId);
         Assert.Equal(foreignInvoiceId, other.DocumentId);
         Assert.Equal(otherCounterparty.Id, other.CounterpartyId);
@@ -253,11 +474,9 @@ public sealed class MergeProcessorTests
             new MoySkladDocumentReference("purchasereturn", purchaseReturnId, fixture.Duplicates[0].Id),
             new MoySkladDocumentReference("facturein", factureInId, fixture.Duplicates[0].Id)
         ];
-        fixture.SalesReturns.Response = (mainAgentId, documentIds) => new SalesReturnRecreationResponse(
-            Guid.NewGuid(),
-            mainAgentId,
-            [new SalesReturnRecreationDocumentResponse(
-                salesReturnId, recreatedSalesReturnId, "Completed", "Completed", null, null)]);
+        fixture.SalesReturns.Response = (_, _) => SalesReturnResult(
+            [salesReturnId],
+            [new SalesReturnTransferredDocumentResponse(salesReturnId, recreatedSalesReturnId)]);
         var command = await fixture.CreateJobAsync();
 
         await fixture.Processor.ProcessAsync(command, CancellationToken.None);
@@ -274,6 +493,17 @@ public sealed class MergeProcessorTests
         Assert.Equal([factureInId], factureInCall.DocumentIds);
         Assert.Empty(fixture.DocumentChanges.Calls);
         Assert.Single(fixture.Egress.ArchiveCalls);
+        var auditTypes = await fixture.Db.DocumentsInOperation
+            .OrderBy(item => item.OperationType)
+            .Select(item => item.OperationType)
+            .ToListAsync();
+        Assert.Equal(
+            [
+                DocumentsInOperationTypes.RecreateFactureIn,
+                DocumentsInOperationTypes.RecreatePurchaseReturn,
+                DocumentsInOperationTypes.RecreateSalesReturn
+            ],
+            auditTypes);
         fixture.Db.ChangeTracker.Clear();
         var operations = await fixture.Db.MergeOperations.OrderBy(item => item.Sequence).ToListAsync();
         Assert.Equal(
@@ -419,6 +649,10 @@ public sealed class MergeProcessorTests
 
         Assert.Equal([950, 1], fixture.DocumentChanges.AgentAndContractCalls.Select(call => call.Count));
         Assert.Empty(fixture.DocumentChanges.Calls);
+        var audit = await fixture.Db.DocumentsInOperation.SingleAsync();
+        Assert.Equal(DocumentsInOperationTypes.ChangeAgentAndContract, audit.OperationType);
+        using var responses = JsonDocument.Parse(audit.RawJson);
+        Assert.Equal(2, responses.RootElement.GetArrayLength());
     }
 
     [Fact]
@@ -656,12 +890,14 @@ public sealed class MergeProcessorTests
                         MergeDocumentExclusionOptions.Parse(null),
                         NullLogger<MergeDocumentDiscoveryService>.Instance),
                     new MergeMainCounterpartyUpdateService(Egress, counterparties, parser, normalizer, TimeProvider.System),
-                    new MergeDocumentChangeService(snapshots, DocumentChanges, TimeProvider.System),
+                    new MergeDocumentChangeService(
+                        snapshots, DocumentChanges, new DocumentsInOperationRepository(Db), TimeProvider.System),
                     SalesReturns,
                     PurchaseReturns,
                     FactureIns,
                     FactureOuts,
                     snapshots,
+                    new DocumentsInOperationRepository(Db),
                     new MergeCounterpartyArchiveService(Egress, counterparties, parser, normalizer, TimeProvider.System),
                     NullLogger<MergeProcessor>.Instance);
             }
@@ -735,21 +971,26 @@ public sealed class MergeProcessorTests
         public List<string> CallOrder { get; } = [];
         public Func<Guid, IReadOnlyList<MoySkladDocumentChangeItem>, MoySkladDocumentChangeCounterpartyResponse>? Response { get; set; }
         public Func<Guid, IReadOnlyList<MoySkladDocumentChangeAgentAndContractItem>, MoySkladDocumentChangeCounterpartyResponse>? AgentAndContractResponse { get; set; }
+        public MergeEgressHttpResponse? CounterpartyRawResponse { get; set; }
+        public MergeEgressHttpResponse? AgentAndContractRawResponse { get; set; }
 
-        public Task<MoySkladDocumentChangeCounterpartyResponse> ChangeCounterpartyAsync(
+        public Task<MergeEgressHttpResponse> ChangeCounterpartyAsync(
             Guid accountId, Guid mainCounterpartyId, IReadOnlyList<MoySkladDocumentChangeItem> documents,
             Guid mergeJobId, Guid operationId, Guid userId, Guid correlationId,
             CancellationToken cancellationToken)
         {
             Calls.Add(documents.ToArray());
             CallOrder.Add("counterparty");
-            return Task.FromResult(Response?.Invoke(mainCounterpartyId, documents) ??
+            if (CounterpartyRawResponse is not null)
+                return Task.FromResult(CounterpartyRawResponse);
+            var response = Response?.Invoke(mainCounterpartyId, documents) ??
                 new MoySkladDocumentChangeCounterpartyResponse(
                     mainCounterpartyId, documents.Count, documents.Count, 0, 0,
-                    documents.ToArray(), [], []));
+                    documents.ToArray(), [], []);
+            return Task.FromResult(EgressResponse(response));
         }
 
-        public Task<MoySkladDocumentChangeCounterpartyResponse> ChangeAgentAndContractAsync(
+        public Task<MergeEgressHttpResponse> ChangeAgentAndContractAsync(
             Guid accountId, Guid mainCounterpartyId,
             IReadOnlyList<MoySkladDocumentChangeAgentAndContractItem> documents,
             Guid mergeJobId, Guid operationId, Guid userId, Guid correlationId,
@@ -757,11 +998,14 @@ public sealed class MergeProcessorTests
         {
             AgentAndContractCalls.Add(documents.ToArray());
             CallOrder.Add("agent-and-contract");
+            if (AgentAndContractRawResponse is not null)
+                return Task.FromResult(AgentAndContractRawResponse);
             var changed = documents.Select(item => new MoySkladDocumentChangeItem(
                 item.DocumentType, item.DocumentId)).ToArray();
-            return Task.FromResult(AgentAndContractResponse?.Invoke(mainCounterpartyId, documents) ??
+            var response = AgentAndContractResponse?.Invoke(mainCounterpartyId, documents) ??
                 new MoySkladDocumentChangeCounterpartyResponse(
-                    mainCounterpartyId, documents.Count, changed.Length, 0, 0, changed, [], []));
+                    mainCounterpartyId, documents.Count, changed.Length, 0, 0, changed, [], []);
+            return Task.FromResult(EgressResponse(response));
         }
     }
 
@@ -769,10 +1013,10 @@ public sealed class MergeProcessorTests
     {
         public List<(Guid MainAgentId, string DocumentType, IReadOnlyList<Guid> DocumentIds)> Calls { get; } = [];
         public List<string> CallOrder { get; } = [];
-        public Func<Guid, IReadOnlyList<Guid>, SalesReturnRecreationResponse>? Response { get; set; }
+        public Func<Guid, IReadOnlyList<Guid>, MergeEgressHttpResponse>? Response { get; set; }
         public Exception? Exception { get; set; }
 
-        public Task<SalesReturnRecreationResponse> SendAsync(
+        public Task<MergeEgressHttpResponse> SendAsync(
             Guid accountId,
             Guid mainAgentId,
             string documentType,
@@ -786,14 +1030,11 @@ public sealed class MergeProcessorTests
             Calls.Add((mainAgentId, documentType, documentIds.ToArray()));
             CallOrder.Add("salesreturn");
             if (Exception is not null)
-                return Task.FromException<SalesReturnRecreationResponse>(Exception);
+                return Task.FromException<MergeEgressHttpResponse>(Exception);
 
-            return Task.FromResult(Response?.Invoke(mainAgentId, documentIds) ??
-                new SalesReturnRecreationResponse(
-                    Guid.NewGuid(),
-                    mainAgentId,
-                    documentIds.Select(id => new SalesReturnRecreationDocumentResponse(
-                        id, Guid.NewGuid(), "Completed", "Completed", null, null)).ToArray()));
+            return Task.FromResult(Response?.Invoke(mainAgentId, documentIds) ?? SalesReturnResult(
+                documentIds,
+                documentIds.Select(id => new SalesReturnTransferredDocumentResponse(id, Guid.NewGuid())).ToArray()));
         }
     }
 
@@ -804,7 +1045,7 @@ public sealed class MergeProcessorTests
         public Exception? Exception { get; set; }
         public Func<IReadOnlyList<Guid>, PurchaseReturnRecreationResponse>? Response { get; set; }
 
-        public Task<PurchaseReturnRecreationResponse> SendAsync(
+        public Task<MergeEgressHttpResponse> SendAsync(
             Guid accountId,
             Guid mainCounterpartyId,
             string documentType,
@@ -818,11 +1059,11 @@ public sealed class MergeProcessorTests
             Calls.Add((mainCounterpartyId, documentType, documentIds.ToArray()));
             CallOrder.Add("purchasereturn");
             return Exception is null
-                ? Task.FromResult(Response?.Invoke(documentIds) ?? new PurchaseReturnRecreationResponse(documentIds, [])
+                ? Task.FromResult(EgressResponse(Response?.Invoke(documentIds) ?? new PurchaseReturnRecreationResponse(documentIds, [])
                 {
                     RecreatedPurchaseReturns = documentIds.Select(id => new RecreatedPurchaseReturnResponse(id, Guid.NewGuid())).ToArray()
-                })
-                : Task.FromException<PurchaseReturnRecreationResponse>(Exception);
+                }))
+                : Task.FromException<MergeEgressHttpResponse>(Exception);
         }
     }
 
@@ -832,7 +1073,7 @@ public sealed class MergeProcessorTests
         public Func<IReadOnlyList<Guid>, FactureInRecreationResponse>? Response { get; set; }
         public Exception? Exception { get; set; }
 
-        public Task<FactureInRecreationResponse> SendAsync(
+        public Task<MergeEgressHttpResponse> SendAsync(
             Guid accountId,
             Guid mainCounterpartyId,
             string documentType,
@@ -845,10 +1086,10 @@ public sealed class MergeProcessorTests
         {
             Calls.Add((mainCounterpartyId, documentType, documentIds.ToArray()));
             if (Exception is not null)
-                return Task.FromException<FactureInRecreationResponse>(Exception);
+                return Task.FromException<MergeEgressHttpResponse>(Exception);
 
-            return Task.FromResult(Response?.Invoke(documentIds) ??
-                new FactureInRecreationResponse(documentIds, []));
+            return Task.FromResult(EgressResponse(Response?.Invoke(documentIds) ??
+                new FactureInRecreationResponse(documentIds, [])));
         }
     }
 
@@ -856,7 +1097,7 @@ public sealed class MergeProcessorTests
     {
         public List<(Guid MainCounterpartyId, string DocumentType, IReadOnlyList<Guid> DocumentIds)> Calls { get; } = [];
 
-        public Task<FactureOutRecreationResponse> SendAsync(
+        public Task<MergeEgressHttpResponse> SendAsync(
             Guid accountId,
             Guid mainCounterpartyId,
             string documentType,
@@ -868,7 +1109,7 @@ public sealed class MergeProcessorTests
             CancellationToken cancellationToken)
         {
             Calls.Add((mainCounterpartyId, documentType, documentIds.ToArray()));
-            return Task.FromResult(new FactureOutRecreationResponse(documentIds, [], [], [], []));
+            return Task.FromResult(EgressResponse(new FactureOutRecreationResponse(documentIds, [], [], [], [])));
         }
     }
 
@@ -993,7 +1234,31 @@ public sealed class DocumentChangeEgressClientTests
             accountId, mainId, [document], Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
             CancellationToken.None);
 
-        Assert.Single(response.ChangedDocuments);
+        Assert.Equal((int)HttpStatusCode.OK, response.StatusCode);
+        var parsed = JsonSerializer.Deserialize<MoySkladDocumentChangeCounterpartyResponse>(
+            response.Body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(parsed);
+        Assert.Single(parsed!.ChangedDocuments);
+    }
+
+    [Fact]
+    public async Task ChangeCounterpartyAsync_PreservesErrorStatusAndBody()
+    {
+        const string errorBody = "{\"code\":\"EGRESS_BUSY\",\"message\":\"Try again.\"}";
+        var client = new DocumentChangeEgressClient(
+            new HttpClient(new CallbackHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent(errorBody)
+            }))) { BaseAddress = new Uri("http://egress/") },
+            new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?> { ["InternalApi:Key"] = "key" }).Build());
+
+        var response = await client.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), [new MoySkladDocumentChangeItem("demand", Guid.NewGuid())],
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None);
+
+        Assert.Equal((int)HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(errorBody, response.Body);
     }
 
     private sealed class CallbackHandler(

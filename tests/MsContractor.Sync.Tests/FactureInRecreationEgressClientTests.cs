@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using MsContractor.Contracts.Internal;
 using MsContractor.DuplicatesMergeService.Clients;
@@ -67,11 +68,34 @@ public sealed class FactureInRecreationEgressClientTests
             correlationId,
             CancellationToken.None);
 
-        Assert.Equal([factureInIds[0]], response.TransferredDocumentIds);
-        Assert.Equal([factureInIds[1]], response.SkippedDocumentIds);
-        var skipped = Assert.Single(response.SkippedDocuments!);
+        Assert.Equal((int)HttpStatusCode.Accepted, response.StatusCode);
+        var parsed = JsonSerializer.Deserialize<FactureInRecreationResponse>(
+            response.Body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(parsed);
+        Assert.Equal([factureInIds[0]], parsed!.TransferredDocumentIds);
+        Assert.Equal([factureInIds[1]], parsed.SkippedDocumentIds);
+        var skipped = Assert.Single(parsed.SkippedDocuments!);
         Assert.Equal(factureInIds[1], skipped.DocumentId);
         Assert.Equal("FACTUREIN_BASE_DOCUMENT_MISSING", skipped.ErrorCode);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_PreservesNonSuccessStatusAndErrorBody()
+    {
+        const string errorBody = "{\"code\":\"EGRESS_BUSY\",\"message\":\"Try again.\"}";
+        var client = new FactureInRecreationEgressClient(
+            new HttpClient(new CallbackHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent(errorBody)
+            }))) { BaseAddress = new Uri("http://egress.test/") },
+            new ConfigurationBuilder().Build());
+
+        var response = await client.RecreateAsync(
+            Guid.NewGuid(), Guid.NewGuid(), [Guid.NewGuid()], Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None);
+
+        Assert.Equal((int)HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(errorBody, response.Body);
     }
 
     private sealed class CallbackHandler(

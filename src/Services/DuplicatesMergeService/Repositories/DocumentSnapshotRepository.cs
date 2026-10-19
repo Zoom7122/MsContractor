@@ -50,7 +50,10 @@ public sealed class DocumentSnapshotRepository : IDocumentSnapshotRepository
         IReadOnlyCollection<CounterpartyDocument> rows, CancellationToken cancellationToken)
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
-        if (rows.Any(x => x.AccountId != accountId) || sourceDocumentIds.Count != rows.Count)
+        if (sourceDocumentIds.Distinct().Count() != sourceDocumentIds.Count ||
+            rows.Count > sourceDocumentIds.Count ||
+            rows.Any(x => x.AccountId != accountId) ||
+            rows.Select(x => x.DocumentId).Distinct().Count() != rows.Count)
             throw new InvalidOperationException("Document snapshot replacement is invalid.");
 
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);

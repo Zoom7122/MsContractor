@@ -56,6 +56,7 @@ const syncAccepted = ref(null)
 const syncActionError = ref(null)
 const catalogState = ref(null)
 const queueData = ref(props.mergeQueueData)
+const hasDisplayedData = ref(Boolean(props.overviewData || props.dashboardStatusData || props.mergeQueueData))
 const stateLoading = ref(false)
 const stateLoadError = ref(null)
 let stateRefreshTimer = null
@@ -64,6 +65,7 @@ watch(
   () => props.overviewData,
   (value) => {
     if (value) {
+      hasDisplayedData.value = true
       overviewData.value = normalizeOverviewData(value)
     }
   },
@@ -74,6 +76,7 @@ watch(
   () => props.dashboardStatusData,
   (value) => {
     if (value) {
+      hasDisplayedData.value = true
       dashboardStatus.value = normalizeDashboardStatus(value)
     }
   },
@@ -84,6 +87,7 @@ watch(
   () => props.mergeQueueData,
   (value) => {
     if (value) {
+      hasDisplayedData.value = true
       queueData.value = value
     }
   },
@@ -93,7 +97,7 @@ watch(
 const hasOverviewData = computed(() => Boolean(props.overviewData) || Boolean(catalogState.value))
 const hasStatusData = computed(() => Boolean(props.dashboardStatusData) || Boolean(catalogState.value) || Boolean(syncAccepted.value))
 const syncActionLoading = computed(() => Boolean(syncActionMode.value))
-const isLoading = computed(() => props.loading || stateLoading.value)
+const isLoading = computed(() => (props.loading || stateLoading.value) && !hasDisplayedData.value)
 const currentLoadError = computed(() => props.loadError || stateLoadError.value)
 const syncProgressPercent = computed(() => normalizedDashboardStatus.value.progressPercent)
 const normalizedDashboardStatus = computed(() => dashboardStatus.value)
@@ -443,6 +447,7 @@ async function loadCatalogState() {
   try {
     const state = await getCatalogState()
     catalogState.value = state
+    hasDisplayedData.value = true
     const mapped = mapCatalogState(state)
     overviewData.value = normalizeOverviewData(mapped.overviewData)
     dashboardStatus.value = normalizeDashboardStatus(mapped.dashboardStatusData)

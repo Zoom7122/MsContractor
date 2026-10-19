@@ -82,6 +82,9 @@ public sealed class MoySkladResponseHandler : IMoySkladResponseHandler
 
         var diagnosticBody = SanitizeAndTruncate(body);
         var (upstreamCode, upstreamMessage, structured) = ParseError(body);
+        if (!structured)
+            upstreamMessage = ReadUnstructuredErrorMessage(body, diagnosticBody);
+
         var retryable = response.StatusCode == HttpStatusCode.TooManyRequests || status >= 500;
         var errorCode = response.StatusCode == HttpStatusCode.TooManyRequests
             ? "MOYSKLAD_RATE_LIMITED"
@@ -238,6 +241,30 @@ public sealed class MoySkladResponseHandler : IMoySkladResponseHandler
         {
             return (null, null, false);
         }
+    }
+
+    private static string? ReadUnstructuredErrorMessage(string body, string diagnosticBody)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var propertyName in new[] { "message", "error", "error_message", "errorMessage", "detail", "title" })
+                {
+                    var message = ReadScalar(document.RootElement, propertyName);
+                    if (!string.IsNullOrWhiteSpace(message)) return message;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Keep the sanitized plain-text response below as the diagnostic message.
+        }
+
+        return string.IsNullOrWhiteSpace(diagnosticBody) ? null : diagnosticBody;
     }
 
     internal static string SanitizeAndTruncate(string body)

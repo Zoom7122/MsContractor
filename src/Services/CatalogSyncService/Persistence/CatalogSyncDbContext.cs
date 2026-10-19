@@ -17,6 +17,7 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
     public DbSet<MergeJob> MergeJobs => Set<MergeJob>();
     public DbSet<MergeCounterpartyLock> MergeCounterpartyLocks => Set<MergeCounterpartyLock>();
     public DbSet<MergeOperation> MergeOperations => Set<MergeOperation>();
+    public DbSet<DocumentsInOperation> DocumentsInOperation => Set<DocumentsInOperation>();
     public DbSet<CounterpartyDocument> CounterpartyDocuments => Set<CounterpartyDocument>();
     public DbSet<DocumentAdditionalCommission> DocumentAdditionalCommissions => Set<DocumentAdditionalCommission>();
     public DbSet<CatalogSettings> CatalogSettings => Set<CatalogSettings>();
@@ -149,6 +150,21 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
             entity.HasIndex(item => new { item.MergeJobId, item.OperationType, item.CounterpartyId }).IsUnique();
             entity.HasOne(item => item.MergeJob)
                 .WithMany(item => item.Operations)
+                .HasForeignKey(item => new { item.MergeJobId, item.AccountId })
+                .HasPrincipalKey(item => new { item.Id, item.AccountId })
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DocumentsInOperation>(entity =>
+        {
+            entity.ToTable("documents_in_operation");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.OperationType).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.RawJson).HasColumnType("jsonb").IsRequired();
+            entity.HasIndex(item => new { item.MergeJobId, item.AccountId });
+            entity.HasIndex(item => new { item.AccountId, item.MergeJobId, item.OperationType }).IsUnique();
+            entity.HasOne(item => item.MergeJob)
+                .WithMany(item => item.DocumentsInOperation)
                 .HasForeignKey(item => new { item.MergeJobId, item.AccountId })
                 .HasPrincipalKey(item => new { item.Id, item.AccountId })
                 .OnDelete(DeleteBehavior.Cascade);

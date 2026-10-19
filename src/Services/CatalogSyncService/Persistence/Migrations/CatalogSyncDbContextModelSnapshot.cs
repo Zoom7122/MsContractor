@@ -29,12 +29,10 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<string>("Field")
-                        .IsRequired()
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
 
                     b.Property<string>("Value")
-                        .IsRequired()
                         .HasColumnType("text");
 
                     b.HasKey("AccountId", "Field", "Value");
@@ -48,6 +46,7 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.CatalogSettings", b =>
                 {
                     b.Property<Guid>("AccountId")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<int>("GroupLimit")
@@ -65,15 +64,6 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.HasKey("AccountId");
 
                     b.ToTable("catalog_settings", "catalog_sync");
-                });
-
-            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.CatalogSettingExclusion", b =>
-                {
-                    b.HasOne("MsContractor.CatalogSyncService.Models.CatalogSettings", null)
-                        .WithMany()
-                        .HasForeignKey("AccountId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.Counterparty", b =>
@@ -167,10 +157,43 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.ToTable("counterparties", "catalog_sync");
                 });
 
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.CounterpartyDocument", b =>
+                {
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DocumentType")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CounterpartyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("AccountId", "DocumentType", "DocumentId");
+
+                    b.HasIndex("AccountId", "CounterpartyId");
+
+                    b.HasIndex("CounterpartyId", "AccountId");
+
+                    b.ToTable("counterparty_documents", "catalog_sync");
+                });
+
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.CounterpartySyncStage", b =>
                 {
                     b.Property<Guid>("AccountId")
                         .HasColumnType("uuid");
+
+                    b.Property<Guid>("SyncRunId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("Sequence")
+                        .HasColumnType("bigint");
 
                     b.Property<bool>("Archived")
                         .HasColumnType("boolean");
@@ -193,11 +216,11 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.Property<bool>("IsValidForStorage")
                         .HasColumnType("boolean");
 
-                    b.Property<Guid>("LastSyncRunId")
-                        .HasColumnType("uuid");
-
                     b.Property<string>("Kpp")
                         .HasColumnType("text");
+
+                    b.Property<Guid>("LastSyncRunId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset?>("MoySkladUpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -232,12 +255,6 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<long>("Sequence")
-                        .HasColumnType("bigint");
-
-                    b.Property<Guid>("SyncRunId")
-                        .HasColumnType("uuid");
-
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -248,33 +265,6 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.HasIndex("AccountId", "SyncRunId", "CounterpartyId", "Sequence");
 
                     b.ToTable("counterparty_sync_staging", "catalog_sync");
-                });
-
-            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.CounterpartyDocument", b =>
-                {
-                    b.Property<Guid>("AccountId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("DocumentType")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<Guid>("DocumentId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("CounterpartyId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("AccountId", "DocumentType", "DocumentId");
-
-                    b.HasIndex("AccountId", "CounterpartyId");
-
-                    b.HasIndex("CounterpartyId", "AccountId");
-
-                    b.ToTable("counterparty_documents", "catalog_sync");
                 });
 
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.DocumentAdditionalCommission", b =>
@@ -288,6 +278,40 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.HasKey("DocumentId");
 
                     b.ToTable("document_additional_commission", "catalog_sync");
+                });
+
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.DocumentsInOperation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RawJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("MergeJobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("OperationType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MergeJobId", "AccountId");
+
+                    b.HasIndex("AccountId", "MergeJobId", "OperationType")
+                        .IsUnique();
+
+                    b.ToTable("documents_in_operation", "catalog_sync");
                 });
 
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.InboxMessage", b =>
@@ -383,18 +407,6 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.HasIndex("AccountId", "Status");
 
                     b.ToTable("merge_jobs", "catalog_sync");
-                });
-
-            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.MergeCounterpartyLock", b =>
-                {
-                    b.HasOne("MsContractor.CatalogSyncService.Models.MergeJob", "MergeJob")
-                        .WithMany()
-                        .HasForeignKey("MergeJobId", "AccountId")
-                        .HasPrincipalKey("Id", "AccountId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("MergeJob");
                 });
 
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.MergeOperation", b =>
@@ -540,6 +552,12 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.Property<int>("ProcessedCount")
                         .HasColumnType("integer");
 
+                    b.Property<long?>("ProcessingLeaseExpiresAtTicks")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("ProcessingOwnerToken")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid>("RequestedByUserId")
                         .HasColumnType("uuid");
 
@@ -567,12 +585,6 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
 
                     b.Property<DateTimeOffset?>("WindowTo")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<long?>("ProcessingLeaseExpiresAtTicks")
-                        .HasColumnType("bigint");
-
-                    b.Property<Guid?>("ProcessingOwnerToken")
-                        .HasColumnType("uuid");
 
                     b.HasKey("Id");
 
@@ -604,6 +616,15 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.HasKey("AccountId");
 
                     b.ToTable("sync_watermarks", "catalog_sync");
+                });
+
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.CatalogSettingExclusion", b =>
+                {
+                    b.HasOne("MsContractor.CatalogSyncService.Models.CatalogSettings", null)
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.Counterparty", b =>
@@ -650,6 +671,30 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.DocumentsInOperation", b =>
+                {
+                    b.HasOne("MsContractor.CatalogSyncService.Models.MergeJob", "MergeJob")
+                        .WithMany("DocumentsInOperation")
+                        .HasForeignKey("MergeJobId", "AccountId")
+                        .HasPrincipalKey("Id", "AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MergeJob");
+                });
+
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.MergeCounterpartyLock", b =>
+                {
+                    b.HasOne("MsContractor.CatalogSyncService.Models.MergeJob", "MergeJob")
+                        .WithMany()
+                        .HasForeignKey("MergeJobId", "AccountId")
+                        .HasPrincipalKey("Id", "AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MergeJob");
+                });
+
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.MergeOperation", b =>
                 {
                     b.HasOne("MsContractor.CatalogSyncService.Models.MergeJob", "MergeJob")
@@ -669,6 +714,8 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
 
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.MergeJob", b =>
                 {
+                    b.Navigation("DocumentsInOperation");
+
                     b.Navigation("Operations");
                 });
 

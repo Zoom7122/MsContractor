@@ -1,3 +1,4 @@
+using System.Text.Json;
 using MsContractor.MoySkladEgressService.Gateways.Documents.Salesreturn;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
@@ -60,12 +61,21 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
         var ids = salesReturnIds.ToArray();
         var operationId = Guid.NewGuid();
         var correlationId = operationId.ToString("D");
-        await LoadSourceDataAsync(accountId, correlationId, ids, cancellationToken);
+        await _sourceDataLoader.LoadAsync(accountId, Guid.Empty, correlationId, ids, cancellationToken);
         var sourceDocuments = await _documents.GetRequiredAsync(accountId, ids, cancellationToken);
-        var sourcePositions = await _positions.GetRequiredAsync(accountId, ids, cancellationToken);
-        var agentAccounts = await _gateway.GetAgentAccountsAsync(
-            accountId, mainAgentId, correlationId, cancellationToken);
-        var targetAgentAccountId = SelectAgentAccount(agentAccounts);
+        var skippedIds = ids.Where(id => HasFactureOut(sourceDocuments[id])).ToHashSet();
+        var preparedIds = ids.Where(id => !skippedIds.Contains(id)).ToArray();
+        IReadOnlyDictionary<Guid, IReadOnlyDictionary<Guid, string>> sourcePositions =
+            new Dictionary<Guid, IReadOnlyDictionary<Guid, string>>();
+        Guid? targetAgentAccountId = null;
+        if (preparedIds.Length > 0)
+        {
+            await _positionsLoader.LoadAsync(accountId, Guid.Empty, correlationId, preparedIds, cancellationToken);
+            sourcePositions = await _positions.GetRequiredAsync(accountId, preparedIds, cancellationToken);
+            var agentAccounts = await _gateway.GetAgentAccountsAsync(
+                accountId, mainAgentId, correlationId, cancellationToken);
+            targetAgentAccountId = SelectAgentAccount(agentAccounts);
+        }
         var now = _timeProvider.GetUtcNow();
         var operation = new SalesReturnRecreationOperation
         {
@@ -80,6 +90,23 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
         foreach (var documentId in ids)
         {
             var source = sourceDocuments[documentId];
+            if (skippedIds.Contains(documentId))
+            {
+                operation.Items.Add(new SalesReturnRecreationItem
+                {
+                    AccountId = accountId,
+                    OperationId = operationId,
+                    SourceDocumentId = documentId,
+                    SourceRawJson = source,
+                    NewPayloadJson = "{}",
+                    Stage = "Skipped",
+                    RelationsStatus = "Skipped",
+                    ErrorCode = "SALESRETURN_FACTURE_OUT_PRESENT",
+                    Error = "The salesreturn contains factureOut and cannot be recreated."
+                });
+                continue;
+            }
+
             var positions = sourcePositions[documentId];
             _payloads.ValidateSource(source, positions);
             var newSyncId = Guid.NewGuid();
@@ -99,11 +126,15 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
         }
 
         await _operations.CreateAsync(operation, cancellationToken);
-        await _relations.PrepareAndDetachAsync(operation, correlationId, cancellationToken);
-        var deletedSourceIds = await DeleteSourcesAsync(operation, correlationId, cancellationToken);
-        await CreateNewDocumentsAsync(operation, correlationId, cancellationToken);
-        if (operation.Items.Any(item => item.Stage == "Created"))
-            await _relations.ReattachAsync(operation, correlationId, cancellationToken);
+        var deletedSourceIds = new HashSet<Guid>();
+        if (preparedIds.Length > 0)
+        {
+            await _relations.PrepareAndDetachAsync(operation, correlationId, cancellationToken);
+            deletedSourceIds = await DeleteSourcesAsync(operation, correlationId, cancellationToken);
+            await CreateNewDocumentsAsync(operation, correlationId, cancellationToken);
+            if (operation.Items.Any(item => item.Stage == "Created"))
+                await _relations.ReattachAsync(operation, correlationId, cancellationToken);
+        }
 
         var result = Result(operation, deletedSourceIds);
         operation.Status = result.CreatedWithErrors.Count + result.UnCreatedButDeleted.Count > 0
@@ -113,24 +144,10 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
         return result;
     }
 
-    private async Task LoadSourceDataAsync(
-        Guid accountId,
-        string correlationId,
-        IReadOnlyList<Guid> salesReturnIds,
-        CancellationToken cancellationToken)
+    private static bool HasFactureOut(string sourceRawJson)
     {
-        await _sourceDataLoader.LoadAsync(
-            accountId,
-            Guid.Empty,
-            correlationId,
-            salesReturnIds,
-            cancellationToken);
-        await _positionsLoader.LoadAsync(
-            accountId,
-            Guid.Empty,
-            correlationId,
-            salesReturnIds,
-            cancellationToken);
+        using var source = JsonDocument.Parse(sourceRawJson);
+        return source.RootElement.TryGetProperty("factureOut", out _);
     }
 
     private async Task<HashSet<Guid>> DeleteSourcesAsync(
@@ -299,6 +316,12 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
             .Where(item => item.Stage == "Completed" && item.NewDocumentId is not null)
             .Select(item => item.SourceDocumentId)
             .ToArray();
+        var transferredDocuments = operation.Items
+            .Where(item => item.Stage == "Completed" && item.NewDocumentId is not null)
+            .Select(item => new SalesReturnTransferredDocumentResult(
+                item.SourceDocumentId,
+                item.NewDocumentId!.Value))
+            .ToArray();
         var transferredIds = transferredDocumentIds.ToHashSet();
 
         var skippedDocuments = operation.Items
@@ -335,6 +358,7 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
 
         return new SalesReturnRecreationResult(
             transferredDocumentIds,
+            transferredDocuments,
             skippedDocuments.Select(item => item.DocumentId).ToArray(),
             skippedDocuments,
             createdWithErrors,

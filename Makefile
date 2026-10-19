@@ -1,23 +1,32 @@
 COMPOSE = docker compose
 DEV_ENV = .env.dev
+PROD_ENV = .env.prod
 DEV_PROFILE = dev-tools
-DEV_COMPOSE = $(COMPOSE) --env-file $(DEV_ENV) up -d --build --profile $(DEV_PROFILE) 
+DEV_COMPOSE = ASPNETCORE_ENVIRONMENT=Development $(COMPOSE) --env-file $(DEV_ENV) --profile $(DEV_PROFILE)
+PROD_COMPOSE = ASPNETCORE_ENVIRONMENT=Production $(COMPOSE) --env-file $(PROD_ENV)
 SOLUTION = MsContractor.sln
 
-.PHONY: compose recreate ps build logs dozzle test health
+.PHONY: compose-up compose-down compose-down-del compose-up-prod compose-down-prod recreate ps build logs dozzle test health
 
 compose-up:
-	docker compose --env-file .env.dev --profile dev-tools up -d --build
+	$(DEV_COMPOSE) up -d --build
+
+compose-up-prod:
+	$(PROD_COMPOSE) --profile $(DEV_PROFILE) stop kafka-ui redis-insight dozzle
+	$(PROD_COMPOSE) up -d --build
 
 compose-down:
-	docker compose --env-file .env.dev --profile dev-tools down 
+	$(DEV_COMPOSE) down
+
+compose-down-prod:
+	$(PROD_COMPOSE) --profile $(DEV_PROFILE) down
 
 compose-down-del:
-	docker compose --env-file .env.dev --profile dev-tools down -v
+	$(DEV_COMPOSE) down -v
 
 recreate:
 	@test -n "$(SERVICE)" || (echo "Usage: make recreate SERVICE=<service-name>"; exit 1)
-	$(COMPOSE) --env-file $(DEV_ENV) --profile $(DEV_PROFILE) up -d --build --force-recreate $(SERVICE)
+	$(DEV_COMPOSE) up -d --build --force-recreate $(SERVICE)
 
 
 logs:

@@ -31,11 +31,13 @@ public sealed class InternalSalesReturnsControllerTests
         Assert.Equal(mainAgentId, service.MainAgentId);
         Assert.Equal(documentIds, service.DocumentIds);
         Assert.Equal(documentIds, body.TransferredDocumentIds);
+        Assert.Equal(documentIds, body.TransferredDocuments.Select(item => item.SourceDocumentId));
         Assert.Equal(body.OperationId.ToString("D"), controller.Response.Headers[InternalApiHeaders.CorrelationId]);
 
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(body, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         var root = json.RootElement;
         Assert.True(root.TryGetProperty("transferredDocumentIds", out _));
+        Assert.True(root.TryGetProperty("transferredDocuments", out _));
         Assert.True(root.TryGetProperty("skippedDocumentIds", out _));
         Assert.True(root.TryGetProperty("skippedDocuments", out _));
         Assert.True(root.TryGetProperty("createdWithErrors", out _));
@@ -76,6 +78,7 @@ public sealed class InternalSalesReturnsControllerTests
         {
             Result = new SalesReturnRecreationResult(
                 [],
+                [],
                 [skippedId],
                 [new SalesReturnSkippedDocumentResult(
                     skippedId, "Skipped", "SALESRETURN_FACTURE_OUT_PRESENT", "The salesreturn was skipped.")],
@@ -112,6 +115,7 @@ public sealed class InternalSalesReturnsControllerTests
                 [],
                 [],
                 [],
+                [],
                 [new SalesReturnUnCreatedButDeletedResult(
                     sourceId, "Failed", "SALESRETURN_NEW_CREATE_FAILED", "Create failed.")])
             {
@@ -136,6 +140,7 @@ public sealed class InternalSalesReturnsControllerTests
         var service = new CapturingRecreationService
         {
             Result = new SalesReturnRecreationResult(
+                [],
                 [],
                 [],
                 [],
@@ -189,6 +194,7 @@ public sealed class InternalSalesReturnsControllerTests
             DocumentIds = salesReturnIds;
             return Task.FromResult(Result ?? new SalesReturnRecreationResult(
                 salesReturnIds.ToArray(),
+                salesReturnIds.Select(id => new SalesReturnTransferredDocumentResult(id, Guid.NewGuid())).ToArray(),
                 [],
                 [],
                 [],

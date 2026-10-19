@@ -5,7 +5,7 @@ namespace MsContractor.DuplicatesMergeService.Services.Merge.Documents;
 
 public interface IFactureInRecreationSender
 {
-    Task<FactureInRecreationResponse> SendAsync(
+    Task<MergeEgressHttpResponse> SendAsync(
         Guid accountId,
         Guid mainCounterpartyId,
         string documentType,
@@ -20,7 +20,7 @@ public interface IFactureInRecreationSender
 public sealed class FactureInRecreationSender(
     IFactureInRecreationEgressClient client) : IFactureInRecreationSender
 {
-    public Task<FactureInRecreationResponse> SendAsync(
+    public Task<MergeEgressHttpResponse> SendAsync(
         Guid accountId,
         Guid mainCounterpartyId,
         string documentType,

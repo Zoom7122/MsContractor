@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using MsContractor.Contracts.Internal;
 using MsContractor.DuplicatesMergeService.Clients;
@@ -68,9 +69,13 @@ public sealed class PurchaseReturnRecreationEgressClientTests
             correlationId,
             CancellationToken.None);
 
-        Assert.Equal([purchaseReturnIds[0]], response.TransferredDocumentIds);
-        Assert.Equal([purchaseReturnIds[1]], response.SkippedDocumentIds);
-        var skipped = Assert.Single(response.SkippedDocuments!);
+        Assert.Equal((int)HttpStatusCode.Accepted, response.StatusCode);
+        var parsed = JsonSerializer.Deserialize<PurchaseReturnRecreationResponse>(
+            response.Body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(parsed);
+        Assert.Equal([purchaseReturnIds[0]], parsed!.TransferredDocumentIds);
+        Assert.Equal([purchaseReturnIds[1]], parsed.SkippedDocumentIds);
+        var skipped = Assert.Single(parsed.SkippedDocuments!);
         Assert.Equal(purchaseReturnIds[1], skipped.DocumentId);
         Assert.Equal("PURCHASERETURN_SKIPPED", skipped.ErrorCode);
         Assert.Equal("not ready", skipped.Error);
@@ -79,8 +84,6 @@ public sealed class PurchaseReturnRecreationEgressClientTests
     [Theory]
     [InlineData("transport")]
     [InlineData("timeout")]
-    [InlineData("server")]
-    [InlineData("invalid-json")]
     public async Task RecreateAsync_UnknownResultCannotBeAutomaticallyRetried(string kind)
     {
         var configuration = new ConfigurationBuilder().Build();
@@ -88,14 +91,33 @@ public sealed class PurchaseReturnRecreationEgressClientTests
         {
             if (kind == "transport") throw new HttpRequestException("Connection lost.");
             if (kind == "timeout") throw new OperationCanceledException();
-            return Task.FromResult(new HttpResponseMessage(kind == "server" ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.Accepted)
-            { Content = new StringContent(kind == "server" ? "{}" : "invalid-json") });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Accepted)
+            { Content = new StringContent("{}") });
         })) { BaseAddress = new Uri("http://egress.test/") }, configuration);
         var exception = await Assert.ThrowsAsync<MergeEgressException>(() => client.RecreateAsync(
             Guid.NewGuid(), Guid.NewGuid(), [Guid.NewGuid()], Guid.NewGuid(), Guid.NewGuid(),
             Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None));
         Assert.Equal(MergeEgressException.PurchaseReturnUnknownResult, exception.Code);
         Assert.False(exception.IsRetryable);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_PreservesErrorResponseForMergePersistence()
+    {
+        const string errorBody = "{\"code\":\"EGRESS_BUSY\",\"message\":\"Try again.\"}";
+        var client = new PurchaseReturnRecreationEgressClient(
+            new HttpClient(new CallbackHandler(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent(errorBody)
+            }))) { BaseAddress = new Uri("http://egress.test/") },
+            new ConfigurationBuilder().Build());
+
+        var response = await client.RecreateAsync(
+            Guid.NewGuid(), Guid.NewGuid(), [Guid.NewGuid()], Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None);
+
+        Assert.Equal((int)HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(errorBody, response.Body);
     }
 
     [Fact]

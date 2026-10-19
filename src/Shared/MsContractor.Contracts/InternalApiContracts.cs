@@ -160,14 +160,32 @@ public sealed record FactureOutFailedDocumentResponse(
     string? Error);
 
 public sealed record SalesReturnRecreationResponse(
-    Guid OperationId,
-    Guid MainAgentId,
-    IReadOnlyList<SalesReturnRecreationDocumentResponse> Documents);
+    IReadOnlyList<Guid>? TransferredDocumentIds,
+    IReadOnlyList<SalesReturnTransferredDocumentResponse>? TransferredDocuments,
+    IReadOnlyList<Guid>? SkippedDocumentIds,
+    IReadOnlyList<SalesReturnSkippedDocumentResponse>? SkippedDocuments,
+    IReadOnlyList<SalesReturnCreatedWithErrorResponse>? CreatedWithErrors,
+    IReadOnlyList<SalesReturnUnCreatedButDeletedResponse>? UnCreatedButDeleted);
 
-public sealed record SalesReturnRecreationDocumentResponse(
+public sealed record SalesReturnTransferredDocumentResponse(
     Guid SourceDocumentId,
-    Guid? NewDocumentId,
-    string Stage,
+    Guid NewDocumentId);
+
+public sealed record SalesReturnSkippedDocumentResponse(
+    Guid DocumentId,
+    string Status,
+    string? ErrorCode,
+    string? Error);
+
+public sealed record SalesReturnCreatedWithErrorResponse(
+    Guid SourceDocumentId,
+    Guid NewDocumentId,
+    string Status,
+    string? ErrorCode,
+    string? Error);
+
+public sealed record SalesReturnUnCreatedButDeletedResponse(
+    Guid SourceDocumentId,
     string Status,
     string? ErrorCode,
     string? Error);

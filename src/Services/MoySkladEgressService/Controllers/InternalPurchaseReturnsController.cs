@@ -114,7 +114,7 @@ public sealed class InternalPurchaseReturnsController : ControllerBase
 
     private static bool IsSuccessfullyCreated(PurchaseReturnDocumentVerificationResult document) =>
         document.NewDocumentId is not null &&
-        document.Status is "Verified" or "NeedsManualReview";
+        document.Status is "Recreated" or "Verified" or "NeedsManualReview";
 
     private const int MaxDocumentCount = 100_000;
 }

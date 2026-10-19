@@ -16,6 +16,7 @@ public interface IMergeDocumentChangeService
 public sealed class MergeDocumentChangeService(
     IDocumentSnapshotRepository documentSnapshots,
     IDocumentChangeEgressClient documentChangeClient,
+    IDocumentsInOperationRepository documentsInOperation,
     TimeProvider timeProvider) : IMergeDocumentChangeService
 {
     private const int CommissionReportBatchSize = 950;
@@ -36,8 +37,20 @@ public sealed class MergeDocumentChangeService(
             {
                 var documents = chunk.Select(item => new MoySkladDocumentChangeAgentAndContractItem(item.DocumentType,
                     item.DocumentId, contracts.GetValueOrDefault(item.DocumentId))).ToArray();
-                var response = await documentChangeClient.ChangeAgentAndContractAsync(job.AccountId, job.MainCounterpartyId,
+                var egressResponse = await documentChangeClient.ChangeAgentAndContractAsync(job.AccountId, job.MainCounterpartyId,
                     documents, job.Id, operation.Id, job.RequestedByUserId, job.CorrelationId, cancellationToken);
+                await documentsInOperation.AppendEgressResponseAsync(
+                    job.AccountId,
+                    job.Id,
+                    DocumentsInOperationTypes.ChangeAgentAndContract,
+                    egressResponse.StatusCode,
+                    egressResponse.Body,
+                    cancellationToken);
+                var response = MergeEgressResponseReader.Read<MoySkladDocumentChangeCounterpartyResponse>(
+                    egressResponse,
+                    "EGRESS_INVALID_RESPONSE",
+                    "MoySklad Egress Service returned an empty document change response.",
+                    "MoySklad Egress Service returned an invalid document change response.");
                 var requested = documents.Select(item => new MoySkladDocumentChangeItem(item.DocumentType, item.DocumentId)).ToArray();
                 ValidateDocumentChangeResponse(job.MainCounterpartyId, requested, response);
                 await ApplyChangedDocumentsAsync(chunk, response, job.MainCounterpartyId, cancellationToken);
@@ -54,8 +67,20 @@ public sealed class MergeDocumentChangeService(
         if (ordinaryRows.Length > 0)
         {
             var documents = ordinaryRows.Select(item => new MoySkladDocumentChangeItem(item.DocumentType, item.DocumentId)).ToArray();
-            var response = await documentChangeClient.ChangeCounterpartyAsync(job.AccountId, job.MainCounterpartyId, documents,
+            var egressResponse = await documentChangeClient.ChangeCounterpartyAsync(job.AccountId, job.MainCounterpartyId, documents,
                 job.Id, operation.Id, job.RequestedByUserId, job.CorrelationId, cancellationToken);
+            await documentsInOperation.AppendEgressResponseAsync(
+                job.AccountId,
+                job.Id,
+                DocumentsInOperationTypes.ChangeCounterparty,
+                egressResponse.StatusCode,
+                egressResponse.Body,
+                cancellationToken);
+            var response = MergeEgressResponseReader.Read<MoySkladDocumentChangeCounterpartyResponse>(
+                egressResponse,
+                "EGRESS_INVALID_RESPONSE",
+                "MoySklad Egress Service returned an empty document change response.",
+                "MoySklad Egress Service returned an invalid document change response.");
             ValidateDocumentChangeResponse(job.MainCounterpartyId, documents, response);
             await ApplyChangedDocumentsAsync(ordinaryRows, response, job.MainCounterpartyId, cancellationToken);
             ThrowIfDocumentChangeFailed(response);

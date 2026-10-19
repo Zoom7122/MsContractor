@@ -23,7 +23,6 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
     private readonly IPurchaseReturnFactureRelationsService _factureRelationsService;
     private readonly IPurchaseReturnPreparationRepository _repository;
     private readonly IMoySkladPurchaseReturnGateway _gateway;
-    private readonly IPurchaseReturnVerifier _verifier;
     private readonly IPurchaseReturnFactureOutService _factureOutService;
     private readonly PurchaseReturnCreateMapper _mapper;
     private readonly PurchaseReturnRecreationOptions _options;
@@ -34,7 +33,6 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
         IPurchaseReturnFactureRelationsService factureRelationsService,
         IPurchaseReturnPreparationRepository repository,
         IMoySkladPurchaseReturnGateway gateway,
-        IPurchaseReturnVerifier verifier,
         PurchaseReturnCreateMapper mapper,
         PurchaseReturnRecreationOptions options,
         ILogger<PurchaseReturnRecreationOrchestrator> logger,
@@ -44,7 +42,6 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
         _factureRelationsService = factureRelationsService;
         _repository = repository;
         _gateway = gateway;
-        _verifier = verifier;
         _mapper = mapper;
         _options = options;
         _logger = logger;
@@ -287,46 +284,17 @@ public sealed class PurchaseReturnRecreationOrchestrator : IPurchaseReturnRecrea
         }
 
         results.AddRange(createdFailures.Values);
-        var documentsForVerification = createdDocuments
+        var successfullyRecreatedDocuments = createdDocuments
             .Where(item => !createdFailures.ContainsKey(item.SourceDocumentId))
             .ToArray();
-        foreach (var verificationBatch in documentsForVerification.Chunk(MoySkladPurchaseReturnGateway.BatchSize))
-        {
-            try
-            {
-                var verification = await _verifier.VerifyAsync(
-                    accountId,
-                    mainCounterpartyId,
-                    verificationBatch,
-                    cancellationToken);
-                results.AddRange(verification.Documents);
-                foreach (var document in verification.Documents.Where(item => item.Status != "Verified"))
-                {
-                    _logger.LogWarning(
-                        "purchasereturn verification finished with status {Status}: account_id={AccountId}, source_id={SourceId}, new_id={NewId}, error_code={ErrorCode}, warnings={Warnings}, field_mismatches={FieldMismatches}, position_mismatches={PositionMismatches}",
-                        document.Status,
-                        accountId,
-                        document.SourceDocumentId,
-                        document.NewDocumentId,
-                        document.ErrorCode,
-                        string.Join(" | ", document.Warnings),
-                        string.Join(" | ", document.FieldMismatches.Select(item =>
-                            $"{item.Field}: expected={item.Expected ?? "<null>"}, actual={item.Actual ?? "<null>"}")),
-                        string.Join(" | ", document.PositionMismatches.Select(item =>
-                            $"{item.Kind}: expected={item.Expected ?? "<null>"}, actual={item.Actual ?? "<null>"}")));
-                }
-            }
-            catch (Exception exception) when (exception is InvalidOperationException or JsonException or EgressException)
-            {
-                _logger.LogError(exception, "purchasereturn verification batch failed: account_id={AccountId}", accountId);
-                results.AddRange(verificationBatch.Select(item => Failed(
-                    item.SourceDocumentId,
-                    "VerificationFailed",
-                    "PURCHASERETURN_VERIFICATION_FAILED",
-                    exception.Message,
-                    item.NewDocumentId)));
-            }
-        }
+        results.AddRange(successfullyRecreatedDocuments.Select(item =>
+            new PurchaseReturnDocumentVerificationResult(
+                item.SourceDocumentId,
+                item.NewDocumentId,
+                "Recreated",
+                [],
+                [],
+                [])));
 
         return Result();
     }

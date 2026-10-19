@@ -1,7 +1,7 @@
 name: mscontractor
 
 x-service-env: &service-env
-  ASPNETCORE_ENVIRONMENT: Development
+  ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
   ASPNETCORE_URLS: http://+:${SERVICE_INTERNAL_PORT}
 
   ConnectionStrings__Postgres: Host=postgres;Port=${POSTGRES_PORT};Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
@@ -59,6 +59,8 @@ services:
       - mscontractor-net
 
   redis-insight:
+    profiles:
+      - dev-tools
     image: redis/redisinsight:latest
     container_name: mscontractor-redis-insight
     restart: unless-stopped
@@ -109,6 +111,8 @@ services:
       - mscontractor-net
 
   kafka-ui:
+    profiles:
+      - dev-tools
     image: provectuslabs/kafka-ui:latest
     container_name: mscontractor-kafka-ui
     restart: unless-stopped
@@ -171,7 +175,7 @@ services:
       Vendor__SecretKey: ${MOYSKLAD_VENDOR_SECRET}
       Vendor__AccessTokenEncryptionKey: ${VENDOR_TOKEN_ENCRYPTION_KEY}
       Vendor__TokenKeyVersion: 1
-      DevSession__AccountId: ${DEV_ACCOUNT_ID:?Set DEV_ACCOUNT_ID to a non-empty UUID before starting Compose}
+      DevSession__AccountId: ${DEV_ACCOUNT_ID:-00000000-0000-0000-0000-000000000000}
     depends_on:
       postgres:
         condition: service_healthy

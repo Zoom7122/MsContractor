@@ -121,10 +121,10 @@ API (2026-09-24, аккаунт из `scripts_for_test_data/.env.test_data`) с�
 
 | Поле | Что сделано | Результат GET |
 |---|---|---|
-| `salesreturn.factureOut → factureout` | `POST salesreturn` с `factureOut`; затем `PUT salesreturn` с `factureOut` | оба ответа 200, поля `factureOut` в документе нет |
+| `salesreturn.factureOut → factureout` | `POST salesreturn` с `factureOut`; затем `PUT salesreturn` с `factureOut`. 2026-10-18 повторено со счётом-фактурой на основании отгрузки этого возврата | все ответы 200, поля `factureOut` в документе нет |
 | `purchasereturn.factureIn → facturein` | `POST purchasereturn` с `factureIn`; затем `PUT purchasereturn` с `factureIn` | оба ответа 200, поля `factureIn` в документе нет |
 | `cashout.factureIn → facturein` (запись со стороны cashout) | `POST cashout` с `factureIn` | ответ 200, поля нет. Та же связь создаётся со стороны фактуры: `facturein.payments->cashout` (в таблице выше) |
-| `factureout.returns → salesreturn` (обратный путь для `salesreturn.factureOut`) | `PUT /entity/factureout/new` с `returns: [salesreturn]` | HTTP 400, код `1060` «Некорректный тип данных в meta сущности, поле type» |
+| `factureout.returns → salesreturn` (обратный путь для `salesreturn.factureOut`) | `PUT /entity/factureout/new` с `returns: [salesreturn]`; 2026-10-18 также `POST factureout` с `returns`, `PUT factureout/{id}` с `returns` (и вместе с `demands`), шаблон с `demands: [salesreturn]` | HTTP 400, код `1060` «Некорректный тип данных в meta сущности, поле type». Недокументированные ключи шаблона `salesReturn`/`salesReturns` игнорируются: 412, код `17005` «отсутствует ссылка на документ-основание» |
 
 У facturein нет поля для возврата поставщику, поэтому обратного пути для `purchasereturn.factureIn` нет.
 

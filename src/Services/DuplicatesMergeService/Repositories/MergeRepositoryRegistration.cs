@@ -7,6 +7,7 @@ public static class MergeRepositoryRegistration
         services.AddScoped<IMergeRepository, MergeRepository>();
         services.AddScoped<ICounterpartyRepository, CounterpartyRepository>();
         services.AddScoped<IDocumentSnapshotRepository, DocumentSnapshotRepository>();
+        services.AddScoped<IDocumentsInOperationRepository, DocumentsInOperationRepository>();
         services.AddScoped<IMergeOutboxRepository, MergeOutboxRepository>();
         return services;
     }

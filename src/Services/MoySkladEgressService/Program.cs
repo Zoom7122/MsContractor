@@ -189,7 +189,6 @@ builder.Services.AddScoped<IPurchaseReturnFactureRelationsRepository, PurchaseRe
 builder.Services.AddScoped<IPurchaseReturnMoneyRelationsRepository>(serviceProvider =>
     (IPurchaseReturnMoneyRelationsRepository)serviceProvider.GetRequiredService<IPurchaseReturnFactureRelationsRepository>());
 builder.Services.AddScoped<IPurchaseReturnFactureRelationsService, PurchaseReturnFactureRelationsService>();
-builder.Services.AddScoped<IPurchaseReturnVerifier, PurchaseReturnVerifier>();
 builder.Services.AddScoped<IPurchaseReturnRecreationOrchestrator, PurchaseReturnRecreationOrchestrator>();
 builder.Services.AddScoped<IFactureInRecreationOrchestrator, FactureInRecreationOrchestrator>();
 builder.Services.AddScoped<IFactureOutRecreationOrchestrator, FactureOutRecreationOrchestrator>();

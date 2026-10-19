@@ -167,6 +167,7 @@ public sealed class MoyskladSessionControllerTests
 
         Assert.IsType<NotFoundResult>(result);
         Assert.Empty(sessionStore.CreatedSessions);
+        Assert.Equal(0, controller.Response.Headers.SetCookie.Count);
     }
 
     private static Installation ActiveInstallation(Guid accountId) =>

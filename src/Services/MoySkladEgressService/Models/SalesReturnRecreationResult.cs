@@ -4,6 +4,7 @@ namespace MsContractor.MoySkladEgressService.Models;
 
 public sealed record SalesReturnRecreationResult(
     IReadOnlyList<Guid> TransferredDocumentIds,
+    IReadOnlyList<SalesReturnTransferredDocumentResult> TransferredDocuments,
     IReadOnlyList<Guid> SkippedDocumentIds,
     IReadOnlyList<SalesReturnSkippedDocumentResult> SkippedDocuments,
     IReadOnlyList<SalesReturnCreatedWithErrorResult> CreatedWithErrors,
@@ -12,6 +13,10 @@ public sealed record SalesReturnRecreationResult(
     [JsonIgnore]
     public Guid OperationId { get; init; }
 }
+
+public sealed record SalesReturnTransferredDocumentResult(
+    Guid SourceDocumentId,
+    Guid NewDocumentId);
 
 public sealed record SalesReturnSkippedDocumentResult(
     Guid DocumentId,

@@ -6,7 +6,7 @@ namespace MsContractor.DuplicatesMergeService.Clients;
 
 public interface ISalesReturnRecreationEgressClient
 {
-    Task<SalesReturnRecreationResponse> RecreateAsync(
+    Task<MergeEgressHttpResponse> RecreateAsync(
         Guid accountId,
         Guid mainAgentId,
         IReadOnlyList<Guid> salesReturnIds,
@@ -28,7 +28,7 @@ public sealed class SalesReturnRecreationEgressClient : ISalesReturnRecreationEg
         _configuration = configuration;
     }
 
-    public async Task<SalesReturnRecreationResponse> RecreateAsync(
+    public async Task<MergeEgressHttpResponse> RecreateAsync(
         Guid accountId,
         Guid mainAgentId,
         IReadOnlyList<Guid> salesReturnIds,
@@ -71,39 +71,8 @@ public sealed class SalesReturnRecreationEgressClient : ISalesReturnRecreationEg
 
         using (response)
         {
-            if (!response.IsSuccessStatusCode)
-            {
-                InternalErrorResponse? error = null;
-                try
-                {
-                    error = await response.Content.ReadFromJsonAsync<InternalErrorResponse>(cancellationToken);
-                }
-                catch (Exception exception) when (exception is System.Text.Json.JsonException or NotSupportedException)
-                {
-                    // Use a stable fallback for an untrusted Egress response.
-                }
-
-                throw new MergeEgressException(
-                    error?.Code ?? "EGRESS_UNAVAILABLE",
-                    error?.Message ?? "MoySklad Egress Service returned an error.",
-                    (int)response.StatusCode);
-            }
-
-            try
-            {
-                return await response.Content.ReadFromJsonAsync<SalesReturnRecreationResponse>(cancellationToken)
-                    ?? throw new MergeEgressException(
-                        "EGRESS_INVALID_RESPONSE",
-                        "MoySklad Egress Service returned an empty salesreturn recreation response.",
-                        502);
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                throw new MergeEgressException(
-                    "EGRESS_INVALID_RESPONSE",
-                    "MoySklad Egress Service returned an invalid salesreturn recreation response.",
-                    502);
-            }
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            return new MergeEgressHttpResponse((int)response.StatusCode, body);
         }
     }
 }

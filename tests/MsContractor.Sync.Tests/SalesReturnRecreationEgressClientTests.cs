@@ -21,11 +21,16 @@ public sealed class SalesReturnRecreationEgressClientTests
         var operationId = Guid.NewGuid();
         var userId = Guid.NewGuid();
         var correlationId = Guid.NewGuid();
+        var transferredDocuments = salesReturnIds
+            .Select(id => new SalesReturnTransferredDocumentResponse(id, Guid.NewGuid()))
+            .ToArray();
         var handler = new RecordingHandler(statusCode, new SalesReturnRecreationResponse(
-            operationId,
-            mainAgentId,
-            salesReturnIds.Select(id => new SalesReturnRecreationDocumentResponse(
-                id, Guid.NewGuid(), "Completed", "Completed", null, null)).ToArray()));
+            salesReturnIds,
+            transferredDocuments,
+            [],
+            [],
+            [],
+            []));
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["InternalApi:Key"] = "test-key" })
             .Build();
@@ -36,7 +41,12 @@ public sealed class SalesReturnRecreationEgressClientTests
             accountId, mainAgentId, salesReturnIds, mergeJobId, operationId, userId, correlationId,
             CancellationToken.None);
 
-        Assert.Equal(operationId, response.OperationId);
+        Assert.Equal((int)statusCode, response.StatusCode);
+        var storedJson = JsonSerializer.Deserialize<SalesReturnRecreationResponse>(
+            response.Body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(storedJson);
+        Assert.Equal(salesReturnIds, storedJson!.TransferredDocumentIds);
+        Assert.Equal(transferredDocuments, storedJson!.TransferredDocuments);
         Assert.Equal(HttpMethod.Post, handler.Request!.Method);
         Assert.Equal($"http://egress.test/internal/accounts/{accountId:D}/documents/salesreturn/recreate",
             handler.Request.RequestUri!.ToString());

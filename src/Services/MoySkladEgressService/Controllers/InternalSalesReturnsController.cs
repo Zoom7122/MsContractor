@@ -54,7 +54,10 @@ public sealed class InternalSalesReturnsController : ControllerBase
                 cancellationToken);
             Response.Headers[InternalApiHeaders.CorrelationId] = result.OperationId.ToString("D");
             var allDocumentsTransferred = result.TransferredDocumentIds.Count == request.SalesReturnIds.Count &&
-                                          result.TransferredDocumentIds.ToHashSet().SetEquals(request.SalesReturnIds);
+                                          result.TransferredDocumentIds.ToHashSet().SetEquals(request.SalesReturnIds) &&
+                                          result.TransferredDocuments.Count == request.SalesReturnIds.Count &&
+                                          result.TransferredDocuments.Select(item => item.SourceDocumentId)
+                                              .ToHashSet().SetEquals(request.SalesReturnIds);
             var hasIncompleteOutcome = result.SkippedDocumentIds.Count != 0 ||
                                        result.SkippedDocuments.Count != 0 ||
                                        result.CreatedWithErrors.Count != 0 ||

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -29,7 +30,23 @@ public sealed class InternalSalesReturnsControllerTests
         Assert.Equal(accountId, service.AccountId);
         Assert.Equal(mainAgentId, service.MainAgentId);
         Assert.Equal(documentIds, service.DocumentIds);
+        Assert.Equal(documentIds, body.TransferredDocumentIds);
         Assert.Equal(body.OperationId.ToString("D"), controller.Response.Headers[InternalApiHeaders.CorrelationId]);
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(body, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        var root = json.RootElement;
+        Assert.True(root.TryGetProperty("transferredDocumentIds", out _));
+        Assert.True(root.TryGetProperty("skippedDocumentIds", out _));
+        Assert.True(root.TryGetProperty("skippedDocuments", out _));
+        Assert.True(root.TryGetProperty("createdWithErrors", out _));
+        Assert.True(root.TryGetProperty("unCreatedButDeleted", out _));
+        Assert.False(root.TryGetProperty("operationId", out _));
+        Assert.False(root.TryGetProperty("mainAgentId", out _));
+        Assert.False(root.TryGetProperty("documents", out _));
+        Assert.Empty(root.GetProperty("skippedDocumentIds").EnumerateArray());
+        Assert.Empty(root.GetProperty("skippedDocuments").EnumerateArray());
+        Assert.Empty(root.GetProperty("createdWithErrors").EnumerateArray());
+        Assert.Empty(root.GetProperty("unCreatedButDeleted").EnumerateArray());
     }
 
     [Fact]
@@ -52,21 +69,88 @@ public sealed class InternalSalesReturnsControllerTests
     }
 
     [Fact]
-    public async Task RecreateAsync_ReturnsMultiStatusWhenAtLeastOneDocumentWasNotRecreated()
+    public async Task RecreateAsync_ReturnsMultiStatusWhenThereAreSkippedDocuments()
     {
+        var skippedId = Guid.NewGuid();
         var service = new CapturingRecreationService
         {
             Result = new SalesReturnRecreationResult(
-                Guid.NewGuid(),
-                Guid.NewGuid(),
-                [new SalesReturnRecreationDocumentResult(
-                    Guid.NewGuid(), null, "Failed", "Failed", "SALESRETURN_DELETE_FAILED", "MoySklad rejected deletion.")])
+                [],
+                [skippedId],
+                [new SalesReturnSkippedDocumentResult(
+                    skippedId, "Skipped", "SALESRETURN_FACTURE_OUT_PRESENT", "The salesreturn was skipped.")],
+                [],
+                [])
+            {
+                OperationId = Guid.NewGuid()
+            }
         };
         var controller = Controller(service, authorized: true);
 
         var result = await controller.RecreateAsync(
             Guid.NewGuid(),
             new SalesReturnRecreationRequest(Guid.NewGuid(), [Guid.NewGuid()]),
+            CancellationToken.None);
+
+        var response = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status207MultiStatus, response.StatusCode);
+        var body = Assert.IsType<SalesReturnRecreationResult>(response.Value);
+        var document = Assert.Single(body.SkippedDocuments);
+        Assert.Equal(skippedId, document.DocumentId);
+        Assert.Equal("Skipped", document.Status);
+        Assert.Equal("SALESRETURN_FACTURE_OUT_PRESENT", document.ErrorCode);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_ReturnsMultiStatusWhenAnErrorCollectionIsNonEmpty()
+    {
+        var sourceId = Guid.NewGuid();
+        var service = new CapturingRecreationService
+        {
+            Result = new SalesReturnRecreationResult(
+                [],
+                [],
+                [],
+                [],
+                [new SalesReturnUnCreatedButDeletedResult(
+                    sourceId, "Failed", "SALESRETURN_NEW_CREATE_FAILED", "Create failed.")])
+            {
+                OperationId = Guid.NewGuid()
+            }
+        };
+        var controller = Controller(service, authorized: true);
+
+        var result = await controller.RecreateAsync(
+            Guid.NewGuid(),
+            new SalesReturnRecreationRequest(Guid.NewGuid(), [sourceId]),
+            CancellationToken.None);
+
+        var response = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status207MultiStatus, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_ReturnsMultiStatusWhenAReplacementWasCreatedWithErrors()
+    {
+        var sourceId = Guid.NewGuid();
+        var service = new CapturingRecreationService
+        {
+            Result = new SalesReturnRecreationResult(
+                [],
+                [],
+                [],
+                [new SalesReturnCreatedWithErrorResult(
+                    sourceId, Guid.NewGuid(), "CreatedWithError", "SALESRETURN_RELATIONS_REATTACH_FAILED", "Reattach failed.")],
+                [])
+            {
+                OperationId = Guid.NewGuid()
+            }
+        };
+        var controller = Controller(service, authorized: true);
+
+        var result = await controller.RecreateAsync(
+            Guid.NewGuid(),
+            new SalesReturnRecreationRequest(Guid.NewGuid(), [sourceId]),
             CancellationToken.None);
 
         var response = Assert.IsType<ObjectResult>(result);
@@ -104,10 +188,14 @@ public sealed class InternalSalesReturnsControllerTests
             MainAgentId = mainAgentId;
             DocumentIds = salesReturnIds;
             return Task.FromResult(Result ?? new SalesReturnRecreationResult(
-                Guid.NewGuid(),
-                mainAgentId,
-                salesReturnIds.Select(documentId => new SalesReturnRecreationDocumentResult(
-                    documentId, Guid.NewGuid(), "Completed", "Completed", null, null)).ToArray()));
+                salesReturnIds.ToArray(),
+                [],
+                [],
+                [],
+                [])
+            {
+                OperationId = Guid.NewGuid()
+            });
         }
     }
 }

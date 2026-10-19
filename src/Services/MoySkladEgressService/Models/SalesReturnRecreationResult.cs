@@ -1,14 +1,33 @@
+using System.Text.Json.Serialization;
+
 namespace MsContractor.MoySkladEgressService.Models;
 
 public sealed record SalesReturnRecreationResult(
-    Guid OperationId,
-    Guid MainAgentId,
-    IReadOnlyList<SalesReturnRecreationDocumentResult> Documents);
+    IReadOnlyList<Guid> TransferredDocumentIds,
+    IReadOnlyList<Guid> SkippedDocumentIds,
+    IReadOnlyList<SalesReturnSkippedDocumentResult> SkippedDocuments,
+    IReadOnlyList<SalesReturnCreatedWithErrorResult> CreatedWithErrors,
+    IReadOnlyList<SalesReturnUnCreatedButDeletedResult> UnCreatedButDeleted)
+{
+    [JsonIgnore]
+    public Guid OperationId { get; init; }
+}
 
-public sealed record SalesReturnRecreationDocumentResult(
+public sealed record SalesReturnSkippedDocumentResult(
+    Guid DocumentId,
+    string Status,
+    string? ErrorCode,
+    string? Error);
+
+public sealed record SalesReturnCreatedWithErrorResult(
     Guid SourceDocumentId,
-    Guid? NewDocumentId,
-    string Stage,
+    Guid NewDocumentId,
+    string Status,
+    string? ErrorCode,
+    string? Error);
+
+public sealed record SalesReturnUnCreatedButDeletedResult(
+    Guid SourceDocumentId,
     string Status,
     string? ErrorCode,
     string? Error);

@@ -100,16 +100,17 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
 
         await _operations.CreateAsync(operation, cancellationToken);
         await _relations.PrepareAndDetachAsync(operation, correlationId, cancellationToken);
-        await DeleteSourcesAsync(operation, correlationId, cancellationToken);
+        var deletedSourceIds = await DeleteSourcesAsync(operation, correlationId, cancellationToken);
         await CreateNewDocumentsAsync(operation, correlationId, cancellationToken);
         if (operation.Items.Any(item => item.Stage == "Created"))
             await _relations.ReattachAsync(operation, correlationId, cancellationToken);
 
-        operation.Status = operation.Items.All(item => item.Stage == "Completed")
-            ? "Completed"
-            : "Failed";
+        var result = Result(operation, deletedSourceIds);
+        operation.Status = result.CreatedWithErrors.Count + result.UnCreatedButDeleted.Count > 0
+            ? "Failed"
+            : "Completed";
         await _operations.SaveAsync(operation, cancellationToken);
-        return Result(operation);
+        return result;
     }
 
     private async Task LoadSourceDataAsync(
@@ -132,11 +133,12 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
             cancellationToken);
     }
 
-    private async Task DeleteSourcesAsync(
+    private async Task<HashSet<Guid>> DeleteSourcesAsync(
         SalesReturnRecreationOperation operation,
         string correlationId,
         CancellationToken cancellationToken)
     {
+        var deletedSourceIds = new HashSet<Guid>();
         var deletableItems = operation.Items
             .Where(item => item.Stage == "Prepared" && item.RelationsStatus == "RelationsDetached")
             .ToArray();
@@ -151,7 +153,10 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
                 {
                     var result = results.Single(result => result.DocumentId == item.SourceDocumentId);
                     if (result.Succeeded)
+                    {
                         item.Stage = "Deleted";
+                        deletedSourceIds.Add(item.SourceDocumentId);
+                    }
                     else
                         Fail(item, "SALESRETURN_DELETE_FAILED", result.Error ?? "MoySklad rejected source deletion.");
                 }
@@ -163,6 +168,8 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
             }
             await _operations.SaveAsync(operation, cancellationToken);
         }
+
+        return deletedSourceIds;
     }
 
     private async Task CreateNewDocumentsAsync(
@@ -170,13 +177,11 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
         string correlationId,
         CancellationToken cancellationToken)
     {
-        var oldToNewSalesReturnIds = new Dictionary<Guid, Guid>();
         foreach (var chunk in operation.Items.Where(item => item.Stage == "Deleted").Chunk(BatchSize))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var prepared = chunk
-                .Select((item, index) => new PreparedBatchItem(
-                    index,
+                .Select(item => new PreparedBatchItem(
                     item.SourceDocumentId,
                     item.NewSyncId,
                     item.NewPayloadJson))
@@ -194,9 +199,13 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
 
                 if (results.Count != prepared.Length)
                 {
-                    foreach (var item in chunk)
+                    for (var index = 0; index < chunk.Length; index++)
                     {
-                        item.NewDocumentId = null;
+                        var item = chunk[index];
+                        item.NewDocumentId = index < results.Count &&
+                                             results[index].DocumentId is Guid returnedId && returnedId != Guid.Empty
+                            ? returnedId
+                            : null;
                         Fail(item, "SALESRETURN_NEW_CREATE_RESPONSE_INVALID",
                             "MoySklad returned a different number of salesreturn batch items than requested.");
                         item.Stage = "Failed";
@@ -209,7 +218,9 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
                         var preparedItem = prepared[index];
                         var item = chunk[index];
                         var result = results[index];
-                        item.NewDocumentId = null;
+                        item.NewDocumentId = result.DocumentId is Guid returnedId && returnedId != Guid.Empty
+                            ? returnedId
+                            : null;
 
                         if (result.ErrorCode is not null)
                         {
@@ -218,7 +229,7 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
                             continue;
                         }
 
-                        if (result.DocumentId is null || result.DocumentId == Guid.Empty)
+                        if (item.NewDocumentId is null)
                         {
                             Fail(item, "SALESRETURN_NEW_CREATE_RESPONSE_INVALID",
                                 "MoySklad did not return a valid created salesreturn id.");
@@ -234,7 +245,6 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
                             continue;
                         }
 
-                        oldToNewSalesReturnIds[preparedItem.SourceSalesReturnId] = result.DocumentId.Value;
                         item.Stage = "Created";
                         item.ErrorCode = null;
                         item.Error = null;
@@ -250,17 +260,11 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
                 }
             }
 
-            foreach (var item in chunk)
-            {
-                if (oldToNewSalesReturnIds.TryGetValue(item.SourceDocumentId, out var newDocumentId))
-                    item.NewDocumentId = newDocumentId;
-            }
             await _operations.SaveAsync(operation, cancellationToken);
         }
     }
 
     private sealed record PreparedBatchItem(
-        int BatchIndex,
         Guid SourceSalesReturnId,
         Guid SyncId,
         string Payload);
@@ -287,16 +291,58 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
         item.Error = error;
     }
 
-    private static SalesReturnRecreationResult Result(SalesReturnRecreationOperation operation) => new(
-        operation.OperationId,
-        operation.MainAgentId,
-        operation.Items.Select(item => new SalesReturnRecreationDocumentResult(
-            item.SourceDocumentId,
-            item.NewDocumentId,
-            item.Stage,
-            item.Stage == "Completed" ? "Completed" : "Failed",
-            item.ErrorCode,
-            item.Error)).ToArray());
+    private static SalesReturnRecreationResult Result(
+        SalesReturnRecreationOperation operation,
+        IReadOnlySet<Guid> deletedSourceIds)
+    {
+        var transferredDocumentIds = operation.Items
+            .Where(item => item.Stage == "Completed" && item.NewDocumentId is not null)
+            .Select(item => item.SourceDocumentId)
+            .ToArray();
+        var transferredIds = transferredDocumentIds.ToHashSet();
+
+        var skippedDocuments = operation.Items
+            .Where(item => item.NewDocumentId is null &&
+                           !deletedSourceIds.Contains(item.SourceDocumentId) &&
+                           !transferredIds.Contains(item.SourceDocumentId))
+            .Select(item => new SalesReturnSkippedDocumentResult(
+                item.SourceDocumentId,
+                item.Stage == "Skipped" ? "Skipped" : "Failed",
+                item.ErrorCode ?? "SALESRETURN_RECREATION_INCOMPLETE",
+                item.Error ?? "Salesreturn recreation did not complete."))
+            .ToArray();
+
+        var createdWithErrors = operation.Items
+            .Where(item => item.NewDocumentId is not null && !transferredIds.Contains(item.SourceDocumentId))
+            .Select(item => new SalesReturnCreatedWithErrorResult(
+                item.SourceDocumentId,
+                item.NewDocumentId!.Value,
+                "CreatedWithError",
+                item.ErrorCode ?? "SALESRETURN_RECREATION_INCOMPLETE",
+                item.Error ?? "The replacement salesreturn was created with an error."))
+            .ToArray();
+
+        var unCreatedButDeleted = operation.Items
+            .Where(item => deletedSourceIds.Contains(item.SourceDocumentId) &&
+                           item.NewDocumentId is null &&
+                           !transferredIds.Contains(item.SourceDocumentId))
+            .Select(item => new SalesReturnUnCreatedButDeletedResult(
+                item.SourceDocumentId,
+                "Failed",
+                item.ErrorCode ?? "SALESRETURN_RECREATION_INCOMPLETE",
+                item.Error ?? "The source salesreturn was deleted but no replacement was created."))
+            .ToArray();
+
+        return new SalesReturnRecreationResult(
+            transferredDocumentIds,
+            skippedDocuments.Select(item => item.DocumentId).ToArray(),
+            skippedDocuments,
+            createdWithErrors,
+            unCreatedButDeleted)
+        {
+            OperationId = operation.OperationId
+        };
+    }
 
     private const int BatchSize = 1000;
 }

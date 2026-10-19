@@ -24,7 +24,10 @@ public sealed class SalesReturnRecreationOrchestratorTests
             accountId, mainAgentId, ids, CancellationToken.None);
 
         Assert.Equal(["delete:1000", "delete:1", "create:1000", "create:1"], gateway.Writes);
-        Assert.All(result.Documents, document => Assert.Equal("Completed", document.Status));
+        Assert.Equal(ids, result.TransferredDocumentIds);
+        Assert.Empty(result.SkippedDocuments);
+        Assert.Empty(result.CreatedWithErrors);
+        Assert.Empty(result.UnCreatedButDeleted);
         Assert.Equal("Completed", operations.Operation!.Status);
         Assert.All(operations.Operation.Items, item => Assert.NotNull(item.TargetAgentAccountId));
     }
@@ -49,7 +52,7 @@ public sealed class SalesReturnRecreationOrchestratorTests
             new RecordingOperationsRepository(),
             gateway).RecreateAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
 
-        Assert.Equal("Completed", Assert.Single(result.Documents).Status);
+        Assert.Equal([sourceId], result.TransferredDocumentIds);
         var payload = JsonNode.Parse(Assert.Single(gateway.NewPayloads))!.AsObject();
         Assert.Equal(expectedAgentAccount, payload["agentAccount"] is not null);
         Assert.Null(payload["contract"]);
@@ -67,12 +70,9 @@ public sealed class SalesReturnRecreationOrchestratorTests
             operations,
             gateway).RecreateAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
 
-        var document = Assert.Single(result.Documents);
-        Assert.Equal("Completed", document.Status);
-        Assert.Equal("Completed", document.Stage);
-        Assert.Null(document.ErrorCode);
+        Assert.Equal([sourceId], result.TransferredDocumentIds);
         Assert.Equal(["delete:1", "create:1"], gateway.Writes);
-        Assert.NotNull(document.NewDocumentId);
+        Assert.NotNull(operations.Operation!.Items.Single().NewDocumentId);
         Assert.Equal("Completed", operations.Operation!.Status);
     }
 
@@ -89,10 +89,66 @@ public sealed class SalesReturnRecreationOrchestratorTests
             operations,
             gateway).RecreateAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
 
-        var document = Assert.Single(result.Documents);
+        var document = Assert.Single(result.UnCreatedButDeleted);
+        Assert.Equal(sourceId, document.SourceDocumentId);
         Assert.Equal("Failed", document.Status);
         Assert.Equal("SALESRETURN_NEW_CREATE_FAILED", document.ErrorCode);
+        Assert.Empty(result.TransferredDocumentIds);
+        Assert.Empty(result.SkippedDocuments);
+        Assert.Empty(result.CreatedWithErrors);
         Assert.Equal(["delete:1", "create:1"], gateway.Writes);
+        Assert.Equal("Failed", operations.Operation!.Status);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_DeleteFailureIsReturnedAsFailedSkippedDocument()
+    {
+        var sourceId = Guid.NewGuid();
+        var gateway = new RecordingGateway([]) { ReturnDeleteError = true };
+        var operations = new RecordingOperationsRepository();
+
+        var result = await Service(
+            new Dictionary<Guid, string> { [sourceId] = SourceDocument(sourceId) },
+            new Dictionary<Guid, IReadOnlyDictionary<Guid, string>> { [sourceId] = Positions(sourceId) },
+            operations,
+            gateway).RecreateAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
+
+        var skipped = Assert.Single(result.SkippedDocuments);
+        Assert.Equal(sourceId, skipped.DocumentId);
+        Assert.Equal("Failed", skipped.Status);
+        Assert.Equal("SALESRETURN_DELETE_FAILED", skipped.ErrorCode);
+        Assert.Equal([sourceId], result.SkippedDocumentIds);
+        Assert.Empty(result.TransferredDocumentIds);
+        Assert.Empty(result.CreatedWithErrors);
+        Assert.Empty(result.UnCreatedButDeleted);
+        Assert.Equal("Completed", operations.Operation!.Status);
+        Assert.Equal([sourceId], gateway.DeletedIds);
+        Assert.Empty(gateway.CreatedSourceIds);
+    }
+
+    [Fact]
+    public async Task RecreateAsync_ReattachFailureReturnsCreatedWithErrorAndReplacementId()
+    {
+        var sourceId = Guid.NewGuid();
+        var gateway = new RecordingGateway([]);
+        var operations = new RecordingOperationsRepository();
+
+        var result = await Service(
+            new Dictionary<Guid, string> { [sourceId] = SourceDocument(sourceId) },
+            new Dictionary<Guid, IReadOnlyDictionary<Guid, string>> { [sourceId] = Positions(sourceId) },
+            operations,
+            gateway,
+            relations: new FailedReattachRelationsService()).RecreateAsync(
+            Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
+
+        var createdWithError = Assert.Single(result.CreatedWithErrors);
+        Assert.Equal(sourceId, createdWithError.SourceDocumentId);
+        Assert.Equal(gateway.CreatedIds.Single(), createdWithError.NewDocumentId);
+        Assert.Equal("CreatedWithError", createdWithError.Status);
+        Assert.Equal("SALESRETURN_RELATIONS_REATTACH_FAILED", createdWithError.ErrorCode);
+        Assert.Empty(result.TransferredDocumentIds);
+        Assert.Empty(result.SkippedDocuments);
+        Assert.Empty(result.UnCreatedButDeleted);
         Assert.Equal("Failed", operations.Operation!.Status);
     }
 
@@ -137,9 +193,12 @@ public sealed class SalesReturnRecreationOrchestratorTests
             gateway,
             relations: relations).RecreateAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
 
-        var document = Assert.Single(result.Documents);
+        var document = Assert.Single(result.CreatedWithErrors);
+        Assert.Equal(sourceId, document.SourceDocumentId);
+        Assert.Equal(gateway.CreatedIds.Single(), document.NewDocumentId);
+        Assert.Equal("CreatedWithError", document.Status);
         Assert.Equal("SALESRETURN_NEW_CREATE_SYNC_ID_MISMATCH", document.ErrorCode);
-        Assert.Null(document.NewDocumentId);
+        Assert.Empty(result.UnCreatedButDeleted);
         Assert.Equal(0, relations.ReattachCalls);
     }
 
@@ -158,7 +217,7 @@ public sealed class SalesReturnRecreationOrchestratorTests
             new RecordingOperationsRepository(),
             gateway).RecreateAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
 
-        Assert.Equal("Completed", Assert.Single(result.Documents).Status);
+        Assert.Equal([sourceId], result.TransferredDocumentIds);
         Assert.Equal(["delete:1", "create:1"], gateway.Writes);
         var payload = JsonNode.Parse(Assert.Single(gateway.NewPayloads))!.AsObject();
         Assert.Empty(payload["positions"]!.AsArray());
@@ -178,7 +237,7 @@ public sealed class SalesReturnRecreationOrchestratorTests
             new RecordingOperationsRepository(),
             gateway).RecreateAsync(Guid.NewGuid(), Guid.NewGuid(), [sourceId], CancellationToken.None);
 
-        Assert.Equal("Completed", Assert.Single(result.Documents).Status);
+        Assert.Equal([sourceId], result.TransferredDocumentIds);
         var payload = JsonNode.Parse(Assert.Single(gateway.NewPayloads))!.AsObject();
         Assert.Null(payload["demand"]);
     }
@@ -242,8 +301,9 @@ public sealed class SalesReturnRecreationOrchestratorTests
             Guid.NewGuid(), Guid.NewGuid(), [skippedId, readyId], CancellationToken.None);
 
         Assert.Equal(["delete:1", "create:1"], gateway.Writes);
-        Assert.Equal("Failed", result.Documents.Single(document => document.SourceDocumentId == skippedId).Status);
-        Assert.Equal("Completed", result.Documents.Single(document => document.SourceDocumentId == readyId).Status);
+        Assert.Equal([readyId], result.TransferredDocumentIds);
+        Assert.Equal([skippedId], result.SkippedDocumentIds);
+        Assert.Equal("Skipped", result.SkippedDocuments.Single().Status);
     }
 
     [Fact]
@@ -465,10 +525,13 @@ public sealed class SalesReturnRecreationOrchestratorTests
         }
 
         public List<string> Writes { get; } = [];
+        public List<Guid> DeletedIds { get; } = [];
+        public List<Guid> CreatedSourceIds { get; } = [];
         public List<string> NewPayloads { get; } = [];
         public List<Guid> CreatedIds { get; } = [];
         public bool ReturnInvalidNewDocument { get; set; }
         public bool ReturnCreateErrorWithoutDocument { get; set; }
+        public bool ReturnDeleteError { get; set; }
         public bool ReverseCreateResponses { get; set; }
         public Guid? ReturnedSyncIdOverride { get; set; }
         private int _createCalls;
@@ -483,10 +546,15 @@ public sealed class SalesReturnRecreationOrchestratorTests
         public Task<IReadOnlyList<MoySkladSalesReturnBatchDeleteResult>> DeleteBatchAsync(Guid accountId,
             string correlationId, IReadOnlyList<Guid> salesReturnIds, CancellationToken cancellationToken)
         {
+            DeletedIds.AddRange(salesReturnIds);
             Writes.Add($"delete:{salesReturnIds.Count}");
             _events?.Add($"delete:{salesReturnIds.Count}");
             return Task.FromResult<IReadOnlyList<MoySkladSalesReturnBatchDeleteResult>>(
-                salesReturnIds.Select(id => new MoySkladSalesReturnBatchDeleteResult(id, true)).ToArray());
+                salesReturnIds.Select(id => new MoySkladSalesReturnBatchDeleteResult(
+                    id,
+                    !ReturnDeleteError,
+                    ReturnDeleteError ? "DELETE_FAILED" : null,
+                    ReturnDeleteError ? "delete failed" : null)).ToArray());
         }
 
         public Task<IReadOnlyList<MoySkladSalesReturnBatchCreateResult>> CreateBatchAsync(Guid accountId,
@@ -494,6 +562,7 @@ public sealed class SalesReturnRecreationOrchestratorTests
             CancellationToken cancellationToken)
         {
             _createCalls++;
+            CreatedSourceIds.AddRange(documents.Select(item => item.SourceDocumentId));
             Writes.Add($"create:{documents.Count}");
             _events?.Add($"create:{documents.Count}");
             if (_createCalls == 1)
@@ -548,6 +617,34 @@ public sealed class SalesReturnRecreationOrchestratorTests
             CancellationToken cancellationToken)
         {
             ReattachCalls++;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FailedReattachRelationsService : ISalesReturnRelationsService
+    {
+        public Task PrepareAndDetachAsync(
+            SalesReturnRecreationOperation operation,
+            string correlationId,
+            CancellationToken cancellationToken)
+        {
+            foreach (var item in operation.Items.Where(item => item.Stage == "Prepared"))
+                item.RelationsStatus = "RelationsDetached";
+            return Task.CompletedTask;
+        }
+
+        public Task ReattachAsync(
+            SalesReturnRecreationOperation operation,
+            string correlationId,
+            CancellationToken cancellationToken)
+        {
+            foreach (var item in operation.Items.Where(item => item.Stage == "Created"))
+            {
+                item.RelationsStatus = "Failed";
+                item.Stage = "Failed";
+                item.ErrorCode = "SALESRETURN_RELATIONS_REATTACH_FAILED";
+                item.Error = "Reattach failed.";
+            }
             return Task.CompletedTask;
         }
     }

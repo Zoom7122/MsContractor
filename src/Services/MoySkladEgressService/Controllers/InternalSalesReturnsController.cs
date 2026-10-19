@@ -53,7 +53,13 @@ public sealed class InternalSalesReturnsController : ControllerBase
                 request.SalesReturnIds,
                 cancellationToken);
             Response.Headers[InternalApiHeaders.CorrelationId] = result.OperationId.ToString("D");
-            return result.Documents.All(document => document.Status == "Completed")
+            var allDocumentsTransferred = result.TransferredDocumentIds.Count == request.SalesReturnIds.Count &&
+                                          result.TransferredDocumentIds.ToHashSet().SetEquals(request.SalesReturnIds);
+            var hasIncompleteOutcome = result.SkippedDocumentIds.Count != 0 ||
+                                       result.SkippedDocuments.Count != 0 ||
+                                       result.CreatedWithErrors.Count != 0 ||
+                                       result.UnCreatedButDeleted.Count != 0;
+            return allDocumentsTransferred && !hasIncompleteOutcome
                 ? Ok(result)
                 : StatusCode(StatusCodes.Status207MultiStatus, result);
         }

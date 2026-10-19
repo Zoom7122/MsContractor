@@ -1,8 +1,8 @@
 @MsContractor_MoySkladEgressService_HostAddress = http://localhost:8082
 @internalApiKey = HLgIyekmoPVyJUFAVv6U5XUsmxcQM8XwpmJvxS9EKSU=
 @accountId = b3d34ec3-243f-11f1-0a80-0b21000042b5
-@mainAgentId = e9dc6a2d-b601-11f1-0a80-1ba40002ae0f
-@salesReturnId = e8ab75a9-b601-11f1-0a80-06110002d0a0
+@mainAgentId = edd8fcc0-cbbd-11f1-0a80-1e31005259e8
+@salesReturnId = 6dbc35f5-cbbc-11f1-0a80-1a9d00e6472f
 
 ### Recreate salesreturns for the main counterparty from saved Egress raw data.
 POST {{MsContractor_MoySkladEgressService_HostAddress}}/internal/accounts/{{accountId}}/documents/salesreturn/recreate

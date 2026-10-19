@@ -518,22 +518,34 @@ public sealed class SyncRepository : ISyncRepository
         IReadOnlyCollection<DocumentAdditionalCommission> commissions,
         CancellationToken cancellationToken)
     {
+        var replacementDocuments = documents.Where(item => counterpartyIds.Contains(item.CounterpartyId)).ToArray();
+        var replacementDocumentIds = replacementDocuments.Select(item => item.DocumentId).ToHashSet();
         var oldDocumentIds = await _dbContext.CounterpartyDocuments.AsNoTracking()
             .Where(item => item.AccountId == accountId && counterpartyIds.Contains(item.CounterpartyId))
             .Select(item => item.DocumentId)
             .ToArrayAsync(cancellationToken);
+        var documentIdsToReplace = oldDocumentIds.Concat(replacementDocumentIds).ToHashSet();
         foreach (var entry in _dbContext.ChangeTracker.Entries<DocumentAdditionalCommission>()
-                     .Where(entry => oldDocumentIds.Contains(entry.Entity.DocumentId)).ToArray())
+                     .Where(entry => documentIdsToReplace.Contains(entry.Entity.DocumentId)).ToArray())
             entry.State = EntityState.Detached;
         foreach (var entry in _dbContext.ChangeTracker.Entries<CounterpartyDocument>()
-                     .Where(entry => entry.Entity.AccountId == accountId && counterpartyIds.Contains(entry.Entity.CounterpartyId)).ToArray())
+                     .Where(entry => entry.Entity.AccountId == accountId &&
+                                     (counterpartyIds.Contains(entry.Entity.CounterpartyId) ||
+                                      replacementDocumentIds.Contains(entry.Entity.DocumentId))).ToArray())
             entry.State = EntityState.Detached;
 
         await _dbContext.CounterpartyDocuments
             .Where(item => item.AccountId == accountId && counterpartyIds.Contains(item.CounterpartyId))
             .ExecuteDeleteAsync(cancellationToken);
-        var replacementDocuments = documents.Where(item => counterpartyIds.Contains(item.CounterpartyId)).ToArray();
-        var replacementDocumentIds = replacementDocuments.Select(item => item.DocumentId).ToHashSet();
+        if (replacementDocumentIds.Count > 0)
+        {
+            // Discovery is authoritative by document ID. Remove any prior same-account link,
+            // even when it belonged to a different counterparty, before inserting the new link.
+            await _dbContext.CounterpartyDocuments
+                .Where(item => item.AccountId == accountId && replacementDocumentIds.Contains(item.DocumentId))
+                .ExecuteDeleteAsync(cancellationToken);
+        }
+
         _dbContext.CounterpartyDocuments.AddRange(replacementDocuments);
         _dbContext.DocumentAdditionalCommissions.AddRange(
             commissions.Where(item => replacementDocumentIds.Contains(item.DocumentId)));

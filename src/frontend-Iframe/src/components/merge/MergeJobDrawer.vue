@@ -41,6 +41,10 @@ const failedDocuments = computed(() => {
 const documentCount = computed(() => documentGroups.value.reduce((sum, group) => sum + group.totalCount, 0))
 const primaryCounterpartyUrl = computed(() => moySkladCounterpartyUrl(props.job?.primaryCounterpartyId))
 
+function duplicateCounterpartyUrl(item) {
+  return moySkladCounterpartyUrl(item?.id)
+}
+
 const duplicates = computed(() => {
   const job = props.job
   if (!job) {
@@ -184,9 +188,20 @@ onBeforeUnmount(() => {
         <div>
           <dt>Дубликаты · {{ countLabel(duplicates.length, COUNTERPARTY_FORMS) }}</dt>
           <dd class="merge-job-drawer__duplicates">
-            <span v-for="item in duplicates" :key="item.id" class="merge-job-drawer__chip">
-              {{ item.name || shortId(item.id) }}
-            </span>
+            <template v-for="item in duplicates" :key="item.id">
+              <a
+                v-if="duplicateCounterpartyUrl(item)"
+                class="merge-job-drawer__chip merge-job-drawer__chip--link"
+                :href="duplicateCounterpartyUrl(item)"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {{ item.name || shortId(item.id) }}
+              </a>
+              <span v-else class="merge-job-drawer__chip">
+                {{ item.name || shortId(item.id) }}
+              </span>
+            </template>
             <span v-if="!duplicates.length">—</span>
           </dd>
         </div>

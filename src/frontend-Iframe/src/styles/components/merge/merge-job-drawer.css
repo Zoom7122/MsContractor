@@ -91,6 +91,15 @@
   white-space: nowrap;
 }
 
+.merge-job-drawer__chip--link {
+  color: var(--app-color-primary);
+  text-decoration: none;
+}
+
+.merge-job-drawer__chip--link:hover {
+  text-decoration: underline;
+}
+
 .merge-job-drawer__section {
   display: flex;
   min-width: 0;

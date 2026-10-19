@@ -15,6 +15,12 @@ public interface ICatalogSyncStateClient
         Guid accountId,
         string correlationId,
         CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<DocumentsInOperationContent>> GetDocumentsInOperationAsync(
+        Guid accountId,
+        Guid mergeJobId,
+        string correlationId,
+        CancellationToken cancellationToken);
 }
 
 public interface ICatalogSettingsClient
@@ -158,6 +164,52 @@ public sealed class CatalogSyncClient : ICatalogSyncClient, ICatalogSyncStateCli
         catch (System.Text.Json.JsonException exception)
         {
             throw new CatalogSyncUnavailableException("CatalogSyncService returned an invalid state response.", exception);
+        }
+    }
+
+    public async Task<IReadOnlyList<DocumentsInOperationContent>> GetDocumentsInOperationAsync(
+        Guid accountId,
+        Guid mergeJobId,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"internal/accounts/{accountId:D}/merge-jobs/{mergeJobId:D}/documents-in-operation");
+        request.Headers.TryAddWithoutValidation(
+            InternalApiHeaders.ApiKey,
+            _configuration["InternalApi:Key"]);
+        request.Headers.TryAddWithoutValidation(
+            InternalApiHeaders.CorrelationId,
+            correlationId);
+
+        try
+        {
+            using var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                throw new CatalogSyncUnavailableException("CatalogSyncService rejected the documents-in-operation request.");
+
+            return await response.Content.ReadFromJsonAsync<IReadOnlyList<DocumentsInOperationContent>>(cancellationToken)
+                ?? throw new CatalogSyncUnavailableException("CatalogSyncService returned an invalid documents-in-operation response.");
+        }
+        catch (CatalogSyncUnavailableException)
+        {
+            throw;
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new CatalogSyncUnavailableException("CatalogSyncService is unavailable.", exception);
+        }
+        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new CatalogSyncUnavailableException("CatalogSyncService timed out.", exception);
+        }
+        catch (System.Text.Json.JsonException exception)
+        {
+            throw new CatalogSyncUnavailableException("CatalogSyncService returned an invalid documents-in-operation response.", exception);
         }
     }
 

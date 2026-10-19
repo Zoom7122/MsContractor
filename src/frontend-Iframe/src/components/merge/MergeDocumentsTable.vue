@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue'
 import EmptyState from '../ui/EmptyState.vue'
 import StatusBadge from '../ui/StatusBadge.vue'
 import { DOCUMENT_ACTIONS, documentResultMeta, documentTypeLabel } from '../../domain/merge'
+import { moySkladDocumentUrl } from '../../domain/documents-in-operation'
 import { formatDateTime, formatNumber } from '../../utils/format'
 
 /**
@@ -90,6 +91,10 @@ function formatSum(value) {
 function rowClassName({ row }) {
   return row.result === 'failed' ? 'merge-documents__row--failed' : ''
 }
+
+function newDocumentUrl(row) {
+  return moySkladDocumentUrl(row.type, row.newDocumentId)
+}
 </script>
 
 <template>
@@ -120,7 +125,7 @@ function rowClassName({ row }) {
       <el-table-column label="Документ" min-width="140">
         <template #default="{ row }">
           <div class="merge-documents__doc">
-            <span class="merge-documents__number">№ {{ row.name || '—' }}</span>
+            <span class="merge-documents__number">№ {{ row.name || row.id || '—' }}</span>
             <span class="merge-documents__doc-meta app-meta">{{ formatDateTime(row.moment) }}<template v-if="row.stateName"> · {{ row.stateName }}</template></span>
           </div>
         </template>
@@ -148,6 +153,20 @@ function rowClassName({ row }) {
         <template #default="{ row }">
           <div class="merge-documents__result">
             <StatusBadge size="sm" :meta="documentResultMeta(row.result)" />
+            <a
+              v-if="row.newDocumentId && newDocumentUrl(row)"
+              class="merge-documents__new-link app-mono"
+              :href="newDocumentUrl(row)"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Новый ID: {{ row.newDocumentId }}
+            </a>
+            <span v-else-if="row.newDocumentId" class="merge-documents__new-id app-mono">
+              Новый ID: {{ row.newDocumentId }}
+            </span>
+            <span v-if="row.status" class="merge-documents__result-status app-meta">Статус: {{ row.status }}</span>
+            <span v-if="row.errorCode" class="merge-documents__result-code app-meta app-mono">{{ row.errorCode }}</span>
             <el-tooltip v-if="row.errorMessage" :content="row.errorMessage" placement="top" :show-after="300">
               <span class="merge-documents__result-text app-clamp-2" :class="`merge-documents__result-text--${row.result}`">
                 {{ row.errorMessage }}

@@ -45,6 +45,7 @@ const ROUTES = [
   ['post', /^\/api\/merge-preview\/selection$/, selectionPreview],
   ['post', /^\/api\/merge-preview$/, duplicatePreview],
   ['post', /^\/api\/merge-jobs$/, createMergeJob],
+  ['get', /^\/api\/catalog\/merge-jobs\/[^/]+\/documents-in-operation$/, getDocumentsInOperation],
   ['get', /^\/api\/catalog\/settings$/, getCatalogSettings],
   ['put', /^\/api\/catalog\/settings$/, saveCatalogSettings],
   ['post', /^\/api\/sync(\/incremental)?$/, startSync]
@@ -133,6 +134,61 @@ function createMergeJob({ body, store }) {
   })
 
   return { status: 202, data: { mergeJobId: id, status: 'pending' } }
+}
+
+function getDocumentsInOperation({ config, store }) {
+  const match = String(config.url || '').match(/\/api\/catalog\/merge-jobs\/([^/]+)\/documents-in-operation$/)
+  const job = store.jobs.find((item) => item.id === decodeURIComponent(match?.[1] || ''))
+  if (!job || job.status === 'pending') {
+    return ok([])
+  }
+
+  const rows = []
+  const reassigned = (job.documents || []).filter((item) => item.action !== 'recreate' && item.result !== 'pending')
+  if (reassigned.length) {
+    const body = {
+      changedDocuments: reassigned
+        .filter((item) => item.result === 'reassigned' || item.result === 'unchanged')
+        .map((item) => ({ documentType: item.type, documentId: item.id })),
+      skippedDocuments: reassigned
+        .filter((item) => item.result === 'skipped')
+        .map((item) => ({ documentType: item.type, documentId: item.id, reason: item.errorMessage })),
+      failures: reassigned
+        .filter((item) => item.result === 'failed')
+        .map((item) => ({ documentType: item.type, documentId: item.id, code: item.errorCode, message: item.errorMessage }))
+    }
+    rows.push({
+      operationType: 'change_counterparty',
+      rawJson: JSON.stringify([{ statusCode: body.skippedDocuments.length || body.failures.length ? 207 : 200, body }])
+    })
+  }
+
+  const recreateTypes = new Set((job.documents || [])
+    .filter((item) => item.action === 'recreate' && item.result !== 'pending')
+    .map((item) => item.type))
+  for (const type of recreateTypes) {
+    const documents = job.documents.filter((item) => item.type === type && item.result !== 'pending')
+    const body = {
+      transferredDocuments: documents
+        .filter((item) => item.result === 'recreated')
+        .map((item) => ({ sourceDocumentId: item.id, newDocumentId: item.newDocumentId })),
+      skippedDocuments: documents
+        .filter((item) => item.result === 'skipped')
+        .map((item) => ({ documentId: item.id, status: 'Skipped', errorCode: 'DOCUMENT_SKIPPED', error: item.errorMessage })),
+      createdWithErrors: documents
+        .filter((item) => item.result === 'failed' && item.newDocumentId)
+        .map((item) => ({ sourceDocumentId: item.id, newDocumentId: item.newDocumentId, status: 'CreatedWithError', errorCode: item.errorCode, error: item.errorMessage })),
+      failedDocuments: documents
+        .filter((item) => item.result === 'failed' && !item.newDocumentId)
+        .map((item) => ({ sourceDocumentId: item.id, status: 'Failed', errorCode: item.errorCode, error: item.errorMessage }))
+    }
+    rows.push({
+      operationType: `recreate_${type}`,
+      rawJson: JSON.stringify([{ statusCode: body.skippedDocuments.length || body.createdWithErrors.length || body.failedDocuments.length ? 207 : 200, body }])
+    })
+  }
+
+  return ok(rows)
 }
 
 function startSync() {

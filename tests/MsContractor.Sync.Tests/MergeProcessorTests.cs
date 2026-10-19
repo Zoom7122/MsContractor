@@ -12,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using MsContractor.CatalogSyncService.Services;
+using MsContractor.CatalogSyncService.Repositories;
 using MsContractor.Contracts.Merge;
 using MsContractor.Contracts.Internal;
 using MsContractor.DuplicatesMergeService.Services;
@@ -384,6 +385,48 @@ public sealed class MergeProcessorTests
         Assert.Equal(200, grouped.RootElement[0].GetProperty("statusCode").GetInt32());
         Assert.Equal(503, grouped.RootElement[1].GetProperty("statusCode").GetInt32());
         Assert.Single(rows, item => item.MergeJobId == secondJob.Id);
+    }
+
+    [Fact]
+    public async Task DocumentsInOperationStateRepository_ReturnsOnlyRowsForTenantAndMergeJob()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var command = await fixture.CreateJobAsync();
+        const string rawJson = "[{\"statusCode\":207,\"body\":{\"skippedDocuments\":[]}}]";
+        fixture.Db.DocumentsInOperation.Add(new DocumentsInOperation
+        {
+            Id = Guid.NewGuid(),
+            AccountId = fixture.AccountId,
+            MergeJobId = command.MergeJobId,
+            OperationType = DocumentsInOperationTypes.ChangeCounterparty,
+            RawJson = rawJson,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        await fixture.Db.SaveChangesAsync();
+
+        var repository = new DocumentsInOperationStateRepository(fixture.Db);
+        var rows = await repository.GetForMergeJobAsync(
+            fixture.AccountId,
+            command.MergeJobId,
+            CancellationToken.None);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(DocumentsInOperationTypes.ChangeCounterparty, row.OperationType);
+        Assert.Equal(rawJson, row.RawJson);
+        Assert.Empty(await repository.GetForMergeJobAsync(
+            fixture.AccountId,
+            Guid.NewGuid(),
+            CancellationToken.None));
+
+        await using var otherTenantDb = new CatalogSyncDbContext(
+            new DbContextOptionsBuilder<CatalogSyncDbContext>()
+                .UseSqlite(fixture.Connection)
+                .Options);
+        var otherTenantRepository = new DocumentsInOperationStateRepository(otherTenantDb);
+        Assert.Empty(await otherTenantRepository.GetForMergeJobAsync(
+            Guid.NewGuid(),
+            command.MergeJobId,
+            CancellationToken.None));
     }
 
     [Fact]

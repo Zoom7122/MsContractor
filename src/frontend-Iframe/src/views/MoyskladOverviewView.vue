@@ -366,6 +366,7 @@ function mapCatalogState(state) {
       secondaryCounterpartyIds: duplicateCounterpartyIds,
       correlationId: job?.correlationId,
       createdAt: job?.createdAt,
+      updatedAt: job?.updatedAt,
       startedAt: job?.startedAt,
       finishedAt: job?.completedAt,
       operations: operations.map((operation) => ({

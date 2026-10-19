@@ -269,6 +269,7 @@ export function normalizeMergeJob(item) {
     errorCode: String(item?.errorCode || ''),
     correlationId: String(item?.correlationId || ''),
     createdAt: String(item?.createdAt || ''),
+    updatedAt: String(item?.updatedAt || ''),
     startedAt: String(item?.startedAt || ''),
     finishedAt: String(item?.finishedAt || item?.completedAt || ''),
     operations: operations.map((operation) => ({

@@ -69,6 +69,27 @@
   color: #b53434;
 }
 
+.merge-documents__new-link,
+.merge-documents__new-id {
+  max-width: 100%;
+  font-size: var(--app-font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.merge-documents__new-link {
+  color: var(--app-color-primary);
+  text-decoration: none;
+}
+
+.merge-documents__new-link:hover {
+  text-decoration: underline;
+}
+
+.merge-documents__result-status,
+.merge-documents__result-code {
+  overflow-wrap: anywhere;
+}
+
 .merge-documents__table :deep(.merge-documents__row--failed > td.el-table__cell) {
   background: #fff8f8;
 }

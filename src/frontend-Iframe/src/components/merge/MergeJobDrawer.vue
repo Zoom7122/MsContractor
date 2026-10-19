@@ -1,15 +1,16 @@
 <script setup>
-import { computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import CopyableId from '../ui/CopyableId.vue'
-import EmptyState from '../ui/EmptyState.vue'
 import ErrorNotice from '../ui/ErrorNotice.vue'
 import StatusBadge from '../ui/StatusBadge.vue'
-import MergeDocumentsTable from './MergeDocumentsTable.vue'
+import MergeJobDocuments from './MergeJobDocuments.vue'
 import MergeJobProgress from './MergeJobProgress.vue'
-import { jobStatusMeta } from '../../domain/merge'
+import { moySkladCounterpartyUrl, normalizeDocumentsInOperation } from '../../domain/documents-in-operation'
+import { isJobActive, jobStatusMeta } from '../../domain/merge'
 import { COUNTERPARTY_FORMS, countLabel, formatDateTime, shortId } from '../../utils/format'
+import { getMergeJobDocumentsInOperation } from '../../api/catalog'
+import { toUserError } from '../../utils/errors'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -17,7 +18,6 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:modelValue'])
-const router = useRouter()
 
 const visible = computed({
   get: () => props.modelValue,
@@ -25,7 +25,21 @@ const visible = computed({
 })
 
 const failedOperations = computed(() => (props.job?.operations || []).filter((item) => item.status === 'failed'))
-const failedDocuments = computed(() => (props.job?.documents || []).filter((item) => item.result === 'failed'))
+const documentsInOperation = ref([])
+const documentsLoading = ref(false)
+const documentsError = ref(null)
+let documentsRequestVersion = 0
+let activeRequestController = null
+let documentsRefreshTimer = null
+
+const documentGroups = computed(() => normalizeDocumentsInOperation(documentsInOperation.value))
+const failedDocuments = computed(() => {
+  const latestDocuments = documentGroups.value.flatMap((group) => group.latestDocuments)
+  const failed = latestDocuments.filter((document) => document.result === 'failed')
+  return [...new Map(failed.map((document) => [`${document.type}:${document.id}`, document])).values()]
+})
+const documentCount = computed(() => documentGroups.value.reduce((sum, group) => sum + group.totalCount, 0))
+const primaryCounterpartyUrl = computed(() => moySkladCounterpartyUrl(props.job?.primaryCounterpartyId))
 
 const duplicates = computed(() => {
   const job = props.job
@@ -40,13 +54,86 @@ const duplicates = computed(() => {
 
 const title = computed(() => props.job?.primaryCounterpartyName || `Объединение ${shortId(props.job?.id)}`)
 
-function openCounterparty(id) {
-  if (!id) {
+const documentsReloadKey = computed(() => {
+  const job = props.job
+  const operations = (job?.operations || [])
+    .map((operation) => `${operation.id}:${operation.status}:${operation.attemptCount}:${operation.completedAt}`)
+    .join(',')
+  return [props.modelValue ? 'open' : 'closed', job?.id || '', job?.updatedAt || '', job?.status || '', operations].join('|')
+})
+
+async function loadDocumentsInOperation() {
+  const mergeJobId = props.job?.id
+  if (!props.modelValue || !mergeJobId) {
     return
   }
-  visible.value = false
-  router.push({ name: 'moysklad-counterparty', params: { id } })
+
+  activeRequestController?.abort()
+  const controller = new AbortController()
+  activeRequestController = controller
+  const requestVersion = ++documentsRequestVersion
+  documentsLoading.value = true
+  documentsError.value = null
+
+  try {
+    const response = await getMergeJobDocumentsInOperation(mergeJobId, { signal: controller.signal })
+    if (requestVersion !== documentsRequestVersion || props.job?.id !== mergeJobId) {
+      return
+    }
+    documentsInOperation.value = Array.isArray(response.data) ? response.data : []
+  } catch (error) {
+    if (requestVersion !== documentsRequestVersion || controller.signal.aborted) {
+      return
+    }
+    documentsError.value = toUserError(error, 'Не удалось загрузить результаты документов')
+  } finally {
+    if (requestVersion === documentsRequestVersion) {
+      documentsLoading.value = false
+      activeRequestController = null
+      scheduleDocumentsRefresh()
+    }
+  }
 }
+
+function clearDocumentsRefreshTimer() {
+  if (documentsRefreshTimer) {
+    window.clearTimeout(documentsRefreshTimer)
+    documentsRefreshTimer = null
+  }
+}
+
+function scheduleDocumentsRefresh() {
+  clearDocumentsRefreshTimer()
+  if (!props.modelValue || !isJobActive(props.job?.status)) {
+    return
+  }
+
+  documentsRefreshTimer = window.setTimeout(() => {
+    documentsRefreshTimer = null
+    void loadDocumentsInOperation()
+  }, 10_000)
+}
+
+watch(documentsReloadKey, () => {
+  if (props.modelValue && props.job?.id) {
+    void loadDocumentsInOperation()
+    return
+  }
+
+  documentsRequestVersion += 1
+  activeRequestController?.abort()
+  activeRequestController = null
+  clearDocumentsRefreshTimer()
+  documentsInOperation.value = []
+  documentsError.value = null
+  documentsLoading.value = false
+}, { immediate: true })
+
+onBeforeUnmount(() => {
+  documentsRequestVersion += 1
+  activeRequestController?.abort()
+  clearDocumentsRefreshTimer()
+})
 </script>
 
 <template>
@@ -82,9 +169,16 @@ function openCounterparty(id) {
         <div>
           <dt>Основной контрагент</dt>
           <dd>
-            <button type="button" class="merge-job-drawer__link" @click="openCounterparty(job.primaryCounterpartyId)">
+            <a
+              v-if="primaryCounterpartyUrl"
+              class="merge-job-drawer__link"
+              :href="primaryCounterpartyUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               {{ job.primaryCounterpartyName || shortId(job.primaryCounterpartyId) || '—' }}
-            </button>
+            </a>
+            <span v-else>{{ job.primaryCounterpartyName || shortId(job.primaryCounterpartyId) || '—' }}</span>
           </dd>
         </div>
         <div>
@@ -118,19 +212,13 @@ function openCounterparty(id) {
       <section class="merge-job-drawer__section">
         <h3 class="merge-job-drawer__section-title">
           Документы
-          <span class="app-meta">{{ job.documents.length || '' }}</span>
+          <span class="app-meta">{{ documentsLoading ? 'Загрузка…' : documentCount || '' }}</span>
         </h3>
-        <MergeDocumentsTable v-if="job.documents.length" :documents="job.documents" mode="result" :page-size="15" />
-        <EmptyState
-          v-else
-          size="sm"
-          image="documents"
-          :title="job.status === 'pending' ? 'Документы ещё не найдены' : 'Документы не затронуты'"
-          :description="
-            job.status === 'pending'
-              ? 'Список появится после этапа подготовки.'
-              : 'У дубликатов не нашлось документов для переноса, или сервис не вернул их список.'
-          "
+        <MergeJobDocuments
+          :entries="documentsInOperation"
+          :loading="documentsLoading"
+          :load-error="documentsError"
+          @retry="loadDocumentsInOperation"
         />
       </section>
 

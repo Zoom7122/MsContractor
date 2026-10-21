@@ -133,14 +133,16 @@ public sealed class ReferenceDataProvider
                 ["isDefault"] = j == 0
             });
 
+        // Drawn even when the phone is configured, so the seed yields the same accounts either way.
+        var generatedPhone = "+7999" + random.NextDigits(7);
         var payload = new JsonObject
         {
-            ["name"] = run.EntityName("CP", index),
+            ["name"] = settings.CounterpartyName ?? run.EntityName("CP", index),
             ["code"] = $"RT-{run.RunId}-CP{index:00}",
             ["externalCode"] = run.EntityExternalCode("cp", index),
             ["description"] = "Тестовый контрагент MSContractor relations generator",
-            ["email"] = $"reltest-{run.RunId}-{index:000}@example.com",
-            ["phone"] = "+7999" + random.NextDigits(7),
+            ["email"] = settings.CounterpartyEmail ?? $"reltest-{run.RunId}-{index:000}@example.com",
+            ["phone"] = settings.CounterpartyPhone ?? generatedPhone,
             ["companyType"] = "legal",
             ["accounts"] = accounts,
             ["syncId"] = run.SyncId("counterparty", index).ToString("D")

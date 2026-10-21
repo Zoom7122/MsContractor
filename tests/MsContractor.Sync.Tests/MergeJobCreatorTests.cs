@@ -131,6 +131,84 @@ public sealed class MergeJobCreatorTests
         Assert.Empty(fixture.Db.MergeJobs);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateAsync_AllowsExplicitBooleanValueWhenSourcesAreEmpty(bool value)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var attributeId = Guid.NewGuid();
+        var rawJson = JsonSerializer.Serialize(new
+        {
+            attributes = new[]
+            {
+                new { id = attributeId, type = "boolean", value = (bool?)null }
+            }
+        });
+        fixture.Main.RawJson = rawJson;
+        fixture.Duplicate.RawJson = rawJson;
+        await fixture.Db.SaveChangesAsync();
+
+        using var valueDocument = JsonDocument.Parse(value ? "true" : "false");
+        var attribute = new MergeMainCounterpartyAttributeDto(
+            attributeId,
+            "boolean",
+            fixture.Main.Id,
+            valueDocument.RootElement.Clone(),
+            ValueJson: value ? "true" : "false",
+            FileJson: "null");
+        var request = fixture.Request() with
+        {
+            MainCounterparty = fixture.Request().MainCounterparty with { Attributes = [attribute] }
+        };
+
+        await fixture.Creator.CreateAsync(
+            fixture.AccountId, Guid.NewGuid(), Guid.NewGuid(), request, CancellationToken.None);
+
+        var job = await fixture.Db.MergeJobs.SingleAsync();
+        var storedCounterparty = JsonSerializer.Deserialize<MergeMainCounterpartyDto>(job.Payload, JsonOptions)!;
+        var storedAttribute = Assert.Single(storedCounterparty.Attributes!);
+        Assert.Equal(value, storedAttribute.Value?.GetBoolean());
+    }
+
+    [Fact]
+    public async Task CreateAsync_RejectsClearingBooleanAttributes()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var attributeId = Guid.NewGuid();
+        var rawJson = JsonSerializer.Serialize(new
+        {
+            attributes = new[]
+            {
+                new { id = attributeId, type = "boolean", value = (bool?)null }
+            }
+        });
+        fixture.Main.RawJson = rawJson;
+        fixture.Duplicate.RawJson = rawJson;
+        await fixture.Db.SaveChangesAsync();
+
+        using var nullDocument = JsonDocument.Parse("null");
+        var attribute = new MergeMainCounterpartyAttributeDto(
+            attributeId,
+            "boolean",
+            fixture.Main.Id,
+            nullDocument.RootElement.Clone(),
+            Clear: true,
+            ValueJson: "null",
+            FileJson: "null");
+        var request = fixture.Request() with
+        {
+            MainCounterparty = fixture.Request().MainCounterparty with { Attributes = [attribute] }
+        };
+
+        var exception = await Assert.ThrowsAsync<MergeRequestException>(() => fixture.Creator.CreateAsync(
+            fixture.AccountId, Guid.NewGuid(), Guid.NewGuid(), request, CancellationToken.None));
+
+        Assert.Equal(MergeRequestError.Invalid, exception.Error);
+        Assert.Empty(await fixture.Db.MergeJobs.ToListAsync());
+        Assert.Empty(await fixture.Db.OutboxMessages.ToListAsync());
+    }
+
     [Fact]
     public async Task CreateAsync_AcceptsFortyNineDuplicates()
     {

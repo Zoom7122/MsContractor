@@ -31,6 +31,13 @@ manifest и сообщения об ошибках.
 | `MS_RELTEST_STORE_ID` | какой склад использовать (по умолчанию — первый неархивный; если складов нет, создаётся тестовый) |
 | `MS_RELTEST_RETAIL_STORE_ID` | точка продаж для `retail-flow`; без неё сценарий пропускается |
 | `MS_RELTEST_MIN_REQUEST_INTERVAL_MS` | минимальный интервал между запросами, по умолчанию 400 |
+| `MS_RELTEST_COUNTERPARTY_NAME` | имя всех создаваемых контрагентов (по умолчанию `…-CP-<runId>-001`, своё у каждого) |
+| `MS_RELTEST_COUNTERPARTY_PHONE` | телефон всех создаваемых контрагентов (по умолчанию случайный `+7999…`) |
+| `MS_RELTEST_COUNTERPARTY_EMAIL` | email всех создаваемых контрагентов (по умолчанию `reltest-<runId>-001@example.com`) |
+
+Имя, телефон и email не длиннее 255 символов; одинаковые значения у нескольких контрагентов
+(`--counterparties 2` и больше, или несколько запусков) дают дубли для Merge. Run id остаётся в
+`externalCode`, поэтому `--cleanup` удаляет таких контрагентов как обычно.
 
 Файл: скопируйте `.env.example` в `.env` рядом с утилитой (он в `.gitignore`) или передайте любой
 файл через `--env-file`. Имена переменных совпадают со старым генератором, поэтому подойдёт и
@@ -95,7 +102,8 @@ dotnet run --project DocumentRelationsGenerator -- --cleanup generated-data/2026
 
 - проект `MSCONTRACTOR-RELTEST-PROJECT-<runId>-001`;
 - 5 товаров и 2 услуги (`…-PRODUCT-<runId>-001`, `…-SERVICE-<runId>-001`);
-- контрагенты `…-CP-<runId>-001` с двумя расчётными счетами;
+- контрагенты `…-CP-<runId>-001` с двумя расчётными счетами (имя, телефон и email можно задать
+  через `MS_RELTEST_COUNTERPARTY_*`);
 - для каждого контрагента договор купли-продажи (`…-CONTRACT-SALES-…`) и, если выбран
   `commission-flow`, договор комиссии (`…-CONTRACT-COMMISSION-…`). `agent` договора — этот
   контрагент, `ownAgent` — выбранная организация;

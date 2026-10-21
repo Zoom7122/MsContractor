@@ -255,6 +255,16 @@ public sealed class GeneratorApplication
                          $"sales contracts {options.Counterparties}" +
                          (types.Overlaps(["commissionreportin", "commissionreportout"]) ? $", commission contracts {options.Counterparties}" : "") +
                          "; store/expense item only if the account has none");
+        var configured = new[]
+            {
+                ("name", settings.CounterpartyName), ("phone", settings.CounterpartyPhone), ("email", settings.CounterpartyEmail)
+            }
+            .Where(field => field.Item2 is not null)
+            .Select(field => $"{field.Item1} \"{field.Item2}\"")
+            .ToList();
+        if (configured.Count > 0)
+            output.WriteLine($"  counterparty fields from settings (same on every counterparty): {string.Join(", ", configured)}; " +
+                             "the run ID stays in externalCode");
 
         var planned = new List<string>();
         var skipped = new List<string>();

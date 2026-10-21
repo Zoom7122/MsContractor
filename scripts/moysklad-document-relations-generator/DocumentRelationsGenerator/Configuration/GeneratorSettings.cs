@@ -22,6 +22,14 @@ public sealed class GeneratorSettings
     public string? RetailStoreId { get; init; }
     public TimeSpan MinRequestInterval { get; init; } = TimeSpan.FromMilliseconds(400);
 
+    /// <summary>
+    /// Optional name/phone/email for every created counterparty (same values on all of them, e.g. to get
+    /// duplicates for Merge). Null keeps the generated per-counterparty value; externalCode keeps the run ID.
+    /// </summary>
+    public string? CounterpartyName { get; init; }
+    public string? CounterpartyPhone { get; init; }
+    public string? CounterpartyEmail { get; init; }
+
     public static GeneratorSettings Load(IReadOnlyDictionary<string, string> values)
     {
         string? Value(params string[] names) => names
@@ -53,6 +61,10 @@ public sealed class GeneratorSettings
             interval = TimeSpan.FromMilliseconds(milliseconds);
         }
 
+        var email = Text(Value("MS_RELTEST_COUNTERPARTY_EMAIL"), "MS_RELTEST_COUNTERPARTY_EMAIL");
+        if (email is not null && (email.IndexOf('@') <= 0 || email.IndexOf('@') == email.Length - 1 || email.Any(char.IsWhiteSpace)))
+            throw new GeneratorException("MS_RELTEST_COUNTERPARTY_EMAIL must look like name@domain.");
+
         return new GeneratorSettings
         {
             BaseUrl = baseUrl,
@@ -60,9 +72,16 @@ public sealed class GeneratorSettings
             OrganizationId = Guid(Value("MS_RELTEST_ORGANIZATION_ID"), "MS_RELTEST_ORGANIZATION_ID"),
             StoreId = Guid(Value("MS_RELTEST_STORE_ID"), "MS_RELTEST_STORE_ID"),
             RetailStoreId = Guid(Value("MS_RELTEST_RETAIL_STORE_ID"), "MS_RELTEST_RETAIL_STORE_ID"),
-            MinRequestInterval = interval
+            MinRequestInterval = interval,
+            CounterpartyName = Text(Value("MS_RELTEST_COUNTERPARTY_NAME"), "MS_RELTEST_COUNTERPARTY_NAME"),
+            CounterpartyPhone = Text(Value("MS_RELTEST_COUNTERPARTY_PHONE"), "MS_RELTEST_COUNTERPARTY_PHONE"),
+            CounterpartyEmail = email
         };
     }
+
+    /// <summary>MoySklad limits counterparty name, phone and email to 255 characters.</summary>
+    private static string? Text(string? value, string name) =>
+        value is { Length: > 255 } ? throw new GeneratorException($"{name} must be at most 255 characters.") : value;
 
     private static string? Guid(string? value, string name)
     {

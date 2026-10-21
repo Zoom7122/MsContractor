@@ -37,6 +37,37 @@ public sealed class ConfigurationTests
     }
 
     [Fact]
+    public void Settings_ReadCounterpartyFieldsTrimmedAndEmptyAsNotSet()
+    {
+        var settings = GeneratorSettings.Load(new Dictionary<string, string>
+        {
+            ["MS_RELTEST_COUNTERPARTY_NAME"] = "  ООО Ромашка ", ["MS_RELTEST_COUNTERPARTY_PHONE"] = "+7 (999) 123-45-67",
+            ["MS_RELTEST_COUNTERPARTY_EMAIL"] = "info@romashka.ru"
+        });
+        Assert.Equal("ООО Ромашка", settings.CounterpartyName);
+        Assert.Equal("+7 (999) 123-45-67", settings.CounterpartyPhone);
+        Assert.Equal("info@romashka.ru", settings.CounterpartyEmail);
+
+        var unset = GeneratorSettings.Load(new Dictionary<string, string> { ["MS_RELTEST_COUNTERPARTY_NAME"] = "  " });
+        Assert.Null(unset.CounterpartyName);
+        Assert.Null(unset.CounterpartyPhone);
+        Assert.Null(unset.CounterpartyEmail);
+    }
+
+    [Theory]
+    [InlineData("MS_RELTEST_COUNTERPARTY_EMAIL", "not-an-email")]
+    [InlineData("MS_RELTEST_COUNTERPARTY_EMAIL", "@romashka.ru")]
+    [InlineData("MS_RELTEST_COUNTERPARTY_EMAIL", "info@")]
+    [InlineData("MS_RELTEST_COUNTERPARTY_EMAIL", "in fo@romashka.ru")]
+    [InlineData("MS_RELTEST_COUNTERPARTY_NAME", null)]
+    [InlineData("MS_RELTEST_COUNTERPARTY_PHONE", null)]
+    public void Settings_RejectInvalidCounterpartyFields(string name, string? value) =>
+        Assert.Throws<GeneratorException>(() => GeneratorSettings.Load(new Dictionary<string, string>
+        {
+            [name] = value ?? new string('x', 256)
+        }));
+
+    [Fact]
     public void EnvFile_ParsesQuotesCommentsAndExportAndEnvironmentWins()
     {
         var file = Path.GetTempFileName();

@@ -15,13 +15,15 @@ public sealed class GeneratorApplicationTests : IDisposable
 
     public void Dispose() => directory.Delete(recursive: true);
 
-    private GeneratorApplication App(FakeMoySkladApi api, bool retail = false)
+    private GeneratorApplication App(FakeMoySkladApi api, bool retail = false,
+        IReadOnlyDictionary<string, string>? extraEnvironment = null)
     {
         var environment = new Dictionary<string, string>
         {
             ["MS_LOGIN"] = "admin@test", ["MS_PASSWORD"] = Password, ["MS_RELTEST_MIN_REQUEST_INTERVAL_MS"] = "100"
         };
         if (retail) environment["MS_RELTEST_RETAIL_STORE_ID"] = MetaReference.Id(MetaReference.Href(api.RetailStore))!;
+        foreach (var (key, value) in extraEnvironment ?? new Dictionary<string, string>()) environment[key] = value;
         return new GeneratorApplication(output, error, environment, (_, _) => api,
             () => new DateTimeOffset(2026, 9, 24, 22, 15, 30, TimeSpan.FromHours(3)));
     }
@@ -73,6 +75,34 @@ public sealed class GeneratorApplicationTests : IDisposable
         Assert.Equal(6, manifest.Coverage!.Skipped);
         Assert.Equal(RelationCatalog.All.Count - 6, manifest.Coverage.Verified);
         Assert.Equal(0, manifest.Coverage.Failed);
+    }
+
+    [Fact]
+    public async Task ConfiguredCounterpartyFields_AreUsedOnEveryCounterpartyAndCleanupStillDeletesThem()
+    {
+        var api = new FakeMoySkladApi();
+        var environment = new Dictionary<string, string>
+        {
+            ["MS_RELTEST_COUNTERPARTY_NAME"] = "ООО Ромашка", ["MS_RELTEST_COUNTERPARTY_PHONE"] = "+79991234567",
+            ["MS_RELTEST_COUNTERPARTY_EMAIL"] = "info@romashka.ru"
+        };
+
+        var exitCode = await App(api, extraEnvironment: environment)
+            .RunAsync(Args("--scenario", "purchase-return-flow", "--counterparties", "2"), CancellationToken.None);
+
+        Assert.True(exitCode == 0, output + error.ToString());
+        var counterparties = api.Objects.Where(entity => MetaReference.Type(entity) == "counterparty").ToList();
+        Assert.Equal(2, counterparties.Count);
+        Assert.All(counterparties, counterparty =>
+        {
+            Assert.Equal("ООО Ромашка", counterparty["name"]!.GetValue<string>());
+            Assert.Equal("+79991234567", counterparty["phone"]!.GetValue<string>());
+            Assert.Equal("info@romashka.ru", counterparty["email"]!.GetValue<string>());
+        });
+        var manifestPath = Directory.GetFiles(directory.FullName, "manifest.json", SearchOption.AllDirectories).Single();
+
+        Assert.Equal(0, await App(api).RunAsync(["--cleanup", manifestPath], CancellationToken.None));
+        Assert.Equal(2, api.Deleted.Count(path => path.StartsWith("entity/counterparty/", StringComparison.Ordinal)));
     }
 
     [Fact]

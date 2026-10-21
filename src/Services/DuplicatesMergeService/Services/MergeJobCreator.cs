@@ -209,11 +209,26 @@ public sealed class MergeJobCreator : IMergeJobCreator
 
             if (requested.Clear)
             {
+                if (string.Equals(requested.Type, "boolean", StringComparison.OrdinalIgnoreCase))
+                    throw InvalidMergeRequest();
+
                 if (!MergeCounterpartyAttributesParser.ValuesEqual(requested.Value, null) ||
                     !MergeCounterpartyAttributesParser.ValuesEqual(requested.File, null))
                 {
                     throw InvalidMergeRequest();
                 }
+
+                continue;
+            }
+
+            if (string.Equals(requested.Type, "boolean", StringComparison.OrdinalIgnoreCase))
+            {
+                var hasBooleanValue = requested.Value.HasValue &&
+                    requested.Value.Value.ValueKind is JsonValueKind.True or JsonValueKind.False;
+                var hasFileValue = requested.File.HasValue &&
+                    requested.File.Value.ValueKind != JsonValueKind.Null;
+                if (!hasBooleanValue || hasFileValue)
+                    throw InvalidMergeRequest();
 
                 continue;
             }

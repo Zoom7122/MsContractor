@@ -12,6 +12,11 @@ import ErrorNotice from '../components/ui/ErrorNotice.vue'
 import PageHeader from '../components/ui/PageHeader.vue'
 import SectionPanel from '../components/ui/SectionPanel.vue'
 import StatusBadge from '../components/ui/StatusBadge.vue'
+import {
+  booleanAttributeOptions,
+  buildBooleanAttributeSelection,
+  isBooleanAttribute
+} from '../domain/boolean-attribute'
 import { normalizeMergeDocument } from '../domain/merge'
 import { toUserError } from '../utils/errors'
 import { COUNTERPARTY_FORMS, DOCUMENT_FORMS, DUPLICATE_FORMS, countLabel, formatDateTimeShort } from '../utils/format'
@@ -362,6 +367,10 @@ function fieldOptions(fieldKey) {
 }
 
 function attributeOptions(attribute) {
+  if (isBooleanAttribute(attribute)) {
+    return booleanAttributeOptions(attribute, counterparties.value)
+  }
+
   const optionsByValue = new Map()
   for (const counterparty of counterparties.value) {
     const value = attributeValue(counterparty, attribute)
@@ -417,6 +426,10 @@ function selectedAttributeValueJson(attribute, selection) {
 }
 
 function buildAttributeSelection(attribute, counterpartyId) {
+  if (isBooleanAttribute(attribute)) {
+    return buildBooleanAttributeSelection(attribute, counterparties.value, counterpartyId)
+  }
+
   const source = counterparties.value.find(item => item.id === counterpartyId)
   const rawAttribute = source?.attributes?.find(item => item.id === attribute.id)
   return {
@@ -438,6 +451,16 @@ function applyAttributeSelection(attribute, counterpartyId) {
 }
 
 function selectAttributeOption(attribute, option) {
+  if (isBooleanAttribute(attribute)) {
+    attributeSelections.value[attribute.id] = buildBooleanAttributeSelection(
+      attribute,
+      counterparties.value,
+      primaryCounterpartyId.value,
+      option.value
+    )
+    return
+  }
+
   if (option.clear) {
     attributeSelections.value[attribute.id] = {
       sourceCounterpartyId: primaryCounterpartyId.value,
@@ -501,6 +524,9 @@ function formatAttributeValue(attribute, value, valueJson = null) {
 }
 
 function optionSourcesLabel(option) {
+  if (!option.sources.length) {
+    return 'значение будет задано вручную'
+  }
   if (option.sources.length === counterparties.value.length && option.sources.length > 1) {
     return 'у всех'
   }

@@ -61,18 +61,22 @@ public sealed class EnvelopeEncryptionTests
     }
 
     [Fact]
-    public void DecryptDataKey_RejectsTamperedCiphertextAndTag()
+    public void DecryptDataKey_RejectsTamperedCiphertextNonceAndTag()
     {
         var dek = EnvelopeEncryption.GenerateDataEncryptionKey();
         var kek = EnvelopeEncryption.GenerateDataEncryptionKey();
         var encrypted = EnvelopeEncryption.EncryptDataKey(dek, kek, DataKeyContext);
         var changedCiphertext = encrypted.Ciphertext.ToArray();
         changedCiphertext[0] ^= 0x01;
+        var changedNonce = encrypted.Nonce.ToArray();
+        changedNonce[0] ^= 0x01;
         var changedTag = encrypted.Tag.ToArray();
         changedTag[0] ^= 0x01;
 
         Assert.ThrowsAny<CryptographicException>(() =>
             EnvelopeEncryption.DecryptDataKey(encrypted with { Ciphertext = changedCiphertext }, kek, DataKeyContext));
+        Assert.ThrowsAny<CryptographicException>(() =>
+            EnvelopeEncryption.DecryptDataKey(encrypted with { Nonce = changedNonce }, kek, DataKeyContext));
         Assert.ThrowsAny<CryptographicException>(() =>
             EnvelopeEncryption.DecryptDataKey(encrypted with { Tag = changedTag }, kek, DataKeyContext));
     }
@@ -111,17 +115,21 @@ public sealed class EnvelopeEncryptionTests
     }
 
     [Fact]
-    public void DecryptJson_RejectsTamperedCiphertextAndTag()
+    public void DecryptJson_RejectsTamperedCiphertextNonceAndTag()
     {
         var dek = EnvelopeEncryption.GenerateDataEncryptionKey();
         var encrypted = EnvelopeEncryption.EncryptJson(new TestPayload("customer-17", []), dek, PayloadContext);
         var changedCiphertext = encrypted.Ciphertext.ToArray();
         changedCiphertext[0] ^= 0x01;
+        var changedNonce = encrypted.Nonce.ToArray();
+        changedNonce[0] ^= 0x01;
         var changedTag = encrypted.Tag.ToArray();
         changedTag[0] ^= 0x01;
 
         Assert.ThrowsAny<CryptographicException>(() =>
             EnvelopeEncryption.DecryptJson<TestPayload>(encrypted with { Ciphertext = changedCiphertext }, dek, PayloadContext));
+        Assert.ThrowsAny<CryptographicException>(() =>
+            EnvelopeEncryption.DecryptJson<TestPayload>(encrypted with { Nonce = changedNonce }, dek, PayloadContext));
         Assert.ThrowsAny<CryptographicException>(() =>
             EnvelopeEncryption.DecryptJson<TestPayload>(encrypted with { Tag = changedTag }, dek, PayloadContext));
     }

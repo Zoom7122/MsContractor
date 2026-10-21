@@ -152,6 +152,68 @@ public sealed class MoySkladDocumentChangeGatewayTests
         Assert.DoesNotContain(logger.Messages, message => message.Contains("request_body=", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.OK)]
+    [InlineData(HttpStatusCode.PreconditionFailed)]
+    public async Task ChangeCounterpartyAsync_MapsBatchErrorsByMetaHrefToSkippedDocuments(
+        HttpStatusCode responseStatus)
+    {
+        var mainId = Guid.NewGuid();
+        var documents = Documents("paymentout", 3);
+        var calls = 0;
+        var gateway = Gateway((_, _) =>
+        {
+            calls++;
+            var errorItems = new[]
+            {
+                new
+                {
+                    code = 22006,
+                    error = "Нельзя изменить статью расходов",
+                    meta = new
+                    {
+                        href = $"https://api.moysklad.ru/api/remap/1.2/entity/paymentout/{documents[1].DocumentId:D}",
+                        type = "paymentout",
+                        mediaType = "application/json"
+                    }
+                },
+                new
+                {
+                    code = 22006,
+                    error = "Нельзя изменить статью расходов",
+                    meta = new
+                    {
+                        href = $"https://api.moysklad.ru/api/remap/1.2/entity/paymentout/{documents[2].DocumentId:D}",
+                        type = "paymentout",
+                        mediaType = "application/json"
+                    }
+                }
+            };
+            object[] responseItems =
+            [
+                Changed(documents[0], mainId),
+                new { errors = new[] { errorItems[0] } },
+                new { errors = new[] { errorItems[1] } }
+            ];
+            return Task.FromResult(new HttpResponseMessage(responseStatus)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(responseItems), Encoding.UTF8, "application/json")
+            });
+        }, MoySkladDocumentChangeRetryOptions.Parse("2", "0", false));
+
+        var result = await gateway.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            mainId, "paymentout", documents, CancellationToken.None);
+
+        Assert.Equal([documents[0]], result.ChangedDocuments);
+        Assert.Empty(result.Failures);
+        Assert.Equal(2, result.SkippedDocuments.Count);
+        Assert.Equal([documents[1].DocumentId, documents[2].DocumentId],
+            result.SkippedDocuments.Select(item => item.DocumentId));
+        Assert.All(result.SkippedDocuments, item => Assert.StartsWith("MOYSKLAD_22006:", item.Reason));
+        Assert.Equal(1, calls);
+    }
+
     [Fact]
     public async Task ChangeCounterpartyAsync_DoesNotLogPayloadWhenFirstAttemptSucceeds()
     {
@@ -616,6 +678,34 @@ public sealed class MoySkladDocumentChangeServiceTests
         Assert.Equal(count, response.ChangedCount);
         Assert.Equal(expectedCalls, gateway.Calls.Count);
         Assert.Equal(expectedChunkSizes, gateway.Calls.Select(item => item.Documents.Count));
+    }
+
+    [Fact]
+    public async Task ChangeCounterpartyAsync_IncludesGatewaySkippedDocumentsInResponse()
+    {
+        var changed = new MoySkladDocumentChangeItem("paymentout", Guid.NewGuid());
+        var skipped = new MoySkladDocumentChangeItem("paymentout", Guid.NewGuid());
+        var gateway = new RecordingGateway
+        {
+            Callback = _ => new MoySkladDocumentChangeChunkResult([changed], [])
+            {
+                SkippedDocuments =
+                [
+                    new MoySkladDocumentChangeSkippedItem(
+                        skipped.DocumentType, skipped.DocumentId, "MOYSKLAD_22006")
+                ]
+            }
+        };
+        var service = Service(gateway, "paymentout");
+
+        var response = await service.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            new MoySkladDocumentChangeCounterpartyRequest(Guid.NewGuid(), [changed, skipped]), CancellationToken.None);
+
+        Assert.Equal(1, response.ChangedCount);
+        Assert.Equal(1, response.SkippedCount);
+        Assert.Equal(0, response.FailedCount);
+        Assert.Equal(skipped.DocumentId, Assert.Single(response.SkippedDocuments).DocumentId);
     }
 
     [Fact]

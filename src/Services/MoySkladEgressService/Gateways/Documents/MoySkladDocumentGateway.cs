@@ -187,6 +187,7 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
         {
             var observation = MoySkladRateLimitObservationParser.Parse(response);
             await _rateLimiter.ObserveAsync(accountId, observation, cancellationToken);
+
             var responseBody = await _responseHandler.ReadAsync(
                 response, context, stopwatch.Elapsed, cancellationToken);
             _logger.LogInformation(
@@ -412,6 +413,48 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
         {
             var observation = MoySkladRateLimitObservationParser.Parse(response);
             await _rateLimiter.ObserveAsync(accountId, observation, cancellationToken);
+
+            if (!isSingle)
+            {
+                string batchResponseJson;
+                try
+                {
+                    batchResponseJson = await response.Content.ReadAsStringAsync(cancellationToken);
+                }
+                catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    throw _responseHandler.TransportFailure(
+                        context, "MoySklad response timed out.", stopwatch.Elapsed, exception);
+                }
+                catch (Exception exception) when (exception is HttpRequestException or IOException)
+                {
+                    throw _responseHandler.TransportFailure(
+                        context, "MoySklad is unavailable.", stopwatch.Elapsed, exception);
+                }
+
+                if (TryReadBatchItemErrors(
+                        batchResponseJson,
+                        documentType,
+                        documents,
+                        _httpClient.BaseAddress!,
+                        out var skippedDocuments))
+                {
+                    var skippedIds = skippedDocuments.Select(item => item.DocumentId).ToArray();
+                    var skippedIdSet = skippedIds.ToHashSet();
+                    var changedDocuments = documents.Where(item => !skippedIdSet.Contains(item.DocumentId)).ToArray();
+
+                    _logger.LogWarning(
+                        "MoySklad document counterparty batch returned item errors: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, method={Method}, http_status={HttpStatus}, changed_count={ChangedCount}, skipped_count={SkippedCount}, skipped_document_ids={SkippedDocumentIds}",
+                        accountId, mergeJobId, operationId, correlationId, documentType, method.Method,
+                        (int)response.StatusCode, changedDocuments.Length, skippedDocuments.Count, skippedIds);
+
+                    return new MoySkladDocumentChangeChunkResult(changedDocuments, [])
+                    {
+                        SkippedDocuments = skippedDocuments
+                    };
+                }
+            }
+
             var responseBody = await _responseHandler.ReadAsync(
                 response, context, stopwatch.Elapsed, cancellationToken);
             var json = responseBody.Body;
@@ -471,6 +514,117 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                 return new MoySkladDocumentChangeChunkResult(validation.Succeeded, failures);
             }
         }
+    }
+
+    private static bool TryReadBatchItemErrors(
+        string responseJson,
+        string documentType,
+        IReadOnlyList<MoySkladDocumentChangeItem> requestedDocuments,
+        Uri moySkladBaseAddress,
+        out IReadOnlyList<MoySkladDocumentChangeSkippedItem> skippedDocuments)
+    {
+        skippedDocuments = [];
+        if (string.IsNullOrWhiteSpace(responseJson))
+            return false;
+
+        try
+        {
+            using var response = JsonDocument.Parse(responseJson);
+            var root = response.RootElement;
+            if (root.ValueKind != JsonValueKind.Array || root.GetArrayLength() != requestedDocuments.Count)
+                return false;
+
+            var requestedIds = requestedDocuments.Select(item => item.DocumentId).ToHashSet();
+            var errorsByDocumentId = new Dictionary<Guid, string>();
+            foreach (var responseItem in root.EnumerateArray())
+            {
+                if (responseItem.ValueKind != JsonValueKind.Object ||
+                    !responseItem.TryGetProperty("errors", out var errors))
+                    continue;
+                if (errors.ValueKind != JsonValueKind.Array)
+                    return false;
+
+                foreach (var error in errors.EnumerateArray())
+                {
+                    if (!TryReadBatchErrorDocumentId(
+                            error, documentType, moySkladBaseAddress, out var documentId) ||
+                        !requestedIds.Contains(documentId))
+                        return false;
+
+                    errorsByDocumentId.TryAdd(documentId, BuildBatchErrorReason(error));
+                }
+            }
+
+            if (errorsByDocumentId.Count == 0)
+                return false;
+
+            skippedDocuments = requestedDocuments
+                .Where(item => errorsByDocumentId.ContainsKey(item.DocumentId))
+                .Select(item => new MoySkladDocumentChangeSkippedItem(
+                    item.DocumentType,
+                    item.DocumentId,
+                    errorsByDocumentId[item.DocumentId]))
+                .ToArray();
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryReadBatchErrorDocumentId(
+        JsonElement error,
+        string documentType,
+        Uri moySkladBaseAddress,
+        out Guid documentId)
+    {
+        documentId = Guid.Empty;
+        if (error.ValueKind != JsonValueKind.Object ||
+            !error.TryGetProperty("meta", out var meta) || meta.ValueKind != JsonValueKind.Object ||
+            !meta.TryGetProperty("href", out var hrefElement) || hrefElement.ValueKind != JsonValueKind.String ||
+            !Uri.TryCreate(hrefElement.GetString(), UriKind.Absolute, out var href) ||
+            !string.Equals(href.Scheme, moySkladBaseAddress.Scheme, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(href.Authority, moySkladBaseAddress.Authority, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var pathSegments = href.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return pathSegments.Length >= 3 &&
+               string.Equals(pathSegments[^3], "entity", StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(pathSegments[^2], documentType, StringComparison.OrdinalIgnoreCase) &&
+               Guid.TryParse(pathSegments[^1], out documentId) &&
+               documentId != Guid.Empty;
+    }
+
+    private static string BuildBatchErrorReason(JsonElement error)
+    {
+        var code = ReadErrorScalar(error, "code");
+        var message = ReadErrorScalar(error, "error");
+        var safeCode = string.IsNullOrWhiteSpace(code)
+            ? null
+            : MoySkladResponseHandler.SanitizeAndTruncate(code, 64);
+        var reason = string.IsNullOrWhiteSpace(safeCode)
+            ? "MOYSKLAD_BATCH_ITEM_ERROR"
+            : $"MOYSKLAD_{safeCode}";
+
+        if (string.IsNullOrWhiteSpace(message))
+            return reason;
+
+        var safeMessage = MoySkladResponseHandler.SanitizeAndTruncate(message, 512);
+        return string.IsNullOrWhiteSpace(safeMessage) ? reason : $"{reason}: {safeMessage}";
+    }
+
+    private static string? ReadErrorScalar(JsonElement error, string propertyName)
+    {
+        if (error.ValueKind != JsonValueKind.Object || !error.TryGetProperty(propertyName, out var value))
+            return null;
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.GetRawText(),
+            _ => null
+        };
     }
 
     private TimeSpan GetRetryDelay(int retryAttempt)

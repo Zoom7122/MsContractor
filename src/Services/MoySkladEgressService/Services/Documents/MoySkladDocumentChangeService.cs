@@ -77,6 +77,7 @@ public sealed class MoySkladDocumentChangeService : IMoySkladDocumentChangeServi
                         chunk,
                         cancellationToken);
                     changed.AddRange(result.ChangedDocuments);
+                    skipped.AddRange(result.SkippedDocuments);
                     failures.AddRange(result.Failures);
                     foreach (var failure in result.Failures)
                     {

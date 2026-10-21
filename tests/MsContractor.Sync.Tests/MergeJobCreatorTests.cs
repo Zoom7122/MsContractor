@@ -132,6 +132,46 @@ public sealed class MergeJobCreatorTests
     }
 
     [Fact]
+    public async Task CreateAsync_AcceptsFortyNineDuplicates()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var additionalDuplicates = Enumerable.Range(0, 48)
+            .Select(index => NewCounterparty(fixture.AccountId, fixture.Main.LastSyncRun, $"Duplicate {index}"))
+            .ToArray();
+        fixture.Db.AddRange(additionalDuplicates);
+        await fixture.Db.SaveChangesAsync();
+        var request = fixture.Request() with
+        {
+            DuplicateCounterpartyIds = [fixture.Duplicate.Id, .. additionalDuplicates.Select(item => item.Id)]
+        };
+
+        await fixture.Creator.CreateAsync(
+            fixture.AccountId, Guid.NewGuid(), Guid.NewGuid(), request, CancellationToken.None);
+
+        Assert.Single(await fixture.Db.MergeJobs.ToListAsync());
+        Assert.Single(await fixture.Db.OutboxMessages.ToListAsync());
+        Assert.Equal(50, await fixture.Db.MergeCounterpartyLocks.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreateAsync_RejectsFiftyDuplicatesBeforeCreatingJobOrOutbox()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var request = fixture.Request() with
+        {
+            DuplicateCounterpartyIds = [fixture.Duplicate.Id, .. Enumerable.Range(0, 49).Select(_ => Guid.NewGuid())]
+        };
+
+        var exception = await Assert.ThrowsAsync<MergeRequestException>(() => fixture.Creator.CreateAsync(
+            fixture.AccountId, Guid.NewGuid(), Guid.NewGuid(), request, CancellationToken.None));
+
+        Assert.Equal(MergeRequestError.Invalid, exception.Error);
+        Assert.Equal("INVALID_MERGE_REQUEST", exception.Code);
+        Assert.Empty(await fixture.Db.MergeJobs.ToListAsync());
+        Assert.Empty(await fixture.Db.OutboxMessages.ToListAsync());
+    }
+
+    [Fact]
     public async Task CreateAsync_HidesCrossAccountCounterpartyAsNotFound()
     {
         await using var fixture = await Fixture.CreateAsync();

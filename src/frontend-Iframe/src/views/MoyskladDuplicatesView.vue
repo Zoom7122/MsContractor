@@ -6,6 +6,12 @@ import { Check, Right, Search } from '@element-plus/icons-vue'
 import { api } from '../api/http'
 import DuplicateGroupItem from '../components/duplicates/DuplicateGroupItem.vue'
 import MatchCriteria from '../components/duplicates/MatchCriteria.vue'
+import {
+  MAX_MERGE_COUNTERPARTIES,
+  canStartMerge,
+  selectFirstMergeCounterparties,
+  toggleMergeCounterpartySelection
+} from '../domain/merge-selection'
 import AcceptedNotice from '../components/ui/AcceptedNotice.vue'
 import EmptyState from '../components/ui/EmptyState.vue'
 import ErrorNotice from '../components/ui/ErrorNotice.vue'
@@ -65,11 +71,20 @@ const totalCounterpartiesInGroups = computed(() =>
 
 const searchedFieldsLabel = computed(() => searchedFields.value.map(matchFieldLabel).join(', '))
 
-const canGoToMerge = computed(() => selectedCounterpartyIds.value.length >= 2)
+const canGoToMerge = computed(() => canStartMerge(selectedCounterpartyIds.value))
 const selectedGroupCounterpartyIds = computed(() => selectedGroup.value?.counterparties?.map((item) => item.id) || [])
+const selectableGroupCounterpartyIds = computed(() =>
+  selectFirstMergeCounterparties(selectedGroupCounterpartyIds.value)
+)
+const groupExceedsMergeLimit = computed(() =>
+  selectedGroupCounterpartyIds.value.length > MAX_MERGE_COUNTERPARTIES
+)
+const mergeSelectAllLabel = computed(() =>
+  groupExceedsMergeLimit.value ? `Выбрать первые ${MAX_MERGE_COUNTERPARTIES}` : 'Выбрать всех'
+)
 const allSelectedInGroup = computed(() =>
-  selectedGroupCounterpartyIds.value.length > 0 &&
-  selectedGroupCounterpartyIds.value.every((id) => selectedCounterpartyIds.value.includes(id))
+  selectableGroupCounterpartyIds.value.length > 0 &&
+  selectableGroupCounterpartyIds.value.every((id) => selectedCounterpartyIds.value.includes(id))
 )
 const someSelectedInGroup = computed(() => selectedCounterpartyIds.value.length > 0 && !allSelectedInGroup.value)
 const selectedArchivedCount = computed(() =>
@@ -78,6 +93,9 @@ const selectedArchivedCount = computed(() =>
 const showSyncedColumn = computed(() => Boolean(selectedGroup.value?.counterparties.some((item) => item.syncedAt)))
 
 const mergeHint = computed(() => {
+  if (selectedCounterpartyIds.value.length >= MAX_MERGE_COUNTERPARTIES) {
+    return `Достигнут лимит ${MAX_MERGE_COUNTERPARTIES} КА. Снимите отметку, чтобы выбрать другого контрагента.`
+  }
   if (!selectedCounterpartyIds.value.length) {
     return 'Отметьте контрагентов, которых нужно объединить'
   }
@@ -249,12 +267,10 @@ function selectGroup(groupKey) {
 }
 
 function toggleCounterparty(counterpartyId) {
-  if (selectedCounterpartyIds.value.includes(counterpartyId)) {
-    selectedCounterpartyIds.value = selectedCounterpartyIds.value.filter((id) => id !== counterpartyId)
-    return
-  }
-
-  selectedCounterpartyIds.value = [...selectedCounterpartyIds.value, counterpartyId]
+  selectedCounterpartyIds.value = toggleMergeCounterpartySelection(
+    selectedCounterpartyIds.value,
+    counterpartyId
+  )
 }
 
 function toggleAllInGroup() {
@@ -286,7 +302,7 @@ function handleSelectAllInGroup() {
     return
   }
 
-  selectedCounterpartyIds.value = [...selectedGroupCounterpartyIds.value]
+  selectedCounterpartyIds.value = selectFirstMergeCounterparties(selectedGroupCounterpartyIds.value)
 }
 
 function clearSelectedCounterparties() {
@@ -530,13 +546,14 @@ onMounted(() => {
               <el-checkbox
                 :model-value="allSelectedInGroup"
                 :indeterminate="someSelectedInGroup"
-                aria-label="Выбрать всех в группе"
+                :aria-label="`${mergeSelectAllLabel} в группе`"
                 @change="toggleAllInGroup"
               />
             </template>
             <template #default="{ row }">
               <el-checkbox
                 :model-value="selectedCounterpartyIds.includes(row.id)"
+                :disabled="selectedCounterpartyIds.length >= MAX_MERGE_COUNTERPARTIES && !selectedCounterpartyIds.includes(row.id)"
                 :aria-label="`Выбрать ${displayValue(row.name)}`"
                 @click.stop
                 @change="toggleCounterparty(row.id)"
@@ -604,7 +621,7 @@ onMounted(() => {
               :disabled="!selectedGroupCounterpartyIds.length || allSelectedInGroup"
               @click="handleSelectAllInGroup"
             >
-              Выбрать всех
+              {{ mergeSelectAllLabel }}
             </el-button>
             <el-button text :disabled="!selectedCounterpartyIds.length" @click="clearSelectedCounterparties">
               Снять выбор

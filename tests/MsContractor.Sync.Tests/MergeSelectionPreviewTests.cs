@@ -34,6 +34,45 @@ public sealed class MergeSelectionPreviewTests
     }
 
     [Fact]
+    public async Task GetAsync_AcceptsFiftyCounterparties()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var additional = Enumerable.Range(0, 48)
+            .Select(index => Fixture.Counterparty(
+                fixture.AccountId,
+                fixture.First.LastSyncRun,
+                $"Counterparty {index}"))
+            .ToArray();
+        fixture.Db.AddRange(additional);
+        await fixture.Db.SaveChangesAsync();
+        var ids = new[] { fixture.First.Id, fixture.Second.Id }
+            .Concat(additional.Select(item => item.Id))
+            .ToArray();
+
+        var response = await fixture.Service.GetAsync(
+            fixture.AccountId,
+            new MergeSelectionPreviewRequest(ids),
+            CancellationToken.None);
+
+        Assert.Equal(50, response.Counterparties.Count);
+    }
+
+    [Fact]
+    public async Task GetAsync_RejectsMoreThanFiftyCounterpartiesBeforeRepositoryLookup()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var ids = Enumerable.Range(0, 51).Select(_ => Guid.NewGuid()).ToArray();
+
+        var exception = await Assert.ThrowsAsync<MergeSelectionPreviewException>(() => fixture.Service.GetAsync(
+            fixture.AccountId,
+            new MergeSelectionPreviewRequest(ids),
+            CancellationToken.None));
+
+        Assert.Equal(MergeSelectionPreviewError.Invalid, exception.Error);
+        Assert.Equal("INVALID_MERGE_PREVIEW_REQUEST", exception.Code);
+    }
+
+    [Fact]
     public async Task GetAsync_RejectsInvalidSelections()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -199,7 +238,7 @@ public sealed class MergeSelectionPreviewTests
             UpdatedAt = DateTimeOffset.UtcNow
         };
 
-        private static Counterparty Counterparty(Guid accountId, SyncRun run, string name) => new()
+        public static Counterparty Counterparty(Guid accountId, SyncRun run, string name) => new()
         {
             Id = Guid.NewGuid(),
             AccountId = accountId,

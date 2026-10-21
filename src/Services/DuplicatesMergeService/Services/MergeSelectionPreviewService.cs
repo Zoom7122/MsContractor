@@ -15,6 +15,8 @@ public interface IMergeSelectionPreviewService
 
 public sealed class MergeSelectionPreviewService : IMergeSelectionPreviewService
 {
+    private const int MaximumCounterpartyCount = 50;
+
     private readonly ICounterpartyRepository _repository;
 
     public MergeSelectionPreviewService(
@@ -59,13 +61,14 @@ public sealed class MergeSelectionPreviewService : IMergeSelectionPreviewService
     {
         if (request.CounterpartyIds is null ||
             request.CounterpartyIds.Count < 2 ||
+            request.CounterpartyIds.Count > MaximumCounterpartyCount ||
             request.CounterpartyIds.Any(id => id == Guid.Empty) ||
             request.CounterpartyIds.Distinct().Count() != request.CounterpartyIds.Count)
         {
             throw new MergeSelectionPreviewException(
                 MergeSelectionPreviewError.Invalid,
                 "INVALID_MERGE_PREVIEW_REQUEST",
-                "At least two unique counterparty ids are required.");
+                $"Between two and {MaximumCounterpartyCount} unique counterparty ids are required.");
         }
     }
 }

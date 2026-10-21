@@ -19,6 +19,8 @@ public interface IMergeJobCreator
 
 public sealed class MergeJobCreator : IMergeJobCreator
 {
+    private const int MaximumDuplicateCounterpartyCount = 49;
+
     private readonly IMergeRepository _repository;
     private readonly ICounterpartyRepository _counterpartyRepository;
     private readonly TimeProvider _timeProvider;
@@ -166,6 +168,7 @@ public sealed class MergeJobCreator : IMergeJobCreator
             request.MainCounterparty.Phone?.Length > 255 ||
             request.DuplicateCounterpartyIds is null ||
             request.DuplicateCounterpartyIds.Count == 0 ||
+            request.DuplicateCounterpartyIds.Count > MaximumDuplicateCounterpartyCount ||
             request.DuplicateCounterpartyIds.Any(id => id == Guid.Empty) ||
             request.DuplicateCounterpartyIds.Distinct().Count() != request.DuplicateCounterpartyIds.Count ||
             request.DuplicateCounterpartyIds.Contains(request.MainCounterpartyId) ||

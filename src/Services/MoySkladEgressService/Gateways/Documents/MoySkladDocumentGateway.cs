@@ -2,11 +2,14 @@ using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Clients;
 using System.Diagnostics;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using MsContractor.Contracts.Internal;
 using MsContractor.MoySkladEgressService.RateLimiting;
 using MsContractor.MoySkladEgressService.ResponseHandling;
 using MsContractor.MoySkladEgressService.Validation;
+using MsContractor.MoySkladEgressService.Models.Options;
+using MsContractor.MoySkladEgressService.Models.Exceptions;
 
 namespace MsContractor.MoySkladEgressService.Gateways.Documents;
 
@@ -79,6 +82,7 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
     private readonly IMoySkladResponseHandler _responseHandler;
     private readonly IMoySkladSingleDocumentResponseValidator _singleValidator;
     private readonly IMoySkladBulkDocumentResponseValidator _bulkValidator;
+    private readonly MoySkladDocumentChangeRetryOptions _retryOptions;
 
     [ActivatorUtilitiesConstructor]
     public MoySkladDocumentGateway(
@@ -88,7 +92,8 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
         ILogger<MoySkladDocumentGateway> logger,
         IMoySkladResponseHandler responseHandler,
         IMoySkladSingleDocumentResponseValidator singleValidator,
-        IMoySkladBulkDocumentResponseValidator bulkValidator)
+        IMoySkladBulkDocumentResponseValidator bulkValidator,
+        MoySkladDocumentChangeRetryOptions retryOptions)
     {
         _httpClient = httpClient;
         _tokenClient = tokenClient;
@@ -97,13 +102,15 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
         _responseHandler = responseHandler;
         _singleValidator = singleValidator;
         _bulkValidator = bulkValidator;
+        _retryOptions = retryOptions;
     }
 
     public MoySkladDocumentGateway(
         HttpClient httpClient,
         IVendorTokenClient tokenClient,
         IMoySkladRateLimiter rateLimiter,
-        ILogger<MoySkladDocumentGateway> logger)
+        ILogger<MoySkladDocumentGateway> logger,
+        MoySkladDocumentChangeRetryOptions? retryOptions = null)
         : this(
             httpClient,
             tokenClient,
@@ -112,7 +119,8 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
             new MoySkladResponseHandler(
                 new ForwardingLogger<MoySkladDocumentGateway, MoySkladResponseHandler>(logger)),
             new MoySkladSingleDocumentResponseValidator(),
-            new MoySkladBulkDocumentResponseValidator())
+            new MoySkladBulkDocumentResponseValidator(),
+            retryOptions ?? MoySkladDocumentChangeRetryOptions.Disabled)
     {
     }
 
@@ -272,8 +280,6 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
         }
 
         var accessToken = await _tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
-        await _rateLimiter.WaitAsync(accountId, cancellationToken);
-
         var agent = new
         {
             meta = new
@@ -297,23 +303,82 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                 agent
             }).ToArray();
 
-        using var request = new HttpRequestMessage(
-            isSingle ? HttpMethod.Put : HttpMethod.Post,
-            isSingle
-                ? $"entity/{documentType}/{documents[0].DocumentId:D}"
-                : $"entity/{documentType}/batch")
-        {
-            Content = JsonContent.Create(payload)
-        };
+        var method = isSingle ? HttpMethod.Put : HttpMethod.Post;
+        var endpoint = isSingle
+            ? $"entity/{documentType}/{documents[0].DocumentId:D}"
+            : $"entity/{documentType}/batch";
+        var payloadJson = JsonSerializer.Serialize(payload, JsonOptions);
+        var retryAttempt = 0;
+        EgressException? previousException = null;
 
+        while (true)
+        {
+            if (retryAttempt > 0)
+            {
+                var delay = GetRetryDelay(retryAttempt);
+                if (delay > TimeSpan.Zero)
+                    await Task.Delay(delay, cancellationToken);
+
+                _logger.LogWarning(
+                    "Retrying MoySklad document counterparty mutation: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, method={Method}, chunk_size={ChunkSize}, retry_attempt={RetryAttempt}, max_retries={MaxRetries}, retry_delay_ms={RetryDelayMs}, previous_http_status={HttpStatus}, previous_error_code={ErrorCode}",
+                    accountId, mergeJobId, operationId, correlationId, documentType, method.Method,
+                    documents.Count, retryAttempt, _retryOptions.MaxRetries, delay.TotalMilliseconds,
+                    previousException?.HttpStatus, previousException?.Code);
+
+                if (_retryOptions.LogPayloadOnRetry)
+                {
+                    _logger.LogInformation(
+                        "MoySklad document counterparty retry payload: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, retry_attempt={RetryAttempt}, request_body={RequestBody}",
+                        accountId, mergeJobId, operationId, correlationId, documentType, retryAttempt, payloadJson);
+                }
+            }
+
+            try
+            {
+                return await SendCounterpartyMutationAttemptAsync(
+                    accountId, requestedByUserId, mergeJobId, operationId, correlationId, mainCounterpartyId,
+                    documentType, documents, isSingle, method, endpoint, payloadJson, accessToken,
+                    retryAttempt, cancellationToken);
+            }
+            catch (EgressException exception) when (retryAttempt < _retryOptions.MaxRetries)
+            {
+                previousException = exception;
+                retryAttempt++;
+            }
+        }
+    }
+
+    private async Task<MoySkladDocumentChangeChunkResult> SendCounterpartyMutationAttemptAsync(
+        Guid accountId,
+        Guid requestedByUserId,
+        Guid mergeJobId,
+        Guid operationId,
+        string correlationId,
+        Guid mainCounterpartyId,
+        string documentType,
+        IReadOnlyList<MoySkladDocumentChangeItem> documents,
+        bool isSingle,
+        HttpMethod method,
+        string endpoint,
+        string payloadJson,
+        string accessToken,
+        int retryAttempt,
+        CancellationToken cancellationToken)
+    {
+        await _rateLimiter.WaitAsync(accountId, cancellationToken);
+
+        using var request = new HttpRequestMessage(method, endpoint)
+        {
+            Content = new StringContent(payloadJson, Encoding.UTF8, "application/json")
+        };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         request.Headers.TryAddWithoutValidation("Accept", "application/json;charset=utf-8");
         request.Headers.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
 
         _logger.LogInformation(
-            "Sending MoySklad document counterparty mutation: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}, document_type={DocumentType}, method={Method}, chunk_size={ChunkSize}",
+            "Sending MoySklad document counterparty mutation: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}, document_type={DocumentType}, method={Method}, chunk_size={ChunkSize}, retry_attempt={RetryAttempt}",
             accountId, mergeJobId, operationId, requestedByUserId, correlationId, documentType,
-            request.Method.Method, documents.Count);
+            request.Method.Method, documents.Count, retryAttempt);
 
         var context = new MoySkladRequestContext(
             accountId,
@@ -323,7 +388,8 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
             request.Method.Method,
             request.RequestUri!.ToString(),
             documentType,
-            isSingle ? documents[0].DocumentId : null);
+            isSingle ? documents[0].DocumentId : null,
+            retryAttempt);
         var stopwatch = Stopwatch.StartNew();
         HttpResponseMessage response;
 
@@ -350,9 +416,9 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                 response, context, stopwatch.Elapsed, cancellationToken);
             var json = responseBody.Body;
             _logger.LogInformation(
-                "MoySklad document counterparty mutation completed: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, method={Method}, chunk_size={ChunkSize}, status={StatusCode}, duration_ms={DurationMs}",
+                "MoySklad document counterparty mutation completed: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, method={Method}, chunk_size={ChunkSize}, retry_attempt={RetryAttempt}, status={StatusCode}, duration_ms={DurationMs}",
                 accountId, mergeJobId, operationId, correlationId, documentType, request.Method.Method,
-                documents.Count, responseBody.HttpStatus, stopwatch.Elapsed.TotalMilliseconds);
+                documents.Count, retryAttempt, responseBody.HttpStatus, stopwatch.Elapsed.TotalMilliseconds);
             if (string.IsNullOrWhiteSpace(json))
                 throw _responseHandler.ValidationFailure(
                     context, responseBody.HttpStatus, "MoySklad returned an empty document update response.", json,
@@ -405,6 +471,12 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                 return new MoySkladDocumentChangeChunkResult(validation.Succeeded, failures);
             }
         }
+    }
+
+    private TimeSpan GetRetryDelay(int retryAttempt)
+    {
+        var milliseconds = _retryOptions.InitialRetryDelay.TotalMilliseconds * Math.Pow(2, retryAttempt - 1);
+        return TimeSpan.FromMilliseconds(Math.Min(milliseconds, int.MaxValue));
     }
 
     public Task<MoySkladDocumentChangeChunkResult> ChangeContractAgentsAsync(

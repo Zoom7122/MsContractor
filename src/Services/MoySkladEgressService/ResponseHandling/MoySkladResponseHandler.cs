@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Text.Unicode;
+using MsContractor.MoySkladEgressService.Models.Options;
 
 namespace MsContractor.MoySkladEgressService.ResponseHandling;
 
@@ -34,13 +35,24 @@ public interface IMoySkladResponseHandler
 public sealed class MoySkladResponseHandler : IMoySkladResponseHandler
 {
     private readonly ILogger<MoySkladResponseHandler> _logger;
+    private readonly MoySkladResponseDiagnosticsOptions _options;
 
     public MoySkladResponseHandler(ILogger<MoySkladResponseHandler> logger)
+        : this(logger, MoySkladResponseDiagnosticsOptions.Default)
     {
-        _logger = logger;
     }
 
-    public const int MaximumDiagnosticBodyLength = 32 * 1024;
+    public MoySkladResponseHandler(
+        ILogger<MoySkladResponseHandler> logger,
+        MoySkladResponseDiagnosticsOptions options)
+    {
+        _logger = logger;
+        _options = options;
+    }
+
+    public const int DefaultMaximumDiagnosticBodyLength =
+        MoySkladResponseDiagnosticsOptions.DefaultMaximumDiagnosticBodyLength;
+    public const int MaximumDiagnosticBodyLength = DefaultMaximumDiagnosticBodyLength;
     private static readonly JsonSerializerOptions DiagnosticJsonOptions = new()
     {
         Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
@@ -80,7 +92,7 @@ public sealed class MoySkladResponseHandler : IMoySkladResponseHandler
         if (response.IsSuccessStatusCode)
             return new MoySkladResponseBody(body, status);
 
-        var diagnosticBody = SanitizeAndTruncate(body);
+        var diagnosticBody = SanitizeAndTruncate(body, _options.MaximumDiagnosticBodyLength);
         var (upstreamCode, upstreamMessage, structured) = ParseError(body);
         if (!structured)
             upstreamMessage = ReadUnstructuredErrorMessage(body, diagnosticBody);
@@ -125,7 +137,7 @@ public sealed class MoySkladResponseHandler : IMoySkladResponseHandler
         string responseBody,
         TimeSpan duration)
     {
-        var diagnosticBody = SanitizeAndTruncate(responseBody);
+        var diagnosticBody = SanitizeAndTruncate(responseBody, _options.MaximumDiagnosticBodyLength);
         LogFailure(
             LogLevel.Error,
             context,
@@ -267,7 +279,7 @@ public sealed class MoySkladResponseHandler : IMoySkladResponseHandler
         return string.IsNullOrWhiteSpace(diagnosticBody) ? null : diagnosticBody;
     }
 
-    internal static string SanitizeAndTruncate(string body)
+    internal static string SanitizeAndTruncate(string body, int maximumLength)
     {
         if (string.IsNullOrWhiteSpace(body)) return string.Empty;
         string sanitized;
@@ -283,9 +295,9 @@ public sealed class MoySkladResponseHandler : IMoySkladResponseHandler
                 .Replace("\r", " ", StringComparison.Ordinal)
                 .Replace("\n", " ", StringComparison.Ordinal));
         }
-        return sanitized.Length <= MaximumDiagnosticBodyLength
+        return sanitized.Length <= maximumLength
             ? sanitized
-            : sanitized[..MaximumDiagnosticBodyLength];
+            : sanitized[..maximumLength];
     }
 
     private static string SanitizeText(string value) => SensitiveText.Replace(

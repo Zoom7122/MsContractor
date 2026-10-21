@@ -52,6 +52,12 @@ var moySkladRequestTimeout = builder.Configuration.GetValue<TimeSpan?>("MoySklad
     ?? TimeSpan.FromSeconds(30);
 var documentChangeOptions = MoySkladDocumentChangeOptions.Parse(
     builder.Configuration["DOCUMENTS_PUT_CHANGE"]);
+var documentChangeRetryOptions = MoySkladDocumentChangeRetryOptions.Parse(
+    builder.Configuration["DOCUMENTS_PUT_CHANGE_MAX_RETRIES"],
+    builder.Configuration["DOCUMENTS_PUT_CHANGE_RETRY_DELAY_MS"],
+    builder.Environment.IsDevelopment());
+var responseDiagnosticsOptions = MoySkladResponseDiagnosticsOptions.Parse(
+    builder.Configuration["EGRESS_MAX_DIAGNOSTIC_BODY_LENGTH"]);
 var agentAndContractOptions = MoySkladDocumentAgentAndContractOptions.Parse(
     builder.Configuration["DOCUMENTS_CHANGE_AGENT_AND_CONTRACT"]);
 var documentDiscoveryOptions = MoySkladDocumentDiscoveryOptions.Parse(
@@ -60,6 +66,8 @@ var purchaseReturnRecreationOptions = PurchaseReturnRecreationOptions.Parse(buil
 var factureInRecreationOptions = FactureInRecreationOptions.Parse(builder.Configuration);
 builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(egressOptions));
 builder.Services.AddSingleton(documentChangeOptions);
+builder.Services.AddSingleton(documentChangeRetryOptions);
+builder.Services.AddSingleton(responseDiagnosticsOptions);
 builder.Services.AddSingleton(agentAndContractOptions);
 builder.Services.AddSingleton(documentDiscoveryOptions);
 builder.Services.AddSingleton(purchaseReturnRecreationOptions);

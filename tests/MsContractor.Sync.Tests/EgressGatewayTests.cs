@@ -1,6 +1,8 @@
 using MsContractor.MoySkladEgressService.Clients;
 using MsContractor.MoySkladEgressService.Gateways.Counterparties;
 using MsContractor.MoySkladEgressService.Gateways.Documents;
+using MsContractor.MoySkladEgressService.Models;
+using MsContractor.MoySkladEgressService.Models.Options;
 using MsContractor.MoySkladEgressService.ResponseHandling;
 using MsContractor.MoySkladEgressService.RateLimiting;
 using MsContractor.MoySkladEgressService.RateLimiting.Models;
@@ -271,7 +273,7 @@ public sealed class EgressGatewayTests
     {
         var logger = new CaptureLogger<MoySkladCounterpartyGateway>();
         var gateway = CreateGateway(
-            _ => Response(HttpStatusCode.BadRequest, new string('x', MoySkladResponseHandler.MaximumDiagnosticBodyLength + 100)),
+            _ => Response(HttpStatusCode.BadRequest, new string('x', MoySkladResponseHandler.DefaultMaximumDiagnosticBodyLength + 100)),
             logger);
 
         await Assert.ThrowsAsync<EgressException>(() => gateway.GetAsync(
@@ -287,8 +289,29 @@ public sealed class EgressGatewayTests
             CancellationToken.None));
 
         var error = Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Error);
-        Assert.Contains($"response_body={new string('x', MoySkladResponseHandler.MaximumDiagnosticBodyLength)}", error.Message);
-        Assert.DoesNotContain(new string('x', MoySkladResponseHandler.MaximumDiagnosticBodyLength + 1), error.Message);
+        Assert.Contains($"response_body={new string('x', MoySkladResponseHandler.DefaultMaximumDiagnosticBodyLength)}", error.Message);
+        Assert.DoesNotContain(new string('x', MoySkladResponseHandler.DefaultMaximumDiagnosticBodyLength + 1), error.Message);
+    }
+
+    [Fact]
+    public async Task ResponseHandler_UsesConfiguredDiagnosticBodyLimit()
+    {
+        var logger = new CaptureLogger<MoySkladResponseHandler>();
+        var handler = new MoySkladResponseHandler(
+            logger,
+            MoySkladResponseDiagnosticsOptions.Parse("9"));
+        var context = new MoySkladRequestContext(
+            Guid.NewGuid(), "correlation-id", null, null, "GET", "entity/counterparty", "counterparty", null);
+
+        await Assert.ThrowsAsync<EgressException>(() => handler.ReadAsync(
+            Response(HttpStatusCode.BadRequest, new string('x', 40)),
+            context,
+            TimeSpan.Zero,
+            CancellationToken.None));
+
+        var error = Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Error);
+        Assert.Contains($"response_body={new string('x', 9)}", error.Message);
+        Assert.DoesNotContain(new string('x', 10), error.Message);
     }
 
     private static MoySkladCounterpartyGateway CreateGateway(

@@ -205,6 +205,9 @@ services:
       <<: *service-env
       MoySklad__JsonApiBaseUrl: https://api.moysklad.ru/api/remap/1.2
       MoySklad__RequestTimeout: ${EGRESS_MOYSKLAD_REQUEST_TIMEOUT:-00:00:30}
+      DOCUMENTS_PUT_CHANGE_MAX_RETRIES: ${DOCUMENTS_PUT_CHANGE_MAX_RETRIES:-2}
+      DOCUMENTS_PUT_CHANGE_RETRY_DELAY_MS: ${DOCUMENTS_PUT_CHANGE_RETRY_DELAY_MS:-5000}
+      EGRESS_MAX_DIAGNOSTIC_BODY_LENGTH: ${EGRESS_MAX_DIAGNOSTIC_BODY_LENGTH:-32768}
     depends_on:
       postgres:
         condition: service_healthy

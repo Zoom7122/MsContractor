@@ -11,6 +11,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using MsContractor.Contracts.Internal;
 using MsContractor.MoySkladEgressService.Controllers;
@@ -44,6 +45,38 @@ public sealed class MoySkladDocumentChangeOptionsTests
         Assert.Equal(
             ["purchasereturn", "salesreturn", "retailsalesreturn", "factureout", "facturein"],
             options.DocumentTypes);
+    }
+
+    [Theory]
+    [InlineData(null, null, 2, 5000)]
+    [InlineData("4", "250", 4, 250)]
+    [InlineData("0", "0", 0, 0)]
+    [InlineData("invalid", "-1", 2, 5000)]
+    public void RetryOptions_ParseUsesDefaultsAndAcceptsNonNegativeValues(
+        string? maxRetries,
+        string? retryDelayMs,
+        int expectedRetries,
+        int expectedDelayMs)
+    {
+        var options = MoySkladDocumentChangeRetryOptions.Parse(maxRetries, retryDelayMs, true);
+
+        Assert.Equal(expectedRetries, options.MaxRetries);
+        Assert.Equal(TimeSpan.FromMilliseconds(expectedDelayMs), options.InitialRetryDelay);
+        Assert.True(options.LogPayloadOnRetry);
+    }
+
+    [Theory]
+    [InlineData(null, 32768)]
+    [InlineData("120", 120)]
+    [InlineData("0", 32768)]
+    [InlineData("invalid", 32768)]
+    public void DiagnosticOptions_ParseUsesDefaultOrPositiveOverride(
+        string? maximumLength,
+        int expectedMaximumLength)
+    {
+        var options = MoySkladResponseDiagnosticsOptions.Parse(maximumLength);
+
+        Assert.Equal(expectedMaximumLength, options.MaximumDiagnosticBodyLength);
     }
 }
 
@@ -94,11 +127,17 @@ public sealed class MoySkladDocumentChangeGatewayTests
     {
         var mainId = Guid.NewGuid();
         var documents = Documents("demand", 2);
-        var gateway = Gateway((_, _) => Task.FromResult(JsonResponse(new object[]
+        var calls = 0;
+        var logger = new CaptureLogger<MoySkladDocumentGateway>();
+        var gateway = Gateway((_, _) =>
         {
-            Changed(documents[0], mainId),
-            new { errors = new[] { new { code = 3008, error = "Документ нельзя изменить", parameter = "agent" } } }
-        })));
+            calls++;
+            return Task.FromResult(JsonResponse(new object[]
+            {
+                Changed(documents[0], mainId),
+                new { errors = new[] { new { code = 3008, error = "Документ нельзя изменить", parameter = "agent" } } }
+            }));
+        }, MoySkladDocumentChangeRetryOptions.Parse("2", "0", false), logger);
 
         var result = await gateway.ChangeCounterpartyAsync(
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
@@ -109,6 +148,129 @@ public sealed class MoySkladDocumentChangeGatewayTests
         Assert.Equal("MOYSKLAD_3008", failure.Code);
         Assert.Contains("Документ нельзя изменить", failure.Message);
         Assert.False(failure.Retryable);
+        Assert.Equal(1, calls);
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("request_body=", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ChangeCounterpartyAsync_DoesNotLogPayloadWhenFirstAttemptSucceeds()
+    {
+        var mainId = Guid.NewGuid();
+        var document = Documents("paymentout", 1)[0];
+        var logger = new CaptureLogger<MoySkladDocumentGateway>();
+        var gateway = Gateway(
+            (_, _) => Task.FromResult(JsonResponse(Changed(document, mainId))),
+            MoySkladDocumentChangeRetryOptions.Parse("2", "0", true),
+            logger);
+
+        await gateway.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            mainId, "paymentout", [document], CancellationToken.None);
+
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("request_body=", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(1, "PUT")]
+    [InlineData(2, "POST")]
+    public async Task ChangeCounterpartyAsync_RetriesSameJsonAfterUnstructured412(
+        int documentCount,
+        string expectedMethod)
+    {
+        var mainId = Guid.NewGuid();
+        var documents = Documents("paymentout", documentCount);
+        var requests = new List<(string Method, string Path, string Body)>();
+        var logger = new CaptureLogger<MoySkladDocumentGateway>();
+        var gateway = Gateway(async (request, cancellationToken) =>
+        {
+            var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            requests.Add((request.Method.Method, request.RequestUri!.AbsolutePath, body));
+            if (requests.Count == 1)
+                return new HttpResponseMessage(HttpStatusCode.PreconditionFailed)
+                {
+                    Content = new StringContent("[]", Encoding.UTF8, "application/json")
+                };
+
+            object response = documentCount == 1
+                ? Changed(documents[0], mainId)
+                : documents.Select(item => Changed(item, mainId)).ToArray();
+            return JsonResponse(response);
+        }, MoySkladDocumentChangeRetryOptions.Parse("2", "0", true), logger);
+
+        var result = await gateway.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            mainId, "paymentout", documents, CancellationToken.None);
+
+        Assert.Equal(documentCount, result.ChangedDocuments.Count);
+        Assert.Empty(result.Failures);
+        Assert.Equal(2, requests.Count);
+        Assert.Equal(expectedMethod, requests[0].Method);
+        Assert.Equal(requests[0], requests[1]);
+        Assert.Equal(documentCount == 1
+            ? $"/api/remap/1.2/entity/paymentout/{documents[0].DocumentId:D}"
+            : "/api/remap/1.2/entity/paymentout/batch", requests[0].Path);
+        var payloadLog = Assert.Single(logger.Messages, message => message.Contains(
+            "MoySklad document counterparty retry payload", StringComparison.Ordinal));
+        Assert.Contains($"retry_attempt=1", payloadLog);
+        Assert.Contains($"request_body={requests[0].Body}", payloadLog);
+    }
+
+    [Fact]
+    public async Task ChangeCounterpartyAsync_RetriesNonRetryableHttpFailureUntilExhausted()
+    {
+        var document = Documents("paymentout", 1)[0];
+        var requests = new List<(string Method, string Path, string Body)>();
+        var logger = new CaptureLogger<MoySkladDocumentGateway>();
+        var gateway = Gateway(async (request, cancellationToken) =>
+        {
+            requests.Add((request.Method.Method, request.RequestUri!.AbsolutePath,
+                await request.Content!.ReadAsStringAsync(cancellationToken)));
+            return new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent(
+                    "{\"errors\":[{\"code\":3008,\"error\":\"rejected\"}]}",
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        }, MoySkladDocumentChangeRetryOptions.Parse("2", "5", false), logger);
+
+        var exception = await Assert.ThrowsAsync<EgressException>(() => gateway.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            Guid.NewGuid(), "paymentout", [document], CancellationToken.None));
+
+        Assert.Equal(400, exception.HttpStatus);
+        Assert.False(exception.Retryable);
+        Assert.Equal(3, requests.Count);
+        Assert.All(requests, request => Assert.Equal(requests[0], request));
+        Assert.Contains(logger.Messages, message => message.Contains(
+            "Retrying MoySklad document counterparty mutation", StringComparison.Ordinal));
+        Assert.Contains(logger.Messages, message => message.Contains("retry_delay_ms=5", StringComparison.Ordinal));
+        Assert.Contains(logger.Messages, message => message.Contains("retry_delay_ms=10", StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("request_body=", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ChangeCounterpartyAsync_CancellationInterruptsRetryDelay()
+    {
+        var document = Documents("paymentout", 1)[0];
+        var requests = 0;
+        using var cancellation = new CancellationTokenSource();
+        var gateway = Gateway((_, _) =>
+        {
+            requests++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.PreconditionFailed)
+            {
+                Content = new StringContent("[]", Encoding.UTF8, "application/json")
+            });
+        }, MoySkladDocumentChangeRetryOptions.Parse("1", "5000", false));
+
+        var task = gateway.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            Guid.NewGuid(), "paymentout", [document], cancellation.Token);
+        cancellation.CancelAfter(TimeSpan.FromMilliseconds(100));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task);
+        Assert.Equal(1, requests);
     }
 
     [Fact]
@@ -317,7 +479,9 @@ public sealed class MoySkladDocumentChangeGatewayTests
     }
 
     private static MoySkladDocumentGateway Gateway(
-        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> callback) =>
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> callback,
+        MoySkladDocumentChangeRetryOptions? retryOptions = null,
+        ILogger<MoySkladDocumentGateway>? logger = null) =>
         new(
             new HttpClient(new AsyncHandler(callback))
             {
@@ -325,7 +489,8 @@ public sealed class MoySkladDocumentChangeGatewayTests
             },
             new TokenClient(),
             new RateLimiter(),
-            NullLogger<MoySkladDocumentGateway>.Instance);
+            logger ?? NullLogger<MoySkladDocumentGateway>.Instance,
+            retryOptions);
 
     private static MoySkladDocumentChangeItem[] Documents(string type, int count) =>
         Enumerable.Range(0, count)
@@ -377,6 +542,23 @@ public sealed class MoySkladDocumentChangeGatewayTests
         public Task WaitAsync(Guid accountId, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task ObserveAsync(Guid accountId, MoySkladRateLimitObservation observation, CancellationToken cancellationToken) =>
             Task.CompletedTask;
+    }
+
+    private sealed class CaptureLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Messages.Add(formatter(state, exception));
     }
 }
 

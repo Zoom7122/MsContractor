@@ -518,6 +518,193 @@ public sealed class MoySkladDocumentChangeGatewayTests
         Assert.Empty(result.Failures);
     }
 
+    [Theory]
+    [InlineData("commissionreportin", HttpStatusCode.OK)]
+    [InlineData("commissionreportin", HttpStatusCode.PreconditionFailed)]
+    [InlineData("commissionreportout", HttpStatusCode.OK)]
+    [InlineData("commissionreportout", HttpStatusCode.PreconditionFailed)]
+    public async Task ChangeAgentAndContractAsync_MapsBatchErrorsByMetaHrefToSkippedDocuments(
+        string documentType, HttpStatusCode responseStatus)
+    {
+        var mainId = Guid.NewGuid();
+        var contractId = Guid.NewGuid();
+        var documents = Documents(documentType, 3);
+        var calls = 0;
+        var gateway = Gateway((request, _) =>
+        {
+            calls++;
+            Assert.Equal(HttpMethod.Post, request.Method);
+            Assert.EndsWith($"/entity/{documentType}/batch", request.RequestUri!.AbsolutePath);
+            var response = JsonResponse(new[]
+            {
+                ChangedWithContract(documents[0], mainId, contractId),
+                BatchItemError(documents[2]),
+                BatchItemError(documents[1])
+            });
+            response.StatusCode = responseStatus;
+            return Task.FromResult(response);
+        });
+
+        var result = await gateway.ChangeAgentAndContractAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation", mainId,
+            documentType, documents.Select(item => new MoySkladDocumentChangeAgentAndContractItem(
+                item.DocumentType, item.DocumentId, contractId)).ToArray(), CancellationToken.None);
+
+        Assert.Equal([documents[0]], result.ChangedDocuments);
+        Assert.Empty(result.Failures);
+        Assert.Equal(documents.Skip(1).Select(item => item.DocumentId),
+            result.SkippedDocuments.Select(item => item.DocumentId));
+        Assert.All(result.SkippedDocuments, item =>
+        {
+            Assert.Equal(documentType, item.DocumentType);
+            Assert.StartsWith("MOYSKLAD_3007:", item.Reason);
+        });
+        Assert.Equal(1, calls);
+    }
+
+    [Theory]
+    [InlineData("commissionreportin")]
+    [InlineData("commissionreportout")]
+    public async Task ChangeAgentAndContractAsync_CanSkipEveryBatchDocument(string documentType)
+    {
+        var documents = Documents(documentType, 2);
+        var gateway = Gateway((_, _) =>
+        {
+            var response = JsonResponse(documents.Select(item => BatchItemError(item)).ToArray());
+            response.StatusCode = HttpStatusCode.PreconditionFailed;
+            return Task.FromResult(response);
+        });
+
+        var result = await gateway.ChangeAgentAndContractAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation", Guid.NewGuid(),
+            documentType, documents.Select(item => new MoySkladDocumentChangeAgentAndContractItem(
+                item.DocumentType, item.DocumentId, null)).ToArray(), CancellationToken.None);
+
+        Assert.Empty(result.ChangedDocuments);
+        Assert.Empty(result.Failures);
+        Assert.Equal(documents.Select(item => item.DocumentId), result.SkippedDocuments.Select(item => item.DocumentId));
+    }
+
+    [Theory]
+    [InlineData("agent")]
+    [InlineData("contract")]
+    [InlineData("missingDocument")]
+    public async Task ChangeAgentAndContractAsync_StillValidatesDocumentsAlongsideSkippedItems(string invalidField)
+    {
+        var mainId = Guid.NewGuid();
+        var contractId = Guid.NewGuid();
+        var documents = Documents("commissionreportin", 3);
+        var gateway = Gateway((_, _) =>
+        {
+            var response = JsonResponse(new[]
+            {
+                ChangedWithContract(documents[0], mainId, contractId),
+                invalidField == "missingDocument"
+                    ? new { ignored = true }
+                    : ChangedWithContract(documents[1], invalidField == "agent" ? Guid.NewGuid() : mainId,
+                        invalidField == "contract" ? Guid.NewGuid() : contractId),
+                BatchItemError(documents[2])
+            });
+            response.StatusCode = HttpStatusCode.PreconditionFailed;
+            return Task.FromResult(response);
+        });
+
+        var result = await gateway.ChangeAgentAndContractAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation", mainId,
+            "commissionreportin", documents.Select(item => new MoySkladDocumentChangeAgentAndContractItem(
+                item.DocumentType, item.DocumentId, contractId)).ToArray(), CancellationToken.None);
+
+        Assert.Equal([documents[0]], result.ChangedDocuments);
+        Assert.Equal(documents[2].DocumentId, Assert.Single(result.SkippedDocuments).DocumentId);
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal(documents[1].DocumentId, failure.DocumentId);
+        Assert.Equal("MOYSKLAD_RESPONSE_VALIDATION_FAILED", failure.Code);
+        Assert.False(failure.Retryable);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests, "MOYSKLAD_RATE_LIMITED")]
+    [InlineData(HttpStatusCode.InternalServerError, "MOYSKLAD_UNSTRUCTURED_ERROR_RESPONSE")]
+    public async Task ChangeAgentAndContractAsync_DoesNotTreatRateLimitOrServerFailuresAsSkips(
+        HttpStatusCode responseStatus, string expectedCode)
+    {
+        var documents = Documents("commissionreportout", 2);
+        var gateway = Gateway((_, _) =>
+        {
+            var response = JsonResponse(documents.Select(item => BatchItemError(item)).ToArray());
+            response.StatusCode = responseStatus;
+            return Task.FromResult(response);
+        });
+
+        var exception = await Assert.ThrowsAsync<EgressException>(() => gateway.ChangeAgentAndContractAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation", Guid.NewGuid(),
+            "commissionreportout", documents.Select(item => new MoySkladDocumentChangeAgentAndContractItem(
+                item.DocumentType, item.DocumentId, null)).ToArray(), CancellationToken.None));
+
+        Assert.Equal(expectedCode, exception.Code);
+        Assert.Equal((int)responseStatus, exception.HttpStatus);
+        Assert.True(exception.Retryable);
+    }
+
+    [Theory]
+    [InlineData("unknownId")]
+    [InlineData("wrongType")]
+    [InlineData("wrongHost")]
+    [InlineData("missingMeta")]
+    [InlineData("wrongCount")]
+    public async Task ChangeAgentAndContractAsync_DoesNotSkipUnmatchedBatchErrors(string invalidResponse)
+    {
+        var documents = Documents("commissionreportin", 2);
+        var href = invalidResponse switch
+        {
+            "unknownId" => $"https://api.moysklad.ru/api/remap/1.2/entity/commissionreportin/{Guid.NewGuid():D}",
+            "wrongType" => $"https://api.moysklad.ru/api/remap/1.2/entity/commissionreportout/{documents[1].DocumentId:D}",
+            "wrongHost" => $"https://other.test/api/remap/1.2/entity/commissionreportin/{documents[1].DocumentId:D}",
+            _ => null
+        };
+        object error = invalidResponse == "missingMeta"
+            ? new { errors = new[] { new { code = 3007, error = "rejected" } } }
+            : BatchItemError(documents[1], href);
+        object[] responseItems = invalidResponse == "wrongCount"
+            ? [error]
+            : [Changed(documents[0], Guid.NewGuid()), error];
+        var gateway = Gateway((_, _) =>
+        {
+            var response = JsonResponse(responseItems);
+            response.StatusCode = HttpStatusCode.PreconditionFailed;
+            return Task.FromResult(response);
+        });
+
+        var exception = await Assert.ThrowsAsync<EgressException>(() => gateway.ChangeAgentAndContractAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation", Guid.NewGuid(),
+            "commissionreportin", documents.Select(item => new MoySkladDocumentChangeAgentAndContractItem(
+                item.DocumentType, item.DocumentId, null)).ToArray(), CancellationToken.None));
+
+        Assert.Equal(412, exception.HttpStatus);
+        Assert.Equal("MOYSKLAD_UNSTRUCTURED_ERROR_RESPONSE", exception.Code);
+    }
+
+    [Fact]
+    public async Task ChangeAgentAndContractAsync_PreservesTopLevelHttpErrors()
+    {
+        var documents = Documents("commissionreportout", 2);
+        var gateway = Gateway((_, _) =>
+        {
+            var response = JsonResponse(new { errors = new[] { new { code = 3007, error = "rejected" } } });
+            response.StatusCode = HttpStatusCode.PreconditionFailed;
+            return Task.FromResult(response);
+        });
+
+        var exception = await Assert.ThrowsAsync<EgressException>(() => gateway.ChangeAgentAndContractAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation", Guid.NewGuid(),
+            "commissionreportout", documents.Select(item => new MoySkladDocumentChangeAgentAndContractItem(
+                item.DocumentType, item.DocumentId, null)).ToArray(), CancellationToken.None));
+
+        Assert.Equal(412, exception.HttpStatus);
+        Assert.Equal("MOYSKLAD_HTTP_ERROR", exception.Code);
+        Assert.Equal("3007", exception.MoySkladErrorCode);
+    }
+
     [Fact]
     public async Task ChangeContractAgentsAsync_UsesBatchForSeveralUniqueContracts()
     {
@@ -581,6 +768,24 @@ public sealed class MoySkladDocumentChangeGatewayTests
         contract = new { meta = new { href = $"https://api.moysklad.ru/api/remap/1.2/entity/contract/{contractId:D}" } }
     };
 
+    private static object BatchItemError(MoySkladDocumentChangeItem document, string? href = null) => new
+    {
+        errors = new[]
+        {
+            new
+            {
+                code = 3007,
+                error = "Report cannot be updated",
+                meta = new
+                {
+                    href = href ?? $"https://api.moysklad.ru/api/remap/1.2/entity/{document.DocumentType}/{document.DocumentId:D}",
+                    type = document.DocumentType,
+                    mediaType = "application/json"
+                }
+            }
+        }
+    };
+
     private static HttpResponseMessage JsonResponse(object body) => new(HttpStatusCode.OK)
     {
         Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
@@ -626,6 +831,48 @@ public sealed class MoySkladDocumentChangeGatewayTests
 
 public sealed class MoySkladDocumentChangeServiceTests
 {
+    [Fact]
+    public async Task ChangeAgentAndContractAsync_PropagatesSkippedDocumentsAndPreservesContractFailures()
+    {
+        var contractId = Guid.NewGuid();
+        var failedContractId = Guid.NewGuid();
+        var documents = new[]
+        {
+            new MoySkladDocumentChangeAgentAndContractItem("commissionreportin", Guid.NewGuid(), contractId),
+            new MoySkladDocumentChangeAgentAndContractItem("commissionreportin", Guid.NewGuid(), contractId),
+            new MoySkladDocumentChangeAgentAndContractItem("commissionreportin", Guid.NewGuid(), failedContractId)
+        };
+        var gateway = new RecordingGateway
+        {
+            ContractCallback = ids => new MoySkladDocumentChangeChunkResult(
+                ids.Where(id => id != failedContractId).Select(id => new MoySkladDocumentChangeItem("contract", id)).ToArray(),
+                [new MoySkladDocumentChangeFailure("contract", failedContractId, "MOYSKLAD_3008", "rejected", 412, false)]),
+            AgentAndContractCallback = call => new MoySkladDocumentChangeChunkResult(
+                [new MoySkladDocumentChangeItem(call.DocumentType, call.Documents[0].DocumentId)], [])
+            {
+                SkippedDocuments = [new MoySkladDocumentChangeSkippedItem(
+                    call.DocumentType, call.Documents[1].DocumentId, "MOYSKLAD_3007: rejected")]
+            }
+        };
+        var service = new MoySkladDocumentAgentAndContractService(gateway,
+            new MoySkladDocumentAgentAndContractOptions { DocumentTypes = ["commissionreportin"] },
+            NullLogger<MoySkladDocumentAgentAndContractService>.Instance);
+
+        var response = await service.ChangeAgentAndContractAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            new MoySkladDocumentChangeAgentAndContractRequest(Guid.NewGuid(), documents), CancellationToken.None);
+
+        Assert.Equal(3, response.RequestedCount);
+        Assert.Equal(1, response.ChangedCount);
+        Assert.Equal(1, response.SkippedCount);
+        Assert.Equal(1, response.FailedCount);
+        Assert.Equal(documents[0].DocumentId, Assert.Single(response.ChangedDocuments).DocumentId);
+        Assert.Equal(documents[1].DocumentId, Assert.Single(response.SkippedDocuments).DocumentId);
+        Assert.Equal("MOYSKLAD_3007: rejected", response.SkippedDocuments[0].Reason);
+        Assert.Equal(documents[2].DocumentId, Assert.Single(response.Failures).DocumentId);
+        Assert.Equal(documents.Take(2), Assert.Single(gateway.AgentAndContractCalls).Documents);
+    }
+
     [Fact]
     public async Task ChangeAgentAndContractAsync_DeduplicatesContractsAndBlocksOnlyTheirDocuments()
     {
@@ -747,6 +994,7 @@ public sealed class MoySkladDocumentChangeServiceTests
         public List<AgentAndContractCall> AgentAndContractCalls { get; } = [];
         public Func<MutationCall, MoySkladDocumentChangeChunkResult>? Callback { get; init; }
         public Func<IReadOnlyList<Guid>, MoySkladDocumentChangeChunkResult>? ContractCallback { get; init; }
+        public Func<AgentAndContractCall, MoySkladDocumentChangeChunkResult>? AgentAndContractCallback { get; init; }
 
         public Task<MoySkladDocumentChangeChunkResult> ChangeCounterpartyAsync(
             Guid accountId, Guid requestedByUserId, Guid mergeJobId, Guid operationId,
@@ -779,7 +1027,7 @@ public sealed class MoySkladDocumentChangeServiceTests
         {
             var call = new AgentAndContractCall(documentType, documents.ToArray());
             AgentAndContractCalls.Add(call);
-            return Task.FromResult(new MoySkladDocumentChangeChunkResult(
+            return Task.FromResult(AgentAndContractCallback?.Invoke(call) ?? new MoySkladDocumentChangeChunkResult(
                 documents.Select(item => new MoySkladDocumentChangeItem(item.DocumentType, item.DocumentId)).ToArray(), []));
         }
     }

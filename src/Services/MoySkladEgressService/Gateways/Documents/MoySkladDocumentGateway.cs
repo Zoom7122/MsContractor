@@ -1,6 +1,7 @@
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Clients;
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -416,21 +417,8 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
 
             if (!isSingle)
             {
-                string batchResponseJson;
-                try
-                {
-                    batchResponseJson = await response.Content.ReadAsStringAsync(cancellationToken);
-                }
-                catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
-                {
-                    throw _responseHandler.TransportFailure(
-                        context, "MoySklad response timed out.", stopwatch.Elapsed, exception);
-                }
-                catch (Exception exception) when (exception is HttpRequestException or IOException)
-                {
-                    throw _responseHandler.TransportFailure(
-                        context, "MoySklad is unavailable.", stopwatch.Elapsed, exception);
-                }
+                var batchResponseJson = await ReadMutationResponseJsonAsync(
+                    response, context, stopwatch, cancellationToken);
 
                 if (TryReadBatchItemErrors(
                         batchResponseJson,
@@ -513,6 +501,28 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                 }
                 return new MoySkladDocumentChangeChunkResult(validation.Succeeded, failures);
             }
+        }
+    }
+
+    private async Task<string> ReadMutationResponseJsonAsync(
+        HttpResponseMessage response,
+        MoySkladRequestContext context,
+        Stopwatch stopwatch,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await response.Content.ReadAsStringAsync(cancellationToken);
+        }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw _responseHandler.TransportFailure(
+                context, "MoySklad response timed out.", stopwatch.Elapsed, exception);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or IOException)
+        {
+            throw _responseHandler.TransportFailure(
+                context, "MoySklad is unavailable.", stopwatch.Elapsed, exception);
         }
     }
 
@@ -712,7 +722,28 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
         {
             var observation = MoySkladRateLimitObservationParser.Parse(response);
             await _rateLimiter.ObserveAsync(accountId, observation, cancellationToken);
-            var responseBody = await _responseHandler.ReadAsync(response, context, stopwatch.Elapsed, cancellationToken);
+            var plainDocuments = documents
+                .Select(item => new MoySkladDocumentChangeItem(item.DocumentType, item.DocumentId)).ToArray();
+            IReadOnlyList<MoySkladDocumentChangeSkippedItem> skippedDocuments = [];
+            MoySkladResponseBody? responseBody = null;
+            if (!isSingle && (response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.PreconditionFailed))
+            {
+                var batchResponseJson = await ReadMutationResponseJsonAsync(
+                    response, context, stopwatch, cancellationToken);
+                if (TryReadBatchItemErrors(
+                        batchResponseJson, documentType, plainDocuments, _httpClient.BaseAddress!,
+                        out skippedDocuments))
+                {
+                    responseBody = new MoySkladResponseBody(batchResponseJson, (int)response.StatusCode);
+                    _logger.LogWarning(
+                        "MoySklad document agent and contract batch returned item errors: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, method={Method}, http_status={HttpStatus}, skipped_count={SkippedCount}, skipped_document_ids={SkippedDocumentIds}",
+                        accountId, mergeJobId, operationId, correlationId, documentType, request.Method.Method,
+                        (int)response.StatusCode, skippedDocuments.Count,
+                        skippedDocuments.Select(item => item.DocumentId).ToArray());
+                }
+            }
+
+            responseBody ??= await _responseHandler.ReadAsync(response, context, stopwatch.Elapsed, cancellationToken);
             var json = responseBody.Body;
             if (string.IsNullOrWhiteSpace(json))
                 throw _responseHandler.ValidationFailure(
@@ -731,8 +762,6 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
 
             using (responseDocument)
             {
-                var plainDocuments = documents
-                    .Select(item => new MoySkladDocumentChangeItem(item.DocumentType, item.DocumentId)).ToArray();
                 if (isSingle)
                 {
                     var validationError = _singleValidator.Validate(
@@ -744,9 +773,12 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                     return new MoySkladDocumentChangeChunkResult(plainDocuments, []);
                 }
 
+                var skippedIds = skippedDocuments.Select(item => item.DocumentId).ToHashSet();
+                var expectedDocuments = plainDocuments.Where(item => !skippedIds.Contains(item.DocumentId)).ToArray();
                 var validation = _bulkValidator.Validate(responseDocument.RootElement, plainDocuments, mainCounterpartyId);
-                var failedIds = validation.Failed.Select(item => item.Document.DocumentId).ToHashSet();
-                var failures = validation.Failed.Select(item => new MoySkladDocumentChangeFailure(
+                var validationFailures = validation.Failed.Where(item => !skippedIds.Contains(item.Document.DocumentId)).ToArray();
+                var failedIds = validationFailures.Select(item => item.Document.DocumentId).ToHashSet();
+                var failures = validationFailures.Select(item => new MoySkladDocumentChangeFailure(
                     item.Document.DocumentType, item.Document.DocumentId, item.Code, item.Message,
                     responseBody.HttpStatus, false, request.RequestUri!.ToString(), ValidationError: item.Message)).ToList();
                 var responseById = responseDocument.RootElement.ValueKind == JsonValueKind.Array
@@ -755,7 +787,8 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                         .GroupBy(item => { MoySkladDocumentJson.TryReadId(item, out var id); return id; })
                         .ToDictionary(group => group.Key, group => group.First())
                     : new Dictionary<Guid, JsonElement>();
-                foreach (var document in documents.Where(item => !failedIds.Contains(item.DocumentId)))
+                foreach (var document in documents.Where(item =>
+                             !skippedIds.Contains(item.DocumentId) && !failedIds.Contains(item.DocumentId)))
                 {
                     if (!responseById.TryGetValue(document.DocumentId, out var item))
                         continue;
@@ -772,7 +805,10 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                         context, responseBody.HttpStatus, string.Join(" | ", failures.Select(item => item.Message)), json,
                         stopwatch.Elapsed);
                 return new MoySkladDocumentChangeChunkResult(
-                    plainDocuments.Where(item => !failedIds.Contains(item.DocumentId)).ToArray(), failures);
+                    expectedDocuments.Where(item => !failedIds.Contains(item.DocumentId)).ToArray(), failures)
+                {
+                    SkippedDocuments = skippedDocuments
+                };
             }
         }
     }

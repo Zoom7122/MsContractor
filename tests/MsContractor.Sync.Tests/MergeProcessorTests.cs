@@ -857,6 +857,42 @@ public sealed class MergeProcessorTests
         Assert.Equal([failedId], fixture.DocumentChanges.AgentAndContractCalls[1].Select(item => item.DocumentId));
     }
 
+    [Theory]
+    [InlineData("commissionreportin")]
+    [InlineData("commissionreportout")]
+    public async Task ProcessAsync_CommissionItemErrorSkipContinuesThroughArchiveAndPreservesDocumentOwner(
+        string documentType)
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var changedId = Guid.NewGuid();
+        var skippedId = Guid.NewGuid();
+        fixture.Documents.Documents =
+        [
+            new MoySkladDocumentReference(documentType, changedId, fixture.Duplicates[0].Id),
+            new MoySkladDocumentReference(documentType, skippedId, fixture.Duplicates[0].Id)
+        ];
+        fixture.DocumentChanges.AgentAndContractResponse = (mainId, documents) => new MoySkladDocumentChangeCounterpartyResponse(
+            mainId, documents.Count, 1, 1, 0,
+            [new MoySkladDocumentChangeItem(documentType, changedId)],
+            [new MoySkladDocumentChangeSkippedItem(documentType, skippedId, "MOYSKLAD_3007: rejected")], []);
+        var command = await fixture.CreateJobAsync();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        Assert.Single(fixture.DocumentChanges.AgentAndContractCalls);
+        Assert.Empty(fixture.DocumentChanges.Calls);
+        Assert.Single(fixture.Egress.ArchiveCalls);
+        fixture.Db.ChangeTracker.Clear();
+        var job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
+        Assert.Equal(MergeJobStatuses.Completed, job.Status);
+        var changed = await fixture.Db.CounterpartyDocuments.SingleAsync(item => item.DocumentId == changedId);
+        var skipped = await fixture.Db.CounterpartyDocuments.SingleAsync(item => item.DocumentId == skippedId);
+        Assert.Equal(fixture.Main.Id, changed.CounterpartyId);
+        Assert.Equal(fixture.Duplicates[0].Id, skipped.CounterpartyId);
+        var duplicate = await fixture.Db.Counterparties.SingleAsync(item => item.Id == fixture.Duplicates[0].Id);
+        Assert.True(duplicate.Archived);
+    }
+
     [Fact]
     public async Task ProcessAsync_ArchiveFailureContinuesAndProducesPartialCompletion()
     {

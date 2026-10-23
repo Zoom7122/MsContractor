@@ -90,6 +90,7 @@ public sealed class MoySkladDocumentAgentAndContractService : IMoySkladDocumentA
                         accountId, requestedByUserId, mergeJobId, operationId, correlationId,
                         request.MainCounterpartyId, documentType, chunk, cancellationToken);
                     changed.AddRange(result.ChangedDocuments);
+                    skipped.AddRange(result.SkippedDocuments);
                     failures.AddRange(result.Failures);
                 }
                 catch (EgressException exception)

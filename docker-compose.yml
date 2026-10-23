@@ -104,21 +104,6 @@ services:
     networks:
       - mscontractor-net
 
-  kafka-ui:
-    profiles:
-      - dev-tools
-    image: provectuslabs/kafka-ui:latest
-    container_name: mscontractor-kafka-ui
-    restart: unless-stopped
-    environment:
-      KAFKA_CLUSTERS_0_NAME: mscontractor-local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:${KAFKA_INTERNAL_PORT}
-    depends_on:
-      kafka:
-        condition: service_healthy
-    networks:
-      - mscontractor-net
-
   gateway-bff:
     container_name: mscontractor-gateway-bff
     restart: unless-stopped

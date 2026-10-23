@@ -9,20 +9,20 @@ SOLUTION = MsContractor.sln
 .PHONY: compose-up compose-down compose-down-del compose-up-prod compose-down-prod recreate ps build logs dozzle test health
 
 compose-up:
-	$(DEV_COMPOSE) up -d --build
+	$(DEV_COMPOSE) up -d --build --remove-orphans
 
 compose-up-prod:
-	$(PROD_COMPOSE) --profile $(DEV_PROFILE) stop kafka-ui redis-insight dozzle
-	$(PROD_COMPOSE) up -d --build
+	$(PROD_COMPOSE) --profile $(DEV_PROFILE) stop redis-insight dozzle
+	$(PROD_COMPOSE) up -d --build --remove-orphans
 
 compose-down:
-	$(DEV_COMPOSE) down
+	$(DEV_COMPOSE) down --remove-orphans
 
 compose-down-prod:
-	$(PROD_COMPOSE) --profile $(DEV_PROFILE) down
+	$(PROD_COMPOSE) --profile $(DEV_PROFILE) down --remove-orphans
 
 compose-down-del:
-	$(DEV_COMPOSE) down -v
+	$(DEV_COMPOSE) down --remove-orphans -v
 
 recreate:
 	@test -n "$(SERVICE)" || (echo "Usage: make recreate SERVICE=<service-name>"; exit 1)

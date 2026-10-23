@@ -133,7 +133,7 @@ Gateway may aggregate BFF reads but must not absorb Sync/Merge business logic. A
 - Internal API keys are checked with fixed-time comparison; preserve internal authentication on every internal endpoint.
 - Keep session cookies `HttpOnly`, `Secure`, `SameSite=None`, and scoped as currently configured unless a security review says otherwise.
 - Development-only session creation (`POST /api/moysklad/session/dev`), Dozzle, Swagger/OpenAPI UI, debug endpoints, and test credentials must never become implicitly available in production.
-- `make compose-up-prod` loads `.env.prod`, sets `ASPNETCORE_ENVIRONMENT=Production`, and excludes Kafka UI, RedisInsight, and Dozzle. It stops already-running dev tools first because disabling a Compose profile does not stop existing containers. `make compose-down-prod` removes containers without deleting named volumes.
+- `make compose-up-prod` loads `.env.prod`, sets `ASPNETCORE_ENVIRONMENT=Production`, and excludes RedisInsight and Dozzle. It stops already-running dev tools first because disabling a Compose profile does not stop existing containers. `make compose-down-prod` removes containers without deleting named volumes.
 - `DEV_ACCOUNT_ID` is optional in Compose and defaults to the empty GUID; Vendor validates it when running in Development. The dev-session route returns `404` outside Development before creating a session or cookie.
 - This Compose mode is not a certification of the whole stack for public production deployment; review production secrets, network exposure, persistence, and operations separately.
 
@@ -154,7 +154,7 @@ Use scopes/fields already present in the flow: `correlation_id`, `account_id`, `
 
 Prerequisites reflected by the repository are .NET SDK 10, Docker with Compose, Node 20/npm, `curl`, and Bash. Development uses `.env.dev`; `make compose-up-prod` uses `.env.prod` for the Production application mode, but the Compose stack is not thereby certified for public production deployment.
 
-Default host ports in `.env.dev`: Gateway `8080`, Egress `8082`, Catalog `8083`, Duplicates `8084`, frontend preview `4174`, PostgreSQL `5432`, Redis `6379`, Kafka `29092`, Kafka UI `8090`, RedisInsight `5540`, and Dozzle `8089`. `VENDOR_SERVICE_PORT=8081` exists in the env file, but Compose does not publish Vendor Service to the host. Caddy is configured separately on `8088` and is not a Compose service.
+Default host ports in `.env.dev`: Gateway `8080`, Egress `8082`, Catalog `8083`, Duplicates `8084`, frontend preview `4174`, PostgreSQL `5432`, Redis `6379`, Kafka `29092`, RedisInsight `5540`, and Dozzle `8089`. `VENDOR_SERVICE_PORT=8081` exists in the env file, but Compose does not publish Vendor Service to the host. Caddy is configured separately on `8088` and is not a Compose service.
 
 ## Build and Run
 
@@ -187,7 +187,7 @@ npm ci
 npm run build
 ```
 
-`make compose-down-del` deletes Compose named volumes and is destructive. `make compose-down-prod` preserves them. Kafka UI, RedisInsight, and Dozzle belong to profile `dev-tools`; use `make compose-up` for the full dev stack. Do not use nonexistent README targets `make compose`, `make ps`, or `make build`.
+`make compose-down-del` deletes Compose named volumes and is destructive. `make compose-down-prod` preserves them. RedisInsight and Dozzle belong to profile `dev-tools`; use `make compose-up` for the full dev stack. Do not use nonexistent README targets `make compose`, `make ps`, or `make build`.
 
 ## Tests
 
@@ -227,7 +227,6 @@ postgres -> mscontractor-postgres
 redis -> mscontractor-redis
 redis-insight -> mscontractor-redis-insight
 kafka -> mscontractor-kafka
-kafka-ui -> mscontractor-kafka-ui
 gateway-bff -> mscontractor-gateway-bff
 vendor-service -> mscontractor-vendor-service
 moysklad-egress-service -> mscontractor-moysklad-egress-service
@@ -237,7 +236,7 @@ frontend-iframe -> mscontractor-frontend-iframe
 dozzle -> mscontractor-dozzle
 ```
 
-Use service keys, not container names, in Compose commands and internal DNS. Do not expose internal services without need or casually change production infrastructure. Kafka UI, RedisInsight, and Dozzle belong only to profile `dev-tools`; never enable them in production. The production targets preserve named data volumes.
+Use service keys, not container names, in Compose commands and internal DNS. Do not expose internal services without need or casually change production infrastructure. RedisInsight and Dozzle belong only to profile `dev-tools`; never enable them in production. The production targets preserve named data volumes.
 
 ## Documentation Sources
 

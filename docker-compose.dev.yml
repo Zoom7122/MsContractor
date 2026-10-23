@@ -15,10 +15,6 @@ services:
     ports:
       - "${KAFKA_HOST_PORT:-29092}:${KAFKA_PORT}"
 
-  kafka-ui:
-    ports:
-      - "${KAFKA_UI_PORT}:${KAFKA_UI_INTERNAL_PORT}"
-
   moysklad-egress-service:
     ports:
       - "${MOYSKLAD_EGRESS_SERVICE_PORT}:${SERVICE_INTERNAL_PORT}"

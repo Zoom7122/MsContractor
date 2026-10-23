@@ -3,7 +3,7 @@
 set -uo pipefail
 
 readonly ENV_FILE=".env.dev"
-readonly COMPOSE=(docker compose --env-file "$ENV_FILE" --profile dev-tools)
+readonly COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file "$ENV_FILE" --profile dev-tools)
 
 # Docker Compose consumes the same file; loading it here keeps host health URLs
 # and PostgreSQL credentials in sync without duplicating values.
@@ -41,9 +41,9 @@ check_http moysklad-egress-service "$MOYSKLAD_EGRESS_SERVICE_PORT"
 check_http catalog-sync-service "$CATALOG_SYNC_SERVICE_PORT"
 check_http duplicates-merge-service "$DUPLICATES_MERGE_SERVICE_PORT"
 check postgres "${COMPOSE[@]}" exec -T postgres \
-  pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+  pg_isready -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB"
 check redis bash -o pipefail -c \
-  "${COMPOSE[*]} exec -T redis redis-cli ping | grep -qx PONG"
+  "${COMPOSE[*]} exec -T redis redis-cli -p '$REDIS_PORT' ping | grep -qx PONG"
 check kafka "${COMPOSE[@]}" exec -T kafka \
   /opt/kafka/bin/kafka-topics.sh --bootstrap-server "localhost:${KAFKA_INTERNAL_PORT}" --list
 check dozzle curl --fail --silent --show-error --connect-timeout 3 --max-time 10 \

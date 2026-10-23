@@ -2,8 +2,8 @@ COMPOSE = docker compose
 DEV_ENV = .env.dev
 PROD_ENV = .env.prod
 DEV_PROFILE = dev-tools
-DEV_COMPOSE = ASPNETCORE_ENVIRONMENT=Development $(COMPOSE) --env-file $(DEV_ENV) --profile $(DEV_PROFILE)
-PROD_COMPOSE = ASPNETCORE_ENVIRONMENT=Production $(COMPOSE) --env-file $(PROD_ENV)
+DEV_COMPOSE = ASPNETCORE_ENVIRONMENT=Development $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml --env-file $(DEV_ENV) --profile $(DEV_PROFILE)
+PROD_COMPOSE = ASPNETCORE_ENVIRONMENT=Production $(COMPOSE) -f docker-compose.yml --env-file $(PROD_ENV)
 SOLUTION = MsContractor.sln
 
 .PHONY: compose-up compose-down compose-down-del compose-up-prod compose-down-prod recreate ps build logs dozzle test health
@@ -30,7 +30,7 @@ recreate:
 
 
 logs:
-	docker compose logs -f --tail=200
+	$(DEV_COMPOSE) logs -f --tail=200
 
 dozzle:
 	$(DEV_COMPOSE) up -d dozzle

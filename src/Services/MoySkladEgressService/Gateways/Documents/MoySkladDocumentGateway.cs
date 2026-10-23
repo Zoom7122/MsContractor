@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Hosting;
 using MsContractor.Contracts.Internal;
 using MsContractor.MoySkladEgressService.RateLimiting;
 using MsContractor.MoySkladEgressService.ResponseHandling;
@@ -84,6 +85,7 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
     private readonly IMoySkladSingleDocumentResponseValidator _singleValidator;
     private readonly IMoySkladBulkDocumentResponseValidator _bulkValidator;
     private readonly MoySkladDocumentChangeRetryOptions _retryOptions;
+    private readonly bool _isDevelopment;
 
     [ActivatorUtilitiesConstructor]
     public MoySkladDocumentGateway(
@@ -94,7 +96,8 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
         IMoySkladResponseHandler responseHandler,
         IMoySkladSingleDocumentResponseValidator singleValidator,
         IMoySkladBulkDocumentResponseValidator bulkValidator,
-        MoySkladDocumentChangeRetryOptions retryOptions)
+        MoySkladDocumentChangeRetryOptions retryOptions,
+        IHostEnvironment? environment)
     {
         _httpClient = httpClient;
         _tokenClient = tokenClient;
@@ -104,6 +107,7 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
         _singleValidator = singleValidator;
         _bulkValidator = bulkValidator;
         _retryOptions = retryOptions;
+        _isDevelopment = environment?.IsDevelopment() == true;
     }
 
     public MoySkladDocumentGateway(
@@ -121,7 +125,8 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                 new ForwardingLogger<MoySkladDocumentGateway, MoySkladResponseHandler>(logger)),
             new MoySkladSingleDocumentResponseValidator(),
             new MoySkladBulkDocumentResponseValidator(),
-            retryOptions ?? MoySkladDocumentChangeRetryOptions.Disabled)
+            retryOptions ?? MoySkladDocumentChangeRetryOptions.Disabled,
+            null)
     {
     }
 
@@ -703,6 +708,15 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
         var context = new MoySkladRequestContext(
             accountId, correlationId, mergeJobId, operationId, request.Method.Method, request.RequestUri!.ToString(),
             documentType, isSingle ? documents[0].DocumentId : null);
+        if (_isDevelopment && IsCommissionReport(documentType))
+        {
+            var endpoint = new Uri(_httpClient.BaseAddress!, request.RequestUri!).ToString();
+            var requestBody = await request.Content!.ReadAsStringAsync(cancellationToken);
+            _logger.LogInformation(
+                "Sending MoySklad commission report agent and contract request: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}, document_type={DocumentType}, method={Method}, endpoint={Endpoint}, chunk_size={ChunkSize}, request_body={RequestBody}",
+                accountId, mergeJobId, operationId, requestedByUserId, correlationId, documentType,
+                request.Method.Method, endpoint, documents.Count, requestBody);
+        }
         var stopwatch = Stopwatch.StartNew();
         HttpResponseMessage response;
         try

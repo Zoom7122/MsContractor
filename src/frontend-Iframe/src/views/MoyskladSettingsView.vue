@@ -151,11 +151,10 @@ function removeExclusion(index) {
   form.value.duplicateExclusions.splice(index, 1)
 }
 
-function resetSettings() {
+function resetExclusions() {
   form.value = {
-    duplicateExclusions: [],
-    duplicateSearchOptions: cloneSettings(defaultSettings.duplicateSearchOptions),
-    searchLimits: cloneSettings(defaultSettings.searchLimits)
+    ...form.value,
+    duplicateExclusions: []
   }
   message.value = null
   saveError.value = null
@@ -202,12 +201,12 @@ async function saveSettings() {
       v-if="loadError"
       :error="loadError"
       fallback="Не удалось загрузить настройки"
-      description="Показаны значения по умолчанию. Проверьте их перед сохранением."
+      description="Показаны значения по умолчанию. Сохранение отключено, пока настройки не загружены."
     />
     <el-skeleton v-if="loading" :rows="8" animated class="settings-skeleton" />
 
     <template v-else>
-      <SectionPanel title="Поиск дублей" subtitle="Исключения, архивные контрагенты и лимиты выдачи" flush>
+      <SectionPanel title="Поиск дублей" subtitle="Исключения из поиска дублей" flush>
         <div class="settings-row">
           <div class="settings-row__text">
             <h3 class="settings-row__title">Исключения</h3>
@@ -233,49 +232,6 @@ async function saveSettings() {
           </div>
         </div>
 
-        <div class="settings-row">
-          <div class="settings-row__text">
-            <h3 class="settings-row__title">Архивные контрагенты</h3>
-            <p class="settings-row__description">
-              Учитывать архивных контрагентов, у которых есть документы: их документы тоже перейдут к основному.
-            </p>
-          </div>
-          <div class="settings-row__control">
-            <el-switch
-              v-model="form.duplicateSearchOptions.includeArchivedWithDocuments"
-              aria-label="Учитывать архивных контрагентов с документами"
-            />
-          </div>
-        </div>
-
-        <div class="settings-row">
-          <div class="settings-row__text">
-            <h3 class="settings-row__title">Лимиты поиска</h3>
-            <p class="settings-row__description">
-              Ограничивают объём выдачи на больших базах. Значения от 1 до 1000.
-            </p>
-          </div>
-          <el-form class="settings-row__control settings-limits" label-position="top" size="small">
-            <el-form-item label="Групп дублей, не более">
-              <el-input-number
-                v-model="form.searchLimits.groupLimit"
-                :min="1"
-                :max="1000"
-                controls-position="right"
-                @change="form.searchLimits.groupLimit = clampLimit(form.searchLimits.groupLimit, defaultSettings.searchLimits.groupLimit)"
-              />
-            </el-form-item>
-            <el-form-item label="Контрагентов в группе, не более">
-              <el-input-number
-                v-model="form.searchLimits.itemLimit"
-                :min="1"
-                :max="1000"
-                controls-position="right"
-                @change="form.searchLimits.itemLimit = clampLimit(form.searchLimits.itemLimit, defaultSettings.searchLimits.itemLimit)"
-              />
-            </el-form-item>
-          </el-form>
-        </div>
       </SectionPanel>
 
     </template>
@@ -284,13 +240,13 @@ async function saveSettings() {
     <ErrorNotice v-if="saveError" :error="saveError" />
 
     <footer class="settings-actions">
-      <el-button text type="danger" @click="resetSettings">Сбросить к умолчаниям</el-button>
+      <el-button text type="danger" @click="resetExclusions">Сбросить исключения</el-button>
       <div class="settings-actions__right">
         <el-button :disabled="!isDirty || saving" @click="cancelChanges">Отменить изменения</el-button>
         <el-button
           type="primary"
           :loading="saving"
-          :disabled="loading || saving"
+          :disabled="loading || saving || loadError"
           @click="saveSettings"
         >Сохранить</el-button>
       </div>

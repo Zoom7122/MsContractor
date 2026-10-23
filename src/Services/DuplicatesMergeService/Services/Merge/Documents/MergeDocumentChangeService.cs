@@ -107,6 +107,12 @@ public sealed class MergeDocumentChangeService(
         if (response.ChangedDocuments.Count == requestedCount)
             return;
 
+        if (response.Failures.Count == 0 &&
+            response.SkippedDocuments.Count > 0 &&
+            response.SkippedDocuments.All(item =>
+                item.Reason.StartsWith("MOYSKLAD_", StringComparison.Ordinal)))
+            return;
+
         var representative = response.Failures.FirstOrDefault(item => !item.Retryable) ??
                              response.Failures.FirstOrDefault();
         if (representative is not null)

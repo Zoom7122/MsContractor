@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import CopyableId from '../ui/CopyableId.vue'
 import ErrorNotice from '../ui/ErrorNotice.vue'
@@ -7,17 +8,18 @@ import StatusBadge from '../ui/StatusBadge.vue'
 import MergeJobDocuments from './MergeJobDocuments.vue'
 import MergeJobProgress from './MergeJobProgress.vue'
 import { moySkladCounterpartyUrl, normalizeDocumentsInOperation } from '../../domain/documents-in-operation'
-import { isJobActive, jobStatusMeta } from '../../domain/merge'
+import { canRetryMergeJob, isJobActive, jobStatusMeta } from '../../domain/merge'
 import { COUNTERPARTY_FORMS, countLabel, formatDateTime, shortId } from '../../utils/format'
 import { getMergeJobDocumentsInOperation } from '../../api/catalog'
-import { toUserError } from '../../utils/errors'
+import { createMergeJob } from '../../api/merge'
+import { readAccepted, toUserError } from '../../utils/errors'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   job: { type: Object, default: null }
 })
 
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'retry-accepted'])
 
 const visible = computed({
   get: () => props.modelValue,
@@ -28,6 +30,8 @@ const failedOperations = computed(() => (props.job?.operations || []).filter((it
 const documentsInOperation = ref([])
 const documentsLoading = ref(false)
 const documentsError = ref(null)
+const retryLoading = ref(false)
+const retryError = ref(null)
 let documentsRequestVersion = 0
 let activeRequestController = null
 let documentsRefreshTimer = null
@@ -133,11 +137,49 @@ watch(documentsReloadKey, () => {
   documentsLoading.value = false
 }, { immediate: true })
 
+watch(() => props.job?.id, () => {
+  retryError.value = null
+})
+
 onBeforeUnmount(() => {
   documentsRequestVersion += 1
   activeRequestController?.abort()
   clearDocumentsRefreshTimer()
 })
+
+async function retryFailedJob() {
+  if (!canRetryMergeJob(props.job) || retryLoading.value) {
+    return
+  }
+
+  retryError.value = null
+  try {
+    await ElMessageBox.confirm(
+      'Будет создана новая задача, и все этапы объединения начнутся заново. Исходная задача останется в истории.',
+      'Повторить объединение?',
+      {
+        confirmButtonText: 'Создать новую задачу',
+        cancelButtonText: 'Отмена',
+        type: 'warning',
+        autofocus: false
+      }
+    )
+  } catch {
+    return
+  }
+
+  retryLoading.value = true
+  try {
+    const response = await createMergeJob(props.job.retryRequest)
+    const accepted = readAccepted(response)
+    ElMessage.success('Новая задача объединения добавлена в очередь')
+    emit('retry-accepted', accepted.id)
+  } catch (error) {
+    retryError.value = toUserError(error, 'Не удалось создать новую задачу объединения')
+  } finally {
+    retryLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -165,7 +207,28 @@ onBeforeUnmount(() => {
         title="Объединение остановлено"
         :description="job.errorMessage || 'Один из этапов завершился с ошибкой, следующие этапы не выполнялись.'"
       />
-      <div v-else-if="job.status === 'pending'" class="merge-job-drawer__note">
+      <section v-if="job.status === 'failed'" class="merge-job-drawer__retry">
+        <p class="app-meta">
+          Повтор создаст новую задачу и запустит этапы заново. Текущая задача останется в истории.
+        </p>
+        <p v-if="!job.retryRequest" class="merge-job-drawer__retry-unavailable" role="status">
+          Повтор недоступен: не удалось восстановить исходные данные контрагента или список дублей.
+        </p>
+        <ErrorNotice
+          v-if="retryError"
+          :error="retryError"
+          title="Не удалось создать новую задачу"
+        />
+        <el-button
+          type="primary"
+          :loading="retryLoading"
+          :disabled="!canRetryMergeJob(job)"
+          @click="retryFailedJob"
+        >
+          Повторить объединение
+        </el-button>
+      </section>
+      <div v-if="job.status === 'pending'" class="merge-job-drawer__note">
         Задача принята и ждёт своей очереди. Выполнение начнётся автоматически — страницу можно закрыть.
       </div>
 

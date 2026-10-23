@@ -1,0 +1,31 @@
+# Build context of docker/Dockerfile.service (all backend services).
+# Patterns are relative to the repository root; use **/ to match at any depth.
+
+# Secrets and local environment files (root only: the Egress service .env is published on purpose)
+.env*
+secrets
+
+# VCS, IDE and OS files
+.git
+.gitignore
+.idea
+.vscode
+**/.DS_Store
+
+# Not needed to publish backend services
+audit
+scripts
+scripts_for_test_data
+tests
+src/frontend-Iframe
+docker
+.dockerignore
+docker-compose*.yml
+Makefile
+Caddyfile
+*.md
+
+# Host build outputs; restore and publish run inside the image
+**/bin
+**/obj
+**/node_modules

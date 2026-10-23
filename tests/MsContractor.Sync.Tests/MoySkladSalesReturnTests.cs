@@ -5,6 +5,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using MsContractor.MoySkladEgressService.Clients;
+using MsContractor.MoySkladEgressService.Gateways.Documents.Demand;
 using MsContractor.MoySkladEgressService.Gateways.Documents.Salesreturn;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
@@ -170,10 +171,10 @@ public sealed class MoySkladSalesReturnTests
         var ids = Enumerable.Range(0, 1001).Select(_ => Guid.NewGuid()).ToArray();
         var gateway = new RecordingGateway();
         var repository = new RecordingRepository();
-        var service = new MoySkladSalesReturnServiceGetData(gateway, repository);
+        var service = new MoySkladSalesReturnServiceGetData(gateway, new RecordingDemandGateway(), repository);
 
         await service.LoadAsync(
-            Guid.NewGuid(), Guid.NewGuid(), "correlation-id",
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation-id",
             ids,
             CancellationToken.None);
 
@@ -228,12 +229,12 @@ public sealed class MoySkladSalesReturnTests
     {
         var gateway = new RecordingGateway();
         var repository = new RecordingRepository();
-        var service = new MoySkladSalesReturnServiceGetData(gateway, repository);
+        var service = new MoySkladSalesReturnServiceGetData(gateway, new RecordingDemandGateway(), repository);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
         await Assert.ThrowsAsync<OperationCanceledException>(() => service.LoadAsync(
-            Guid.NewGuid(), Guid.NewGuid(), "correlation-id",
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation-id",
             new[] { Guid.NewGuid() },
             cancellation.Token));
 
@@ -318,6 +319,18 @@ public sealed class MoySkladSalesReturnTests
             IReadOnlyCollection<Guid> documentIds,
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyDictionary<Guid, string>>(new Dictionary<Guid, string>());
+    }
+
+    private sealed class RecordingDemandGateway : IMoySkladDemandGateway
+    {
+        public Task<IReadOnlyDictionary<Guid, MoySkladDemandReference>> GetAsync(
+            Guid accountId,
+            Guid requestedByUserId,
+            string correlationId,
+            IReadOnlyList<Guid> demandIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, MoySkladDemandReference>>(
+                new Dictionary<Guid, MoySkladDemandReference>());
     }
 
     private sealed class FakeTokenClient : IVendorTokenClient

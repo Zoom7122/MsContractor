@@ -548,11 +548,19 @@ public sealed class SalesReturnRecreationOrchestratorTests
             _exception = exception;
         }
 
-        public Task LoadAsync(Guid accountId, Guid requestedByUserId, string correlationId,
-            IReadOnlyList<Guid> salesReturnIds, CancellationToken cancellationToken)
+        public Task<IReadOnlyDictionary<Guid, SalesReturnDemandValidationFailure>> LoadAsync(
+            Guid accountId,
+            Guid requestedByUserId,
+            Guid mainCounterpartyId,
+            string correlationId,
+            IReadOnlyList<Guid> salesReturnIds,
+            CancellationToken cancellationToken)
         {
             _events?.Add("load-documents");
-            return _exception is null ? Task.CompletedTask : Task.FromException(_exception);
+            return _exception is null
+                ? Task.FromResult<IReadOnlyDictionary<Guid, SalesReturnDemandValidationFailure>>(
+                    new Dictionary<Guid, SalesReturnDemandValidationFailure>())
+                : Task.FromException<IReadOnlyDictionary<Guid, SalesReturnDemandValidationFailure>>(_exception);
         }
     }
 

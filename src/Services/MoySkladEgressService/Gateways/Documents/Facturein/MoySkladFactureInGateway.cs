@@ -50,6 +50,7 @@ public interface IMoySkladFactureInGateway
 public sealed class MoySkladFactureInGateway : IMoySkladFactureInGateway
 {
     public const int BatchSize = 1000;
+    private const int GetByIdBatchSize = 40;
     private readonly HttpClient _httpClient;
     private readonly IVendorTokenClient _tokenClient;
     private readonly IMoySkladRateLimiter _rateLimiter;
@@ -71,6 +72,21 @@ public sealed class MoySkladFactureInGateway : IMoySkladFactureInGateway
         if (factureInIds.Count > BatchSize)
             throw new ArgumentOutOfRangeException(nameof(factureInIds), $"A facturein batch cannot exceed {BatchSize} documents.");
         ValidateIds(factureInIds, "facturein");
+        var result = new Dictionary<Guid, string>();
+        foreach (var batch in factureInIds.Chunk(GetByIdBatchSize))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var documents = await GetBatchAsync(accountId, correlationId, batch, cancellationToken);
+            foreach (var document in documents)
+                result.Add(document.Key, document.Value);
+        }
+        return result;
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, string>> GetBatchAsync(
+        Guid accountId, string correlationId, IReadOnlyList<Guid> factureInIds,
+        CancellationToken cancellationToken)
+    {
         var rows = await GetRowsAsync(accountId, correlationId, "facturein", factureInIds, "id", cancellationToken);
         var requested = factureInIds.ToHashSet();
         var result = new Dictionary<Guid, string>();

@@ -26,6 +26,8 @@ _ReSharper*/
 
 audit/
 
+secrets/
+
 .env.prod
 .env.dev
 

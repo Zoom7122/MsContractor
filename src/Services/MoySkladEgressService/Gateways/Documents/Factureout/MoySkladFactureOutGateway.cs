@@ -54,6 +54,7 @@ public interface IMoySkladFactureOutGateway
 public sealed class MoySkladFactureOutGateway : IMoySkladFactureOutGateway
 {
     public const int BatchSize = 1000;
+    private const int GetByIdBatchSize = 40;
 
     private readonly HttpClient _httpClient;
     private readonly IVendorTokenClient _tokenClient;
@@ -82,6 +83,23 @@ public sealed class MoySkladFactureOutGateway : IMoySkladFactureOutGateway
         CancellationToken cancellationToken)
     {
         ValidateIds(factureOutIds);
+        var result = new Dictionary<Guid, string>();
+        foreach (var batch in factureOutIds.Chunk(GetByIdBatchSize))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var documents = await GetBatchAsync(accountId, correlationId, batch, cancellationToken);
+            foreach (var document in documents)
+                result.Add(document.Key, document.Value);
+        }
+        return result;
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, string>> GetBatchAsync(
+        Guid accountId,
+        string correlationId,
+        IReadOnlyList<Guid> factureOutIds,
+        CancellationToken cancellationToken)
+    {
         var endpoint = BuildEndpoint(factureOutIds);
         var response = await SendGetAsync(accountId, correlationId, endpoint, cancellationToken);
 

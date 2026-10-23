@@ -2,6 +2,7 @@ using MsContractor.MoySkladEgressService.Clients;
 using MsContractor.MoySkladEgressService.Configuration;
 using MsContractor.MoySkladEgressService.Gateways.Counterparties;
 using MsContractor.MoySkladEgressService.Gateways.Documents;
+using MsContractor.MoySkladEgressService.Gateways.Documents.Demand;
 using MsContractor.MoySkladEgressService.Gateways.Documents.Facturein;
 using MsContractor.MoySkladEgressService.Gateways.Documents.Factureout;
 using MsContractor.MoySkladEgressService.Gateways.Documents.Purchasereturn;
@@ -63,6 +64,7 @@ var agentAndContractOptions = MoySkladDocumentAgentAndContractOptions.Parse(
 var documentDiscoveryOptions = MoySkladDocumentDiscoveryOptions.Parse(
     builder.Configuration["DOCUMENTS_DISCOVERY"]);
 var purchaseReturnRecreationOptions = PurchaseReturnRecreationOptions.Parse(builder.Configuration);
+var purchaseReturnSupplyRetryOptions = PurchaseReturnSupplyRetryOptions.Parse(builder.Configuration);
 var factureInRecreationOptions = FactureInRecreationOptions.Parse(builder.Configuration);
 builder.Services.AddSingleton(Microsoft.Extensions.Options.Options.Create(egressOptions));
 builder.Services.AddSingleton(documentChangeOptions);
@@ -71,6 +73,7 @@ builder.Services.AddSingleton(responseDiagnosticsOptions);
 builder.Services.AddSingleton(agentAndContractOptions);
 builder.Services.AddSingleton(documentDiscoveryOptions);
 builder.Services.AddSingleton(purchaseReturnRecreationOptions);
+builder.Services.AddSingleton(purchaseReturnSupplyRetryOptions);
 builder.Services.AddSingleton(factureInRecreationOptions);
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     ConnectionMultiplexer.Connect(
@@ -163,6 +166,14 @@ builder.Services.AddHttpClient<IMoySkladPurchaseReturnPositionsGateway, MoySklad
     AutomaticDecompression = DecompressionMethods.GZip
 });
 builder.Services.AddHttpClient<IMoySkladSupplyGateway, MoySkladSupplyGateway>(client =>
+{
+    client.BaseAddress = egressOptions.JsonApiBaseUrl;
+    client.Timeout = moySkladRequestTimeout;
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.GZip
+});
+builder.Services.AddHttpClient<IMoySkladDemandGateway, MoySkladDemandGateway>(client =>
 {
     client.BaseAddress = egressOptions.JsonApiBaseUrl;
     client.Timeout = moySkladRequestTimeout;

@@ -1015,6 +1015,39 @@ public sealed class MergeProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_MoySkladItemErrorSkipContinuesThroughDuplicateArchive()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);
+        var demandId = Guid.NewGuid();
+        fixture.Documents.Documents =
+        [new MoySkladDocumentReference("demand", demandId, fixture.Duplicates[0].Id)];
+        fixture.DocumentChanges.Response = (mainId, requested) => new MoySkladDocumentChangeCounterpartyResponse(
+            mainId,
+            requested.Count,
+            0,
+            requested.Count,
+            0,
+            [],
+            requested.Select(item => new MoySkladDocumentChangeSkippedItem(
+                item.DocumentType, item.DocumentId, "MOYSKLAD_22006: paymentout error")).ToArray(),
+            []);
+        var command = await fixture.CreateJobAsync();
+
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        Assert.Single(fixture.Egress.ArchiveCalls);
+        fixture.Db.ChangeTracker.Clear();
+        var job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
+        var duplicate = await fixture.Db.Counterparties.SingleAsync(item => item.Id == fixture.Duplicates[0].Id);
+        var document = await fixture.Db.CounterpartyDocuments.SingleAsync(item => item.DocumentId == demandId);
+        Assert.Equal(MergeJobStatuses.Completed, job.Status);
+        Assert.Equal(MergeOperationStatuses.Completed,
+            job.Operations.Single(item => item.OperationType == MergeOperationTypes.ChangeDocumentCounterparties).Status);
+        Assert.True(duplicate.Archived);
+        Assert.Equal(fixture.Duplicates[0].Id, document.CounterpartyId);
+    }
+
+    [Fact]
     public async Task ProcessAsync_AddsMissingDocumentChangeOperationToLegacyActiveJob()
     {
         await using var fixture = await Fixture.CreateAsync(duplicateCount: 1);

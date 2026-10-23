@@ -1,9 +1,12 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using MsContractor.MoySkladEgressService.Clients;
 using MsContractor.MoySkladEgressService.Gateways.Documents.Purchasereturn;
+using MsContractor.MoySkladEgressService.Models.Exceptions;
+using MsContractor.MoySkladEgressService.Models.Options;
 using MsContractor.MoySkladEgressService.RateLimiting;
 using MsContractor.MoySkladEgressService.RateLimiting.Models;
 using MsContractor.MoySkladEgressService.ResponseHandling;
@@ -98,6 +101,7 @@ public sealed class PurchaseReturnGatewayTests
             new FakeTokenClient(),
             new FakeRateLimiter(),
             Handler(),
+            new PurchaseReturnSupplyRetryOptions(2),
             NullLogger<MoySkladSupplyGateway>.Instance);
 
         var result = await gateway.GetAsync(
@@ -105,6 +109,126 @@ public sealed class PurchaseReturnGatewayTests
 
         Assert.Equal(agentId, result[returned].AgentId);
         Assert.DoesNotContain(requested[1], result.Keys);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    public async Task SupplyGateway_GetAsync_RetriesTemporaryFailureThenReturnsSuccess(HttpStatusCode failureStatus)
+    {
+        var supplyId = Guid.NewGuid();
+        var requestCount = 0;
+        var gateway = SupplyGateway(_ =>
+        {
+            requestCount++;
+            return requestCount == 1
+                ? Response(failureStatus, "{}")
+                : Response(HttpStatusCode.OK, $$"""{"rows":[{"id":"{{supplyId:D}}"}]}""");
+        });
+
+        var result = await gateway.GetAsync(
+            Guid.NewGuid(), Guid.Empty, "correlation-id", [supplyId], CancellationToken.None);
+
+        Assert.Equal(2, requestCount);
+        Assert.Contains(supplyId, result.Keys);
+    }
+
+    [Fact]
+    public async Task SupplyGateway_GetAsync_RetriesNetworkFailureThenReturnsSuccess()
+    {
+        var supplyId = Guid.NewGuid();
+        var requestCount = 0;
+        var gateway = SupplyGateway(_ =>
+        {
+            requestCount++;
+            if (requestCount == 1)
+                throw new HttpRequestException("temporary network error");
+            return Response(HttpStatusCode.OK, $$"""{"rows":[{"id":"{{supplyId:D}}"}]}""");
+        });
+
+        var result = await gateway.GetAsync(
+            Guid.NewGuid(), Guid.Empty, "correlation-id", [supplyId], CancellationToken.None);
+
+        Assert.Equal(2, requestCount);
+        Assert.Contains(supplyId, result.Keys);
+    }
+
+    [Fact]
+    public void SupplyRetryOptions_ReadsAdditionalAttemptsAndDefaultsToTwo()
+    {
+        var defaultConfiguration = new ConfigurationBuilder().Build();
+        var disabledConfiguration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["PURCHASERETURN_SUPPLY_MAX_RETRIES"] = "0"
+            })
+            .Build();
+        var configuredConfiguration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["PURCHASERETURN_SUPPLY_MAX_RETRIES"] = "1"
+            })
+            .Build();
+
+        Assert.Equal(2, PurchaseReturnSupplyRetryOptions.Parse(defaultConfiguration).MaxRetries);
+        Assert.Equal(0, PurchaseReturnSupplyRetryOptions.Parse(disabledConfiguration).MaxRetries);
+        Assert.Equal(1, PurchaseReturnSupplyRetryOptions.Parse(configuredConfiguration).MaxRetries);
+    }
+
+    [Fact]
+    public async Task SupplyGateway_GetAsync_StopsAfterConfiguredRetriesAreExhausted()
+    {
+        var requestCount = 0;
+        var gateway = SupplyGateway(
+            _ =>
+            {
+                requestCount++;
+                return Response(HttpStatusCode.ServiceUnavailable, "{}");
+            },
+            maxRetries: 2);
+
+        var exception = await Assert.ThrowsAsync<EgressException>(() => gateway.GetAsync(
+            Guid.NewGuid(), Guid.Empty, "correlation-id", [Guid.NewGuid()], CancellationToken.None));
+
+        Assert.Equal(3, requestCount);
+        Assert.True(exception.Retryable);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SupplyGateway_GetAsync_DoesNotRetryClientOrValidationFailures(bool invalidResponse)
+    {
+        var requestCount = 0;
+        var gateway = SupplyGateway(_ =>
+        {
+            requestCount++;
+            return invalidResponse
+                ? Response(HttpStatusCode.OK, "{\"unexpected\":[]}")
+                : Response(HttpStatusCode.BadRequest, "{\"errors\":[{\"code\":400,\"error\":\"invalid\"}]}");
+        });
+
+        await Assert.ThrowsAsync<EgressException>(() => gateway.GetAsync(
+            Guid.NewGuid(), Guid.Empty, "correlation-id", [Guid.NewGuid()], CancellationToken.None));
+
+        Assert.Equal(1, requestCount);
+    }
+
+    [Fact]
+    public async Task SupplyGateway_GetAsync_CancellationDuringRetryDelayStopsFurtherAttempts()
+    {
+        var requestCount = 0;
+        var gateway = SupplyGateway(_ =>
+        {
+            requestCount++;
+            return Response(HttpStatusCode.ServiceUnavailable, "{}");
+        });
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => gateway.GetAsync(
+            Guid.NewGuid(), Guid.Empty, "correlation-id", [Guid.NewGuid()], cancellation.Token));
+
+        Assert.Equal(1, requestCount);
     }
 
     [Fact]
@@ -211,6 +335,16 @@ public sealed class PurchaseReturnGatewayTests
         {
             BaseAddress = new Uri("https://api.moysklad.ru/api/remap/1.2/")
         };
+
+    private static MoySkladSupplyGateway SupplyGateway(
+        Func<HttpRequestMessage, HttpResponseMessage> callback,
+        int maxRetries = 2) => new(
+            Client(callback),
+            new FakeTokenClient(),
+            new FakeRateLimiter(),
+            Handler(),
+            new PurchaseReturnSupplyRetryOptions(maxRetries),
+            NullLogger<MoySkladSupplyGateway>.Instance);
 
     private static IMoySkladResponseHandler Handler() =>
         new MoySkladResponseHandler(NullLogger<MoySkladResponseHandler>.Instance);

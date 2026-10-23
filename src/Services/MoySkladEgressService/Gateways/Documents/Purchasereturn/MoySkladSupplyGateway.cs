@@ -3,6 +3,8 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using MsContractor.MoySkladEgressService.Clients;
 using MsContractor.MoySkladEgressService.Models;
+using MsContractor.MoySkladEgressService.Models.Exceptions;
+using MsContractor.MoySkladEgressService.Models.Options;
 using MsContractor.MoySkladEgressService.RateLimiting;
 using MsContractor.MoySkladEgressService.ResponseHandling;
 
@@ -26,6 +28,7 @@ public sealed class MoySkladSupplyGateway : IMoySkladSupplyGateway
     private readonly IVendorTokenClient _tokenClient;
     private readonly IMoySkladRateLimiter _rateLimiter;
     private readonly IMoySkladResponseHandler _responseHandler;
+    private readonly PurchaseReturnSupplyRetryOptions _retryOptions;
     private readonly ILogger<MoySkladSupplyGateway> _logger;
 
     public MoySkladSupplyGateway(
@@ -33,12 +36,14 @@ public sealed class MoySkladSupplyGateway : IMoySkladSupplyGateway
         IVendorTokenClient tokenClient,
         IMoySkladRateLimiter rateLimiter,
         IMoySkladResponseHandler responseHandler,
+        PurchaseReturnSupplyRetryOptions retryOptions,
         ILogger<MoySkladSupplyGateway> logger)
     {
         _httpClient = httpClient;
         _tokenClient = tokenClient;
         _rateLimiter = rateLimiter;
         _responseHandler = responseHandler;
+        _retryOptions = retryOptions;
         _logger = logger;
     }
 
@@ -80,10 +85,54 @@ public sealed class MoySkladSupplyGateway : IMoySkladSupplyGateway
     {
         var filter = string.Join(';', supplyIds.Select(id => $"id={id:D}"));
         var endpoint = $"entity/supply?filter={Uri.EscapeDataString(filter)}&limit={BatchSize}";
-        var context = new MoySkladRequestContext(
-            accountId, correlationId, null, null, HttpMethod.Get.Method, endpoint, "supply", null);
-        var stopwatch = Stopwatch.StartNew();
         var accessToken = await _tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
+        var retryAttempt = 0;
+        while (true)
+        {
+            var context = new MoySkladRequestContext(
+                accountId, correlationId, null, null, HttpMethod.Get.Method, endpoint, "supply", null, retryAttempt);
+            try
+            {
+                return await SendBatchAttemptAsync(
+                    accountId,
+                    requestedByUserId,
+                    correlationId,
+                    supplyIds,
+                    endpoint,
+                    accessToken,
+                    context,
+                    cancellationToken);
+            }
+            catch (EgressException exception) when (exception.Retryable && retryAttempt < _retryOptions.MaxRetries)
+            {
+                retryAttempt++;
+                var delay = TimeSpan.FromSeconds(Math.Pow(2, retryAttempt - 1));
+                _logger.LogWarning(
+                    "Retrying MoySklad supply request: account_id={AccountId}, correlation_id={CorrelationId}, supply_count={SupplyCount}, retry_attempt={RetryAttempt}, max_retries={MaxRetries}, retry_delay_ms={RetryDelayMs}, previous_http_status={HttpStatus}, previous_error_code={ErrorCode}",
+                    accountId,
+                    correlationId,
+                    supplyIds.Count,
+                    retryAttempt,
+                    _retryOptions.MaxRetries,
+                    delay.TotalMilliseconds,
+                    exception.HttpStatus,
+                    exception.Code);
+                await Task.Delay(delay, cancellationToken);
+            }
+        }
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, MoySkladSupplyReference>> SendBatchAttemptAsync(
+        Guid accountId,
+        Guid requestedByUserId,
+        string correlationId,
+        IReadOnlyList<Guid> supplyIds,
+        string endpoint,
+        string accessToken,
+        MoySkladRequestContext context,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
         await _rateLimiter.WaitAsync(accountId, cancellationToken);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
@@ -92,8 +141,8 @@ public sealed class MoySkladSupplyGateway : IMoySkladSupplyGateway
         request.Headers.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
 
         _logger.LogInformation(
-            "Sending MoySklad supply request: account_id={AccountId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}, supply_count={SupplyCount}, limit={Limit}",
-            accountId, requestedByUserId, correlationId, supplyIds.Count, BatchSize);
+            "Sending MoySklad supply request: account_id={AccountId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}, supply_count={SupplyCount}, limit={Limit}, retry_attempt={RetryAttempt}",
+            accountId, requestedByUserId, correlationId, supplyIds.Count, BatchSize, context.RetryAttempt);
 
         HttpResponseMessage response;
         try

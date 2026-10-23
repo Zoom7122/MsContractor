@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowRight } from '@element-plus/icons-vue'
 
@@ -24,10 +24,13 @@ const props = defineProps({
   collapsedLimit: { type: Number, default: 5 }
 })
 
+const emit = defineEmits(['refresh'])
+
 const router = useRouter()
 const isExpanded = ref(false)
 const drawerOpen = ref(false)
 const selectedJobId = ref('')
+const pendingRetryJobId = ref('')
 
 const mergeJobs = computed(() => (Array.isArray(props.data?.jobs) ? props.data.jobs.map(normalizeMergeJob) : []))
 const busyCounterpartyIds = computed(() => (Array.isArray(props.data?.busyCounterpartyIds) ? props.data.busyCounterpartyIds : []))
@@ -44,6 +47,24 @@ const visibleMergeJobs = computed(() =>
 )
 const hiddenCount = computed(() => Math.max(0, mergeJobs.value.length - props.collapsedLimit))
 const selectedJob = computed(() => mergeJobs.value.find((job) => job.id === selectedJobId.value) || null)
+
+function revealPendingRetryJob() {
+  if (!pendingRetryJobId.value || !mergeJobs.value.some((job) => job.id === pendingRetryJobId.value)) {
+    return
+  }
+
+  selectedJobId.value = pendingRetryJobId.value
+  drawerOpen.value = true
+  pendingRetryJobId.value = ''
+}
+
+function handleRetryAccepted(jobId) {
+  pendingRetryJobId.value = String(jobId || '')
+  emit('refresh')
+  revealPendingRetryJob()
+}
+
+watch(() => props.data, revealPendingRetryJob)
 
 function openJob(job) {
   selectedJobId.value = job.id
@@ -149,7 +170,7 @@ function jobSubtitle(job) {
       </li>
     </ul>
 
-    <MergeJobDrawer v-model="drawerOpen" :job="selectedJob" />
+    <MergeJobDrawer v-model="drawerOpen" :job="selectedJob" @retry-accepted="handleRetryAccepted" />
 
     <template v-if="hiddenCount > 0" #footer>
       <span class="app-meta">Показано {{ visibleMergeJobs.length }} из {{ mergeJobs.length }}</span>

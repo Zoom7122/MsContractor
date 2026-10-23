@@ -61,9 +61,11 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
         var ids = salesReturnIds.ToArray();
         var operationId = Guid.NewGuid();
         var correlationId = operationId.ToString("D");
-        await _sourceDataLoader.LoadAsync(accountId, Guid.Empty, correlationId, ids, cancellationToken);
+        var demandFailures = await _sourceDataLoader.LoadAsync(
+            accountId, Guid.Empty, mainAgentId, correlationId, ids, cancellationToken);
         var sourceDocuments = await _documents.GetRequiredAsync(accountId, ids, cancellationToken);
         var skippedIds = ids.Where(id => HasFactureOut(sourceDocuments[id])).ToHashSet();
+        skippedIds.UnionWith(demandFailures.Keys);
         var preparedIds = ids.Where(id => !skippedIds.Contains(id)).ToArray();
         IReadOnlyDictionary<Guid, IReadOnlyDictionary<Guid, string>> sourcePositions =
             new Dictionary<Guid, IReadOnlyDictionary<Guid, string>>();
@@ -92,6 +94,8 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
             var source = sourceDocuments[documentId];
             if (skippedIds.Contains(documentId))
             {
+                var hasFactureOut = HasFactureOut(source);
+                var demandFailure = demandFailures.GetValueOrDefault(documentId);
                 operation.Items.Add(new SalesReturnRecreationItem
                 {
                     AccountId = accountId,
@@ -101,8 +105,12 @@ public sealed class SalesReturnRecreationOrchestrator : ISalesReturnRecreationOr
                     NewPayloadJson = "{}",
                     Stage = "Skipped",
                     RelationsStatus = "Skipped",
-                    ErrorCode = "SALESRETURN_FACTURE_OUT_PRESENT",
-                    Error = "The salesreturn contains factureOut and cannot be recreated."
+                    ErrorCode = hasFactureOut
+                        ? "SALESRETURN_FACTURE_OUT_PRESENT"
+                        : demandFailure!.ErrorCode,
+                    Error = hasFactureOut
+                        ? "The salesreturn contains factureOut and cannot be recreated."
+                        : demandFailure!.Error
                 });
                 continue;
             }

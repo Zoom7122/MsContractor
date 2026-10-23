@@ -57,6 +57,60 @@ export function isJobFinished(status) {
   return ['completed', 'partial', 'failed', 'cancelled'].includes(normalizeJobStatus(status))
 }
 
+export function canRetryMergeJob(job) {
+  return normalizeJobStatus(job?.status) === 'failed' && Boolean(job?.retryRequest)
+}
+
+/** Rebuilds the original enqueue request from the durable merge job state. */
+export function buildMergeRetryRequest(job) {
+  if (job?.payloadVersion !== undefined && Number(job.payloadVersion) !== 1) {
+    return null
+  }
+
+  const mainCounterpartyId = String(job?.mainCounterpartyId || '').trim()
+  const mainCounterparty = readMergePayload(job?.payload)
+  const name = mainCounterparty?.name ?? mainCounterparty?.Name
+  const attributes = mainCounterparty?.attributes ?? mainCounterparty?.Attributes
+  if (!isGuid(mainCounterpartyId) || typeof name !== 'string' || !name.trim() ||
+      (attributes != null && !Array.isArray(attributes))) {
+    return null
+  }
+
+  const archiveOperations = (Array.isArray(job?.operations) ? job.operations : [])
+    .filter((operation) => String(operation?.type || operation?.operationType || '').toLowerCase() === 'archive_duplicate')
+  const duplicateCounterpartyIds = archiveOperations.map((operation) => String(operation?.counterpartyId || '').trim())
+  const normalizedMainCounterpartyId = mainCounterpartyId.toLowerCase()
+  if (duplicateCounterpartyIds.length === 0 ||
+      duplicateCounterpartyIds.length > 49 ||
+      duplicateCounterpartyIds.some((id) => !isGuid(id) || id.toLowerCase() === normalizedMainCounterpartyId) ||
+      new Set(duplicateCounterpartyIds.map((id) => id.toLowerCase())).size !== duplicateCounterpartyIds.length) {
+    return null
+  }
+
+  return { mainCounterpartyId, duplicateCounterpartyIds, mainCounterparty }
+}
+
+function readMergePayload(payload) {
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    return payload
+  }
+  if (typeof payload !== 'string' || !payload.trim()) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(payload)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function isGuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) &&
+    value !== '00000000-0000-0000-0000-000000000000'
+}
+
 /** Operation / stage status → badge presentation. */
 export const STEP_STATUS = {
   pending: { label: 'Ожидает', tone: 'neutral', icon: Clock },
@@ -267,6 +321,7 @@ export function normalizeMergeJob(item) {
       : [],
     errorMessage: String(item?.errorMessage || ''),
     errorCode: String(item?.errorCode || ''),
+    retryRequest: item?.retryRequest || null,
     correlationId: String(item?.correlationId || ''),
     createdAt: String(item?.createdAt || ''),
     updatedAt: String(item?.updatedAt || ''),

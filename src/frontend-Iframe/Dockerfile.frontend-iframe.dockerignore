@@ -1,0 +1,26 @@
+# Build context is ./src (see docker-compose.yml); patterns are relative to it.
+
+# Only the frontend is copied
+Services
+Shared
+
+# Host dependencies and build outputs; npm ci and vite build run inside the image
+**/node_modules
+frontend-Iframe/dist
+frontend-Iframe/dist-ssr
+
+# Histoire stories tooling is not part of the production bundle
+frontend-Iframe/.histoire
+frontend-Iframe/histoire.config.js
+
+# Local env overrides, logs, editor and OS files
+**/*.local
+**/*.log
+**/.vscode
+**/.idea
+**/.DS_Store
+
+# Docker and git metadata
+frontend-Iframe/Dockerfile.frontend-iframe
+frontend-Iframe/Dockerfile.frontend-iframe.dockerignore
+**/.gitignore

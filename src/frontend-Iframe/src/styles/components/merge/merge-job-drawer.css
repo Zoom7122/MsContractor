@@ -36,6 +36,22 @@
   font-size: var(--app-font-size-sm);
 }
 
+.merge-job-drawer__retry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--app-space-2);
+}
+
+.merge-job-drawer__retry > p {
+  margin: 0;
+}
+
+.merge-job-drawer__retry-unavailable {
+  color: var(--app-color-text-muted);
+  font-size: var(--app-font-size-sm);
+}
+
 .merge-job-drawer__summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

@@ -17,6 +17,7 @@ import SectionPanel from '../components/ui/SectionPanel.vue'
 import StatTile from '../components/ui/StatTile.vue'
 import StatusBadge from '../components/ui/StatusBadge.vue'
 import { getCatalogState } from '../api/catalog'
+import { buildMergeRetryRequest } from '../domain/merge'
 import { startFullSync, startIncrementalSync } from '../api/sync'
 import { readAccepted, toUserError } from '../utils/errors'
 import { formatDateTime, formatNumber } from '../utils/format'
@@ -353,6 +354,7 @@ function mapCatalogState(state) {
   const mappedJobs = jobs.map((job) => {
     const operations = Array.isArray(job?.operations) ? job.operations : []
     const mainCounterparty = readJobPayload(job?.payload)
+    const retryRequest = buildMergeRetryRequest(job)
     const duplicateCounterpartyIds = operations
       .filter((operation) => String(operation?.type || '').toLowerCase() === 'archive_duplicate')
       .map((operation) => String(operation?.counterpartyId || ''))
@@ -364,6 +366,7 @@ function mapCatalogState(state) {
       primaryCounterpartyId: job?.mainCounterpartyId,
       primaryCounterpartyName: mainCounterparty?.name || '',
       secondaryCounterpartyIds: duplicateCounterpartyIds,
+      retryRequest,
       correlationId: job?.correlationId,
       createdAt: job?.createdAt,
       updatedAt: job?.updatedAt,
@@ -588,6 +591,7 @@ function displayValue(value) {
         :data="queueData"
         :loading="isLoading"
         :load-error="currentLoadError ? 'Очередь объединений недоступна' : null"
+        @refresh="loadCatalogState"
       />
 
       <SectionPanel class="sync-panel" title="Синхронизация" subtitle="Загрузка контрагентов из МоегоСклада">

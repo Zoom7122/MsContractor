@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Hosting;
 using MsContractor.MoySkladEgressService.Clients;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
@@ -72,19 +73,22 @@ public sealed class MoySkladPurchaseReturnGateway : IMoySkladPurchaseReturnGatew
     private readonly IMoySkladRateLimiter _rateLimiter;
     private readonly IMoySkladResponseHandler _responseHandler;
     private readonly ILogger<MoySkladPurchaseReturnGateway> _logger;
+    private readonly bool _isDevelopment;
 
     public MoySkladPurchaseReturnGateway(
         HttpClient httpClient,
         IVendorTokenClient tokenClient,
         IMoySkladRateLimiter rateLimiter,
         IMoySkladResponseHandler responseHandler,
-        ILogger<MoySkladPurchaseReturnGateway> logger)
+        ILogger<MoySkladPurchaseReturnGateway> logger,
+        IHostEnvironment? environment = null)
     {
         _httpClient = httpClient;
         _tokenClient = tokenClient;
         _rateLimiter = rateLimiter;
         _responseHandler = responseHandler;
         _logger = logger;
+        _isDevelopment = environment?.IsDevelopment() == true;
     }
 
     public const int BatchSize = 1000;
@@ -343,6 +347,13 @@ public sealed class MoySkladPurchaseReturnGateway : IMoySkladPurchaseReturnGatew
 
         const string endpoint = "entity/purchasereturn/batch";
         var payload = "[" + string.Join(',', documents.Select(item => item.PayloadJson)) + "]";
+        if (_isDevelopment)
+        {
+            _logger.LogInformation(
+                "Sending MoySklad document recreation create request: account_id={AccountId}, correlation_id={CorrelationId}, document_type={DocumentType}, http_method={HttpMethod}, endpoint={Endpoint}, document_count={DocumentCount}, request_body={RequestBody}",
+                accountId, correlationId, "purchasereturn", HttpMethod.Post.Method, endpoint, documents.Count, payload);
+        }
+
         var response = await SendJsonAsync(
             accountId, correlationId, HttpMethod.Post, endpoint, payload, cancellationToken);
         return ParseCreateResponse(accountId, correlationId, endpoint, response, documents);

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Hosting;
 using MsContractor.MoySkladEgressService.Clients;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
@@ -55,15 +56,19 @@ public sealed class MoySkladFactureInGateway : IMoySkladFactureInGateway
     private readonly IVendorTokenClient _tokenClient;
     private readonly IMoySkladRateLimiter _rateLimiter;
     private readonly IMoySkladResponseHandler _responseHandler;
+    private readonly ILogger<MoySkladFactureInGateway> _logger;
+    private readonly bool _isDevelopment;
 
     public MoySkladFactureInGateway(HttpClient httpClient, IVendorTokenClient tokenClient,
         IMoySkladRateLimiter rateLimiter, IMoySkladResponseHandler responseHandler,
-        ILogger<MoySkladFactureInGateway> logger)
+        ILogger<MoySkladFactureInGateway> logger, IHostEnvironment? environment = null)
     {
         _httpClient = httpClient;
         _tokenClient = tokenClient;
         _rateLimiter = rateLimiter;
         _responseHandler = responseHandler;
+        _logger = logger;
+        _isDevelopment = environment?.IsDevelopment() == true;
     }
 
     public async Task<IReadOnlyDictionary<Guid, string>> GetAsync(Guid accountId, Guid requestedByUserId,
@@ -177,6 +182,13 @@ public sealed class MoySkladFactureInGateway : IMoySkladFactureInGateway
 
         const string endpoint = "entity/facturein/batch";
         var payload = "[" + string.Join(',', documents.Select(item => item.PayloadJson)) + "]";
+        if (_isDevelopment)
+        {
+            _logger.LogInformation(
+                "Sending MoySklad document recreation create request: account_id={AccountId}, correlation_id={CorrelationId}, document_type={DocumentType}, http_method={HttpMethod}, endpoint={Endpoint}, document_count={DocumentCount}, request_body={RequestBody}",
+                accountId, correlationId, "facturein", HttpMethod.Post.Method, endpoint, documents.Count, payload);
+        }
+
         var response = await SendJsonAsync(accountId, correlationId, HttpMethod.Post, endpoint, "facturein", payload, cancellationToken);
         try
         {

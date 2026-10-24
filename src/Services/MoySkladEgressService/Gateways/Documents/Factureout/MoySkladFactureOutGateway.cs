@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Hosting;
 using MsContractor.MoySkladEgressService.Clients;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
@@ -61,19 +62,22 @@ public sealed class MoySkladFactureOutGateway : IMoySkladFactureOutGateway
     private readonly IMoySkladRateLimiter _rateLimiter;
     private readonly IMoySkladResponseHandler _responseHandler;
     private readonly ILogger<MoySkladFactureOutGateway> _logger;
+    private readonly bool _isDevelopment;
 
     public MoySkladFactureOutGateway(
         HttpClient httpClient,
         IVendorTokenClient tokenClient,
         IMoySkladRateLimiter rateLimiter,
         IMoySkladResponseHandler responseHandler,
-        ILogger<MoySkladFactureOutGateway> logger)
+        ILogger<MoySkladFactureOutGateway> logger,
+        IHostEnvironment? environment = null)
     {
         _httpClient = httpClient;
         _tokenClient = tokenClient;
         _rateLimiter = rateLimiter;
         _responseHandler = responseHandler;
         _logger = logger;
+        _isDevelopment = environment?.IsDevelopment() == true;
     }
 
     public async Task<IReadOnlyDictionary<Guid, string>> GetAsync(
@@ -230,6 +234,13 @@ public sealed class MoySkladFactureOutGateway : IMoySkladFactureOutGateway
 
         const string endpoint = "entity/factureout/batch";
         var payload = "[" + string.Join(',', documents.Select(item => item.PayloadJson)) + "]";
+        if (_isDevelopment)
+        {
+            _logger.LogInformation(
+                "Sending MoySklad document recreation create request: account_id={AccountId}, correlation_id={CorrelationId}, document_type={DocumentType}, http_method={HttpMethod}, endpoint={Endpoint}, document_count={DocumentCount}, request_body={RequestBody}",
+                accountId, correlationId, "factureout", HttpMethod.Post.Method, endpoint, documents.Count, payload);
+        }
+
         var response = await SendJsonAsync(
             accountId, correlationId, HttpMethod.Post, endpoint, payload, cancellationToken);
 

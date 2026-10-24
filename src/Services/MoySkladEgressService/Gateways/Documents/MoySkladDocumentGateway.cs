@@ -86,6 +86,12 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
     private readonly IMoySkladBulkDocumentResponseValidator _bulkValidator;
     private readonly MoySkladDocumentChangeRetryOptions _retryOptions;
     private readonly bool _isDevelopment;
+    private Func<TimeSpan, CancellationToken, Task> _delayAsync;
+
+    private sealed record BatchMutationAttemptResult(
+        MoySkladDocumentChangeChunkResult Result,
+        bool HasTimeout1088,
+        IReadOnlyList<Guid> MissingDocumentIds);
 
     [ActivatorUtilitiesConstructor]
     public MoySkladDocumentGateway(
@@ -108,6 +114,7 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
         _bulkValidator = bulkValidator;
         _retryOptions = retryOptions;
         _isDevelopment = environment?.IsDevelopment() == true;
+        _delayAsync = static (delay, cancellationToken) => Task.Delay(delay, cancellationToken);
     }
 
     public MoySkladDocumentGateway(
@@ -115,7 +122,8 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
         IVendorTokenClient tokenClient,
         IMoySkladRateLimiter rateLimiter,
         ILogger<MoySkladDocumentGateway> logger,
-        MoySkladDocumentChangeRetryOptions? retryOptions = null)
+        MoySkladDocumentChangeRetryOptions? retryOptions = null,
+        Func<TimeSpan, CancellationToken, Task>? delayAsync = null)
         : this(
             httpClient,
             tokenClient,
@@ -128,6 +136,8 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
             retryOptions ?? MoySkladDocumentChangeRetryOptions.Disabled,
             null)
     {
+        if (delayAsync is not null)
+            _delayAsync = delayAsync;
     }
 
     public async Task<MoySkladDocumentPage> GetPageAsync(
@@ -297,65 +307,122 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
             }
         };
         var isSingle = documents.Count == 1;
-        object payload = isSingle
-            ? new { agent }
-            : documents.Select(item => new
-            {
-                meta = new
-                {
-                    href = new Uri(_httpClient.BaseAddress!, $"entity/{documentType}/{item.DocumentId:D}").ToString(),
-                    type = documentType,
-                    mediaType = "application/json"
-                },
-                agent
-            }).ToArray();
-
         var method = isSingle ? HttpMethod.Put : HttpMethod.Post;
         var endpoint = isSingle
             ? $"entity/{documentType}/{documents[0].DocumentId:D}"
             : $"entity/{documentType}/batch";
-        var payloadJson = JsonSerializer.Serialize(payload, JsonOptions);
+        var pendingDocuments = documents.ToArray();
+        var changedDocuments = new List<MoySkladDocumentChangeItem>();
+        var failures = new List<MoySkladDocumentChangeFailure>();
+        var skippedDocuments = new List<MoySkladDocumentChangeSkippedItem>();
         var retryAttempt = 0;
-        EgressException? previousException = null;
+        var ordinaryRetryCount = 0;
+        long timeout1088RetryCount = 0;
+
+        string BuildPayloadJson(IReadOnlyList<MoySkladDocumentChangeItem> items)
+        {
+            object payload = isSingle
+                ? new { agent }
+                : items.Select(item => new
+                {
+                    meta = new
+                    {
+                        href = new Uri(_httpClient.BaseAddress!, $"entity/{documentType}/{item.DocumentId:D}").ToString(),
+                        type = documentType,
+                        mediaType = "application/json"
+                    },
+                    agent
+                }).ToArray();
+            return JsonSerializer.Serialize(payload, JsonOptions);
+        }
+
+        void AddResult(MoySkladDocumentChangeChunkResult result)
+        {
+            changedDocuments.AddRange(result.ChangedDocuments);
+            failures.AddRange(result.Failures);
+            skippedDocuments.AddRange(result.SkippedDocuments);
+        }
+
+        MoySkladDocumentChangeChunkResult Complete() => new(changedDocuments, failures)
+        {
+            SkippedDocuments = skippedDocuments
+        };
 
         while (true)
         {
-            if (retryAttempt > 0)
-            {
-                var delay = GetRetryDelay(retryAttempt);
-                if (delay > TimeSpan.Zero)
-                    await Task.Delay(delay, cancellationToken);
-
-                _logger.LogWarning(
-                    "Retrying MoySklad document counterparty mutation: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, method={Method}, chunk_size={ChunkSize}, retry_attempt={RetryAttempt}, max_retries={MaxRetries}, retry_delay_ms={RetryDelayMs}, previous_http_status={HttpStatus}, previous_error_code={ErrorCode}",
-                    accountId, mergeJobId, operationId, correlationId, documentType, method.Method,
-                    documents.Count, retryAttempt, _retryOptions.MaxRetries, delay.TotalMilliseconds,
-                    previousException?.HttpStatus, previousException?.Code);
-
-                if (_retryOptions.LogPayloadOnRetry)
-                {
-                    _logger.LogInformation(
-                        "MoySklad document counterparty retry payload: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, retry_attempt={RetryAttempt}, request_body={RequestBody}",
-                        accountId, mergeJobId, operationId, correlationId, documentType, retryAttempt, payloadJson);
-                }
-            }
+            var payloadJson = BuildPayloadJson(pendingDocuments);
 
             try
             {
-                return await SendCounterpartyMutationAttemptAsync(
+                var attempt = await SendCounterpartyMutationAttemptAsync(
                     accountId, requestedByUserId, mergeJobId, operationId, correlationId, mainCounterpartyId,
-                    documentType, documents, isSingle, method, endpoint, payloadJson, accessToken,
+                    documentType, pendingDocuments, isSingle, method, endpoint, payloadJson, accessToken,
                     retryAttempt, cancellationToken);
+
+                if (attempt.HasTimeout1088 && attempt.MissingDocumentIds.Count > 0)
+                {
+                    AddResult(attempt.Result);
+                    var missingIds = attempt.MissingDocumentIds.ToHashSet();
+                    pendingDocuments = pendingDocuments.Where(item => missingIds.Contains(item.DocumentId)).ToArray();
+                    timeout1088RetryCount++;
+                    var delay = GetTimeout1088RetryDelay(timeout1088RetryCount);
+                    _logger.LogWarning(
+                        "Retrying missing MoySklad document counterparty batch items after error 1088: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, retry_attempt={RetryAttempt}, missing_count={MissingCount}, retry_delay_ms={RetryDelayMs}",
+                        accountId, mergeJobId, operationId, correlationId, documentType,
+                        timeout1088RetryCount, pendingDocuments.Length, delay.TotalMilliseconds);
+                    if (_retryOptions.LogPayloadOnRetry)
+                    {
+                        _logger.LogInformation(
+                            "MoySklad document counterparty retry payload: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, retry_attempt={RetryAttempt}, request_body={RequestBody}",
+                            accountId, mergeJobId, operationId, correlationId, documentType,
+                            timeout1088RetryCount, BuildPayloadJson(pendingDocuments));
+                    }
+                    await _delayAsync(delay, cancellationToken);
+                    retryAttempt++;
+                    continue;
+                }
+
+                AddResult(attempt.Result);
+                return Complete();
             }
-            catch (EgressException exception) when (retryAttempt < _retryOptions.MaxRetries)
+            catch (EgressException exception)
             {
-                previousException = exception;
-                retryAttempt++;
+                if (ordinaryRetryCount < _retryOptions.MaxRetries)
+                {
+                    ordinaryRetryCount++;
+                    var delay = GetRetryDelay(ordinaryRetryCount);
+                    _logger.LogWarning(
+                        "Retrying MoySklad document counterparty mutation: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, method={Method}, chunk_size={ChunkSize}, retry_attempt={RetryAttempt}, max_retries={MaxRetries}, retry_delay_ms={RetryDelayMs}, previous_http_status={HttpStatus}, previous_error_code={ErrorCode}",
+                        accountId, mergeJobId, operationId, correlationId, documentType, method.Method,
+                        pendingDocuments.Length, ordinaryRetryCount, _retryOptions.MaxRetries, delay.TotalMilliseconds,
+                        exception.HttpStatus, exception.Code);
+                    if (_retryOptions.LogPayloadOnRetry)
+                    {
+                        _logger.LogInformation(
+                            "MoySklad document counterparty retry payload: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, retry_attempt={RetryAttempt}, request_body={RequestBody}",
+                            accountId, mergeJobId, operationId, correlationId, documentType,
+                            ordinaryRetryCount, payloadJson);
+                    }
+                    if (delay > TimeSpan.Zero)
+                        await _delayAsync(delay, cancellationToken);
+                    retryAttempt++;
+                    continue;
+                }
+
+                if (timeout1088RetryCount == 0)
+                    throw;
+
+                failures.AddRange(pendingDocuments.Select(item => new MoySkladDocumentChangeFailure(
+                    item.DocumentType, item.DocumentId, exception.Code, exception.SafeMessage,
+                    exception.HttpStatus ?? exception.StatusCode, exception.Retryable,
+                    endpoint, exception.MoySkladErrorCode, exception.MoySkladErrorMessage,
+                    exception.ValidationError)));
+                return Complete();
             }
         }
     }
 
-    private async Task<MoySkladDocumentChangeChunkResult> SendCounterpartyMutationAttemptAsync(
+    private async Task<BatchMutationAttemptResult> SendCounterpartyMutationAttemptAsync(
         Guid accountId,
         Guid requestedByUserId,
         Guid mergeJobId,
@@ -424,13 +491,42 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
             {
                 var batchResponseJson = await ReadMutationResponseJsonAsync(
                     response, context, stopwatch, cancellationToken);
+                var hasBatchItemErrors = TryReadBatchItemErrors(
+                    batchResponseJson,
+                    documentType,
+                    documents,
+                    _httpClient.BaseAddress!,
+                    out var skippedDocuments);
 
-                if (TryReadBatchItemErrors(
-                        batchResponseJson,
-                        documentType,
-                        documents,
-                        _httpClient.BaseAddress!,
-                        out var skippedDocuments))
+                if (TryReadBatchTimeoutResponse(batchResponseJson, out var responseDocumentIds))
+                {
+                    using var timeoutResponse = JsonDocument.Parse(batchResponseJson);
+                    var returnedDocuments = documents
+                        .Where(item => responseDocumentIds.Contains(item.DocumentId))
+                        .ToArray();
+                    var validation = _bulkValidator.Validate(
+                        timeoutResponse.RootElement, returnedDocuments, mainCounterpartyId);
+                    var failures = validation.Failed.Select(item => new MoySkladDocumentChangeFailure(
+                        item.Document.DocumentType,
+                        item.Document.DocumentId,
+                        item.Code,
+                        item.Message,
+                        (int)response.StatusCode,
+                        false,
+                        request.RequestUri!.ToString(),
+                        ValidationError: item.Message)).ToArray();
+                    var missingIds = documents
+                        .Where(item => !responseDocumentIds.Contains(item.DocumentId))
+                        .Select(item => item.DocumentId)
+                        .ToArray();
+
+                    return new BatchMutationAttemptResult(
+                        new MoySkladDocumentChangeChunkResult(validation.Succeeded, failures),
+                        true,
+                        missingIds);
+                }
+
+                if (hasBatchItemErrors)
                 {
                     var skippedIds = skippedDocuments.Select(item => item.DocumentId).ToArray();
                     var skippedIdSet = skippedIds.ToHashSet();
@@ -441,10 +537,10 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                         accountId, mergeJobId, operationId, correlationId, documentType, method.Method,
                         (int)response.StatusCode, changedDocuments.Length, skippedDocuments.Count, skippedIds);
 
-                    return new MoySkladDocumentChangeChunkResult(changedDocuments, [])
+                    return new BatchMutationAttemptResult(new MoySkladDocumentChangeChunkResult(changedDocuments, [])
                     {
                         SkippedDocuments = skippedDocuments
-                    };
+                    }, false, []);
                 }
             }
 
@@ -484,7 +580,8 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                     if (validationError is not null)
                         throw _responseHandler.ValidationFailure(
                             context, responseBody.HttpStatus, validationError, json, stopwatch.Elapsed);
-                    return new MoySkladDocumentChangeChunkResult([documents[0]], []);
+                    return new BatchMutationAttemptResult(
+                        new MoySkladDocumentChangeChunkResult([documents[0]], []), false, []);
                 }
 
                 var validation = _bulkValidator.Validate(
@@ -504,7 +601,8 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                     _ = _responseHandler.ValidationFailure(
                         context, responseBody.HttpStatus, validationError, json, stopwatch.Elapsed);
                 }
-                return new MoySkladDocumentChangeChunkResult(validation.Succeeded, failures);
+                return new BatchMutationAttemptResult(
+                    new MoySkladDocumentChangeChunkResult(validation.Succeeded, failures), false, []);
             }
         }
     }
@@ -642,10 +740,89 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
         };
     }
 
+    private static bool TryReadBatchTimeoutResponse(
+        string responseJson,
+        out HashSet<Guid> responseDocumentIds)
+    {
+        responseDocumentIds = [];
+        if (string.IsNullOrWhiteSpace(responseJson))
+            return false;
+
+        try
+        {
+            using var response = JsonDocument.Parse(responseJson);
+            if (!ContainsTimeout1088Error(response.RootElement))
+                return false;
+
+            if (response.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in response.RootElement.EnumerateArray())
+                {
+                    if (MoySkladDocumentJson.TryReadId(item, out var id))
+                        responseDocumentIds.Add(id);
+                }
+            }
+
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool ContainsTimeout1088Error(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            if (element.TryGetProperty("error", out var error) &&
+                error.ValueKind == JsonValueKind.String &&
+                TryReadErrorCode(element, out var code) && code == 1088)
+            {
+                return true;
+            }
+
+            foreach (var property in element.EnumerateObject())
+            {
+                if (ContainsTimeout1088Error(property.Value))
+                    return true;
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                if (ContainsTimeout1088Error(item))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryReadErrorCode(JsonElement error, out int code)
+    {
+        code = 0;
+        if (!error.TryGetProperty("code", out var value))
+            return false;
+
+        return value.ValueKind == JsonValueKind.Number
+            ? value.TryGetInt32(out code)
+            : value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out code);
+    }
+
     private TimeSpan GetRetryDelay(int retryAttempt)
     {
         var milliseconds = _retryOptions.InitialRetryDelay.TotalMilliseconds * Math.Pow(2, retryAttempt - 1);
         return TimeSpan.FromMilliseconds(Math.Min(milliseconds, int.MaxValue));
+    }
+
+    private TimeSpan GetTimeout1088RetryDelay(long retryAttempt)
+    {
+        var exponent = Math.Min(retryAttempt - 1, 1023);
+        var exponentialMilliseconds = _retryOptions.InitialRetryDelay.TotalMilliseconds * Math.Pow(2, exponent);
+        var totalMilliseconds = exponentialMilliseconds + TimeSpan.FromMinutes(6).TotalMilliseconds;
+        return TimeSpan.FromMilliseconds(Math.Min(totalMilliseconds, int.MaxValue));
     }
 
     public Task<MoySkladDocumentChangeChunkResult> ChangeContractAgentsAsync(
@@ -688,9 +865,84 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
         }
 
         var accessToken = await _tokenClient.GetAccessTokenAsync(accountId, cancellationToken);
+        var isSingle = documents.Count == 1;
+        var pendingDocuments = documents.ToArray();
+        var changedDocuments = new List<MoySkladDocumentChangeItem>();
+        var failures = new List<MoySkladDocumentChangeFailure>();
+        var skippedDocuments = new List<MoySkladDocumentChangeSkippedItem>();
+        long timeout1088RetryCount = 0;
+        var retryAttempt = 0;
+
+        void AddResult(MoySkladDocumentChangeChunkResult result)
+        {
+            changedDocuments.AddRange(result.ChangedDocuments);
+            failures.AddRange(result.Failures);
+            skippedDocuments.AddRange(result.SkippedDocuments);
+        }
+
+        MoySkladDocumentChangeChunkResult Complete() => new(changedDocuments, failures)
+        {
+            SkippedDocuments = skippedDocuments
+        };
+
+        while (true)
+        {
+            try
+            {
+                var attempt = await SendAgentAndContractMutationAttemptAsync(
+                    accountId, requestedByUserId, mergeJobId, operationId, correlationId,
+                    mainCounterpartyId, documentType, pendingDocuments, isSingle, accessToken,
+                    retryAttempt, cancellationToken);
+
+                if (attempt.HasTimeout1088 && attempt.MissingDocumentIds.Count > 0)
+                {
+                    AddResult(attempt.Result);
+                    var missingIds = attempt.MissingDocumentIds.ToHashSet();
+                    pendingDocuments = pendingDocuments.Where(item => missingIds.Contains(item.DocumentId)).ToArray();
+                    timeout1088RetryCount++;
+                    var delay = GetTimeout1088RetryDelay(timeout1088RetryCount);
+                    _logger.LogWarning(
+                        "Retrying missing MoySklad document agent and contract batch items after error 1088: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, correlation_id={CorrelationId}, document_type={DocumentType}, retry_attempt={RetryAttempt}, missing_count={MissingCount}, retry_delay_ms={RetryDelayMs}",
+                        accountId, mergeJobId, operationId, correlationId, documentType,
+                        timeout1088RetryCount, pendingDocuments.Length, delay.TotalMilliseconds);
+                    await _delayAsync(delay, cancellationToken);
+                    retryAttempt++;
+                    continue;
+                }
+
+                AddResult(attempt.Result);
+                return Complete();
+            }
+            catch (EgressException exception) when (timeout1088RetryCount > 0)
+            {
+                var endpoint = isSingle
+                    ? $"entity/{documentType}/{pendingDocuments[0].DocumentId:D}"
+                    : $"entity/{documentType}/batch";
+                failures.AddRange(pendingDocuments.Select(item => new MoySkladDocumentChangeFailure(
+                    item.DocumentType, item.DocumentId, exception.Code, exception.SafeMessage,
+                    exception.HttpStatus ?? exception.StatusCode, exception.Retryable, endpoint,
+                    exception.MoySkladErrorCode, exception.MoySkladErrorMessage, exception.ValidationError)));
+                return Complete();
+            }
+        }
+    }
+
+    private async Task<BatchMutationAttemptResult> SendAgentAndContractMutationAttemptAsync(
+        Guid accountId,
+        Guid requestedByUserId,
+        Guid mergeJobId,
+        Guid operationId,
+        string correlationId,
+        Guid mainCounterpartyId,
+        string documentType,
+        IReadOnlyList<MoySkladDocumentChangeAgentAndContractItem> documents,
+        bool isSingle,
+        string accessToken,
+        int retryAttempt,
+        CancellationToken cancellationToken)
+    {
         await _rateLimiter.WaitAsync(accountId, cancellationToken);
         var agent = EntityReference("counterparty", mainCounterpartyId);
-        var isSingle = documents.Count == 1;
         object payload = isSingle
             ? DocumentPayload(documents[0], agent)
             : documents.Select(item => DocumentBatchPayload(item, documentType, agent)).ToArray();
@@ -707,16 +959,17 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
 
         var context = new MoySkladRequestContext(
             accountId, correlationId, mergeJobId, operationId, request.Method.Method, request.RequestUri!.ToString(),
-            documentType, isSingle ? documents[0].DocumentId : null);
+            documentType, isSingle ? documents[0].DocumentId : null, retryAttempt);
         if (_isDevelopment && IsCommissionReport(documentType))
         {
             var endpoint = new Uri(_httpClient.BaseAddress!, request.RequestUri!).ToString();
             var requestBody = await request.Content!.ReadAsStringAsync(cancellationToken);
             _logger.LogInformation(
-                "Sending MoySklad commission report agent and contract request: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}, document_type={DocumentType}, method={Method}, endpoint={Endpoint}, chunk_size={ChunkSize}, request_body={RequestBody}",
+                "Sending MoySklad commission report agent and contract request: account_id={AccountId}, merge_job_id={MergeJobId}, operation_id={OperationId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}, document_type={DocumentType}, method={Method}, endpoint={Endpoint}, chunk_size={ChunkSize}, retry_attempt={RetryAttempt}, request_body={RequestBody}",
                 accountId, mergeJobId, operationId, requestedByUserId, correlationId, documentType,
-                request.Method.Method, endpoint, documents.Count, requestBody);
+                request.Method.Method, endpoint, documents.Count, retryAttempt, requestBody);
         }
+
         var stopwatch = Stopwatch.StartNew();
         HttpResponseMessage response;
         try
@@ -739,14 +992,61 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
             var plainDocuments = documents
                 .Select(item => new MoySkladDocumentChangeItem(item.DocumentType, item.DocumentId)).ToArray();
             IReadOnlyList<MoySkladDocumentChangeSkippedItem> skippedDocuments = [];
+            var hasBatchItemErrors = false;
             MoySkladResponseBody? responseBody = null;
-            if (!isSingle && (response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.PreconditionFailed))
+            if (!isSingle)
             {
                 var batchResponseJson = await ReadMutationResponseJsonAsync(
                     response, context, stopwatch, cancellationToken);
-                if (TryReadBatchItemErrors(
+                if (response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.PreconditionFailed)
+                {
+                    hasBatchItemErrors = TryReadBatchItemErrors(
                         batchResponseJson, documentType, plainDocuments, _httpClient.BaseAddress!,
-                        out skippedDocuments))
+                        out skippedDocuments);
+                }
+
+                if (TryReadBatchTimeoutResponse(batchResponseJson, out var responseDocumentIds))
+                {
+                    using var timeoutResponse = JsonDocument.Parse(batchResponseJson);
+                    var returnedDocuments = plainDocuments
+                        .Where(item => responseDocumentIds.Contains(item.DocumentId))
+                        .ToArray();
+                    var validation = _bulkValidator.Validate(
+                        timeoutResponse.RootElement, returnedDocuments, mainCounterpartyId);
+                    var failureList = validation.Failed.Select(item => new MoySkladDocumentChangeFailure(
+                        item.Document.DocumentType, item.Document.DocumentId, item.Code, item.Message,
+                        (int)response.StatusCode, false, request.RequestUri!.ToString(),
+                        ValidationError: item.Message)).ToList();
+                    var succeeded = validation.Succeeded.ToList();
+                    var responseById = timeoutResponse.RootElement.ValueKind == JsonValueKind.Array
+                        ? timeoutResponse.RootElement.EnumerateArray()
+                            .Where(item => MoySkladDocumentJson.TryReadId(item, out _))
+                            .GroupBy(item => { MoySkladDocumentJson.TryReadId(item, out var id); return id; })
+                            .ToDictionary(group => group.Key, group => group.First())
+                        : new Dictionary<Guid, JsonElement>();
+                    foreach (var document in documents.Where(item => succeeded.Any(changed => changed.DocumentId == item.DocumentId)))
+                    {
+                        if (!responseById.TryGetValue(document.DocumentId, out var responseItem))
+                            continue;
+                        var contractError = ValidateContract(responseItem, document.Contract);
+                        if (contractError is null)
+                            continue;
+                        succeeded.RemoveAll(item => item.DocumentId == document.DocumentId);
+                        failureList.Add(new MoySkladDocumentChangeFailure(
+                            document.DocumentType, document.DocumentId, "MOYSKLAD_RESPONSE_VALIDATION_FAILED",
+                            contractError, (int)response.StatusCode, false, request.RequestUri!.ToString(),
+                            ValidationError: contractError));
+                    }
+
+                    var missingIds = plainDocuments
+                        .Where(item => !responseDocumentIds.Contains(item.DocumentId))
+                        .Select(item => item.DocumentId)
+                        .ToArray();
+                    return new BatchMutationAttemptResult(
+                        new MoySkladDocumentChangeChunkResult(succeeded, failureList), true, missingIds);
+                }
+
+                if (hasBatchItemErrors)
                 {
                     responseBody = new MoySkladResponseBody(batchResponseJson, (int)response.StatusCode);
                     _logger.LogWarning(
@@ -784,7 +1084,8 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                     if (validationError is not null)
                         throw _responseHandler.ValidationFailure(
                             context, responseBody.HttpStatus, validationError, json, stopwatch.Elapsed);
-                    return new MoySkladDocumentChangeChunkResult(plainDocuments, []);
+                    return new BatchMutationAttemptResult(
+                        new MoySkladDocumentChangeChunkResult(plainDocuments, []), false, []);
                 }
 
                 var skippedIds = skippedDocuments.Select(item => item.DocumentId).ToHashSet();
@@ -818,11 +1119,11 @@ public sealed class MoySkladDocumentGateway : IMoySkladDocumentGateway
                     _ = _responseHandler.ValidationFailure(
                         context, responseBody.HttpStatus, string.Join(" | ", failures.Select(item => item.Message)), json,
                         stopwatch.Elapsed);
-                return new MoySkladDocumentChangeChunkResult(
+                return new BatchMutationAttemptResult(new MoySkladDocumentChangeChunkResult(
                     expectedDocuments.Where(item => !failedIds.Contains(item.DocumentId)).ToArray(), failures)
                 {
                     SkippedDocuments = skippedDocuments
-                };
+                }, false, []);
             }
         }
     }

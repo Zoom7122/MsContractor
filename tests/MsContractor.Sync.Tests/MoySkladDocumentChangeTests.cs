@@ -215,6 +215,116 @@ public sealed class MoySkladDocumentChangeGatewayTests
     }
 
     [Fact]
+    public async Task ChangeCounterpartyAsync_RetriesOnlyMissingIdsForRepeated1088Responses()
+    {
+        var mainId = Guid.NewGuid();
+        var documents = Documents("demand", 4);
+        var requests = new List<Guid[]>();
+        var delays = new List<TimeSpan>();
+        var gateway = Gateway(async (request, cancellationToken) =>
+        {
+            using var requestJson = JsonDocument.Parse(
+                await request.Content!.ReadAsStringAsync(cancellationToken));
+            requests.Add(requestJson.RootElement.EnumerateArray()
+                .Select(item => Guid.Parse(item.GetProperty("meta").GetProperty("href").GetString()!.Split('/').Last()))
+                .ToArray());
+
+            var response = requests.Count switch
+            {
+                1 => JsonResponse(new object[]
+                {
+                    Changed(documents[0], mainId), BatchTimeoutError(), BatchTimeoutError(), BatchTimeoutError()
+                }),
+                2 => JsonResponse(new object[]
+                {
+                    Changed(documents[2], mainId), BatchTimeoutError(), BatchTimeoutError()
+                }),
+                _ => JsonResponse(new object[]
+                {
+                    Changed(documents[3], mainId), Changed(documents[1], mainId)
+                })
+            };
+            if (requests.Count < 3)
+                response.StatusCode = HttpStatusCode.PreconditionFailed;
+            return response;
+        }, MoySkladDocumentChangeRetryOptions.Parse("0", "250", false), delayAsync: (delay, _) =>
+        {
+            delays.Add(delay);
+            return Task.CompletedTask;
+        });
+
+        var result = await gateway.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            mainId, "demand", documents, CancellationToken.None);
+
+        Assert.Equal(4, result.ChangedDocuments.Count);
+        Assert.Empty(result.Failures);
+        Assert.Equal(3, requests.Count);
+        Assert.Equal(documents.Select(item => item.DocumentId), requests[0]);
+        Assert.Equal([documents[1].DocumentId, documents[2].DocumentId, documents[3].DocumentId], requests[1]);
+        Assert.Equal([documents[1].DocumentId, documents[3].DocumentId], requests[2]);
+        Assert.Equal([TimeSpan.FromMinutes(6) + TimeSpan.FromMilliseconds(250),
+            TimeSpan.FromMinutes(6) + TimeSpan.FromMilliseconds(500)], delays);
+    }
+
+    [Fact]
+    public async Task ChangeCounterpartyAsync_DoesNotRetry1088WhenEveryRequestedIdIsPresent()
+    {
+        var mainId = Guid.NewGuid();
+        var documents = Documents("demand", 2);
+        var calls = 0;
+        var gateway = Gateway((_, _) =>
+        {
+            calls++;
+            return Task.FromResult(JsonResponse(new object[]
+            {
+                Changed(documents[0], mainId), Changed(documents[1], mainId), BatchTimeoutError()
+            }));
+        }, MoySkladDocumentChangeRetryOptions.Parse("0", "0", false), delayAsync: (_, _) => Task.CompletedTask);
+
+        var result = await gateway.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            mainId, "demand", documents, CancellationToken.None);
+
+        Assert.Equal(2, result.ChangedDocuments.Count);
+        Assert.Empty(result.Failures);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task ChangeCounterpartyAsync_CancellationInterrupts1088RetryDelay()
+    {
+        var mainId = Guid.NewGuid();
+        var documents = Documents("demand", 2);
+        var calls = 0;
+        var delayCalls = 0;
+        using var cancellation = new CancellationTokenSource();
+        var gateway = Gateway((_, _) =>
+        {
+            calls++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.PreconditionFailed)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new object[]
+                {
+                    Changed(documents[0], mainId), BatchTimeoutError()
+                }), Encoding.UTF8, "application/json")
+            });
+        }, MoySkladDocumentChangeRetryOptions.Parse("0", "0", false), delayAsync: (delay, token) =>
+        {
+            delayCalls++;
+            cancellation.Cancel();
+            return Task.Delay(delay, token);
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => gateway.ChangeCounterpartyAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation",
+            mainId, "demand", documents, cancellation.Token));
+
+        Assert.Equal(1, calls);
+        Assert.Equal(1, delayCalls);
+    }
+
+    [Fact]
     public async Task ChangeCounterpartyAsync_DoesNotLogPayloadWhenFirstAttemptSucceeds()
     {
         var mainId = Guid.NewGuid();
@@ -497,6 +607,73 @@ public sealed class MoySkladDocumentChangeGatewayTests
     }
 
     [Fact]
+    public async Task ChangeAgentAndContractAsync_RetriesOnlyMissingIdsAndPreservesEachContract()
+    {
+        var mainId = Guid.NewGuid();
+        var documents = Documents("commissionreportin", 3);
+        var contracts = documents.ToDictionary(item => item.DocumentId, _ => Guid.NewGuid());
+        var items = documents.Select(item => new MoySkladDocumentChangeAgentAndContractItem(
+            item.DocumentType, item.DocumentId, contracts[item.DocumentId])).ToArray();
+        var requestIds = new List<Guid[]>();
+        var delays = new List<TimeSpan>();
+        var gateway = Gateway(async (request, cancellationToken) =>
+        {
+            Assert.Equal(HttpMethod.Post, request.Method);
+            Assert.EndsWith("/entity/commissionreportin/batch", request.RequestUri!.AbsolutePath);
+            using var requestJson = JsonDocument.Parse(
+                await request.Content!.ReadAsStringAsync(cancellationToken));
+            var requestItems = requestJson.RootElement.EnumerateArray().ToArray();
+            var ids = requestItems.Select(item => Guid.Parse(
+                item.GetProperty("meta").GetProperty("href").GetString()!.Split('/').Last())).ToArray();
+            requestIds.Add(ids);
+            foreach (var item in requestItems)
+            {
+                var id = Guid.Parse(item.GetProperty("meta").GetProperty("href").GetString()!.Split('/').Last());
+                Assert.EndsWith($"/entity/contract/{contracts[id]:D}",
+                    item.GetProperty("contract").GetProperty("meta").GetProperty("href").GetString());
+            }
+
+            var response = requestIds.Count switch
+            {
+                1 => JsonResponse(new object[]
+                {
+                    ChangedWithContract(documents[2], mainId, contracts[documents[2].DocumentId]),
+                    BatchTimeoutError(), BatchTimeoutError()
+                }),
+                2 => JsonResponse(new object[]
+                {
+                    ChangedWithContract(documents[0], mainId, contracts[documents[0].DocumentId]),
+                    BatchTimeoutError()
+                }),
+                _ => JsonResponse(new[]
+                {
+                    ChangedWithContract(documents[1], mainId, contracts[documents[1].DocumentId])
+                })
+            };
+            if (requestIds.Count < 3)
+                response.StatusCode = HttpStatusCode.PreconditionFailed;
+            return response;
+        }, MoySkladDocumentChangeRetryOptions.Parse("0", "100", false), delayAsync: (delay, _) =>
+        {
+            delays.Add(delay);
+            return Task.CompletedTask;
+        });
+
+        var result = await gateway.ChangeAgentAndContractAsync(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "correlation", mainId,
+            "commissionreportin", items, CancellationToken.None);
+
+        Assert.Equal(3, result.ChangedDocuments.Count);
+        Assert.Empty(result.Failures);
+        Assert.Equal(3, requestIds.Count);
+        Assert.Equal(documents.Select(item => item.DocumentId), requestIds[0]);
+        Assert.Equal([documents[0].DocumentId, documents[1].DocumentId], requestIds[1]);
+        Assert.Equal([documents[1].DocumentId], requestIds[2]);
+        Assert.Equal([TimeSpan.FromMinutes(6) + TimeSpan.FromMilliseconds(100),
+            TimeSpan.FromMinutes(6) + TimeSpan.FromMilliseconds(200)], delays);
+    }
+
+    [Fact]
     public async Task ChangeAgentAndContractAsync_WithNullContractSendsOnlyAgent()
     {
         var mainId = Guid.NewGuid();
@@ -730,7 +907,8 @@ public sealed class MoySkladDocumentChangeGatewayTests
     private static MoySkladDocumentGateway Gateway(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> callback,
         MoySkladDocumentChangeRetryOptions? retryOptions = null,
-        ILogger<MoySkladDocumentGateway>? logger = null) =>
+        ILogger<MoySkladDocumentGateway>? logger = null,
+        Func<TimeSpan, CancellationToken, Task>? delayAsync = null) =>
         new(
             new HttpClient(new AsyncHandler(callback))
             {
@@ -739,7 +917,8 @@ public sealed class MoySkladDocumentChangeGatewayTests
             new TokenClient(),
             new RateLimiter(),
             logger ?? NullLogger<MoySkladDocumentGateway>.Instance,
-            retryOptions);
+            retryOptions,
+            delayAsync);
 
     private static MoySkladDocumentChangeItem[] Documents(string type, int count) =>
         Enumerable.Range(0, count)
@@ -782,6 +961,19 @@ public sealed class MoySkladDocumentChangeGatewayTests
                     type = document.DocumentType,
                     mediaType = "application/json"
                 }
+            }
+        }
+    };
+
+    private static object BatchTimeoutError() => new
+    {
+        errors = new[]
+        {
+            new
+            {
+                error = "Превышено максимальное время ответа на запрос",
+                code = 1088,
+                moreInfo = "https://dev.moysklad.ru/doc/api/remap/1.2/#/errors#error_1088"
             }
         }
     };

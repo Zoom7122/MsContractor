@@ -6,13 +6,13 @@ DEV_COMPOSE = ASPNETCORE_ENVIRONMENT=Development $(COMPOSE) -f docker-compose.ym
 PROD_COMPOSE = ASPNETCORE_ENVIRONMENT=Production $(COMPOSE) -f docker-compose.yml --env-file $(PROD_ENV)
 SOLUTION = MsContractor.sln
 
-.PHONY: compose-up compose-down compose-down-del compose-up-prod compose-down-prod recreate ps build logs dozzle test health
+.PHONY: compose-up compose-down compose-down-del compose-up-prod compose-down-prod recreate ps build logs test health
 
 compose-up:
 	$(DEV_COMPOSE) up -d --build --remove-orphans
 
 compose-up-prod:
-	$(PROD_COMPOSE) --profile $(DEV_PROFILE) stop redis-insight dozzle
+	$(PROD_COMPOSE) --profile $(DEV_PROFILE) stop redis-insight
 	$(PROD_COMPOSE) up -d --build --remove-orphans
 
 compose-down:
@@ -31,10 +31,6 @@ recreate:
 
 logs:
 	$(DEV_COMPOSE) logs -f --tail=200
-
-dozzle:
-	$(DEV_COMPOSE) up -d dozzle
-	@printf 'Dozzle: http://localhost:%s\n' "$$(sed -n 's/^DOZZLE_PORT=//p' $(DEV_ENV))"
 
 test:
 	dotnet test $(SOLUTION)

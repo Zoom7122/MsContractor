@@ -26,7 +26,3 @@ services:
   duplicates-merge-service:
     ports:
       - "${DUPLICATES_MERGE_SERVICE_PORT}:${SERVICE_INTERNAL_PORT}"
-
-  dozzle:
-    ports:
-      - "127.0.0.1:${DOZZLE_PORT:-8089}:8080"

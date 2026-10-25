@@ -35,14 +35,13 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.d
 | --- | --- |
 | iframe | `http://localhost:<FRONTEND_IFRAME_PORT>/moysklad/app` |
 | Gateway и Swagger UI в режиме Development | `http://localhost:<GATEWAY_BFF_PORT>/swagger` |
-| Dozzle, логи контейнеров | `http://localhost:<DOZZLE_PORT>` |
 | RedisInsight | `http://localhost:<REDIS_INSIGHT_PORT>` |
 
 У iframe должна быть действующая сессия: МойСклад передаёт `contextKey` при открытии приложения. Для локальной разработки в `Development` у VendorService есть `POST /api/moysklad/session/dev`; он использует `DEV_ACCOUNT_ID`. Без сессии интерфейс показывает ошибку доступа, даже если контейнеры здоровы.
 
 Остановить стек разработки можно командой `make compose-down`. Команда `make compose-down-del` дополнительно удаляет тома dev-стека, включая данные PostgreSQL и Redis.
 
-Для запуска в режиме Production используйте `make compose-up-prod`, а для остановки — `make compose-down-prod`. Production-команда загружает `.env.prod`, задаёт `ASPNETCORE_ENVIRONMENT=Production` и публикует только порты Gateway и frontend; внутренние сервисы доступны контейнерам по Compose-сети. Перед запуском команда останавливает RedisInsight и Dozzle, если они работали из dev-стека. `make compose-down-prod` удаляет контейнеры, но сохраняет именованные volumes. В production маршрут `POST /api/moysklad/session/dev` отвечает `404` и не создаёт сессию или cookie. Этот режим не подтверждает готовность всего стека к публичному production-развёртыванию.
+Для запуска в режиме Production используйте `make compose-up-prod`, а для остановки — `make compose-down-prod`. Production-команда загружает `.env.prod`, задаёт `ASPNETCORE_ENVIRONMENT=Production` и публикует только порты Gateway и frontend; внутренние сервисы доступны контейнерам по Compose-сети. Перед запуском команда останавливает RedisInsight, если он работал из dev-стека. `make compose-down-prod` удаляет контейнеры, но сохраняет именованные volumes. В production маршрут `POST /api/moysklad/session/dev` отвечает `404` и не создаёт сессию или cookie. Этот режим не подтверждает готовность всего стека к публичному production-развёртыванию.
 
 ## Архитектура
 
@@ -165,10 +164,10 @@ Egress владеет HTTP-взаимодействием с JSON API и про�
 | `DOCUMENTS_DISCOVERY`, `DOCUMENTS_PUT_CHANGE`, `DOCUMENTS_CHANGE_AGENT_AND_CONTRACT`, `DOCUMENTS_MERGE_EXCLUDE` | Какие типы документов обнаруживаются и как обрабатываются при merge. |
 | `SERVICE_INTERNAL_PORT`, `POSTGRES_PORT`, `REDIS_PORT`, `KAFKA_INTERNAL_PORT` | Порты сервисов и инфраструктуры внутри Compose-сети. |
 | `GATEWAY_BFF_PORT`, `FRONTEND_IFRAME_PORT` | Опубликованные порты production Gateway и frontend. |
-| `POSTGRES_HOST_PORT`, `REDIS_HOST_PORT`, `KAFKA_HOST_PORT`, `REDIS_INSIGHT_PORT`, `*_SERVICE_PORT`, `DOZZLE_PORT` | Порты хоста для локального dev-стека из `docker-compose.dev.yml`. |
+| `POSTGRES_HOST_PORT`, `REDIS_HOST_PORT`, `KAFKA_HOST_PORT`, `REDIS_INSIGHT_PORT`, `*_SERVICE_PORT` | Порты хоста для локального dev-стека из `docker-compose.dev.yml`. |
 | `POSTGRES_*`, `REDIS_*`, `KAFKA_*` | Параметры подключения и запуска PostgreSQL, Redis и Kafka. |
 
-`make compose-up` использует `.env.dev`, базовый Compose и `docker-compose.dev.yml`, явно задаёт `ASPNETCORE_ENVIRONMENT=Development` и включает профиль `dev-tools` с RedisInsight и Dozzle. `make compose-up-prod` использует только базовый `docker-compose.yml` и `.env.prod`; dev-порты из override в production не подключаются. Для прямых команд Compose указывайте оба файла для dev-стека и соответствующий `--env-file`. `POSTGRES_PORT`, `REDIS_PORT` и `KAFKA_PORT` задают внутренние порты; переменные `*_HOST_PORT` и `*_SERVICE_PORT` задают публикацию на хосте в Development. Production PostgreSQL, Redis и Kafka наружу не публикует.
+`make compose-up` использует `.env.dev`, базовый Compose и `docker-compose.dev.yml`, явно задаёт `ASPNETCORE_ENVIRONMENT=Development` и включает профиль `dev-tools` с RedisInsight. `make compose-up-prod` использует только базовый `docker-compose.yml` и `.env.prod`; dev-порты из override в production не подключаются. Для прямых команд Compose указывайте оба файла для dev-стека и соответствующий `--env-file`. `POSTGRES_PORT`, `REDIS_PORT` и `KAFKA_PORT` задают внутренние порты; переменные `*_HOST_PORT` и `*_SERVICE_PORT` задают публикацию на хосте в Development. Production PostgreSQL, Redis и Kafka наружу не публикует.
 
 ```bash
 # Backend: требуется .NET SDK 10

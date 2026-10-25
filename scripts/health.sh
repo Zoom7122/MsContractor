@@ -46,9 +46,6 @@ check redis bash -o pipefail -c \
   "${COMPOSE[*]} exec -T redis redis-cli -p '$REDIS_PORT' ping | grep -qx PONG"
 check kafka "${COMPOSE[@]}" exec -T kafka \
   /opt/kafka/bin/kafka-topics.sh --bootstrap-server "localhost:${KAFKA_INTERNAL_PORT}" --list
-check dozzle curl --fail --silent --show-error --connect-timeout 3 --max-time 10 \
-  "http://localhost:${DOZZLE_PORT}/healthcheck"
-
 if (( failed == 0 )); then
   printf 'Health check passed\n'
   exit 0

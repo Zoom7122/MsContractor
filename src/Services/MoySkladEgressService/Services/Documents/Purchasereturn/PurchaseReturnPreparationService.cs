@@ -46,8 +46,15 @@ public sealed class PurchaseReturnPreparationService : IPurchaseReturnPreparatio
         ValidateInput(accountId, mainCounterpartyId, purchaseReturnIds);
         var correlationId = Guid.NewGuid().ToString("D");
         var skipped = new List<PurchaseReturnSkippedDocument>();
-        var documents = await _purchaseReturns.GetAsync(
-            accountId, Guid.Empty, correlationId, purchaseReturnIds, cancellationToken);
+        var documents = new Dictionary<Guid, string>(purchaseReturnIds.Count);
+        foreach (var batch in purchaseReturnIds.Chunk(MoySkladPurchaseReturnGateway.BatchSize))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var batchDocuments = await _purchaseReturns.GetAsync(
+                accountId, Guid.Empty, correlationId, batch, cancellationToken);
+            foreach (var document in batchDocuments)
+                documents.Add(document.Key, document.Value);
+        }
 
         _logger.LogInformation(
             "purchasereturn documents received: account_id={AccountId}, requested_count={RequestedCount}, returned_count={ReturnedCount}, document_ids={DocumentIds}",

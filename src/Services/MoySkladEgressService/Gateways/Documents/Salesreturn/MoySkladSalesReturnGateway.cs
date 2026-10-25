@@ -5,8 +5,10 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Hosting;
 using MsContractor.MoySkladEgressService.Clients;
+using MsContractor.MoySkladEgressService.Gateways.Documents;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
+using MsContractor.MoySkladEgressService.Models.Options;
 using MsContractor.MoySkladEgressService.RateLimiting;
 using MsContractor.MoySkladEgressService.ResponseHandling;
 
@@ -70,6 +72,7 @@ public sealed class MoySkladSalesReturnGateway : IMoySkladSalesReturnGateway
     private readonly IMoySkladResponseHandler _responseHandler;
     private readonly ILogger<MoySkladSalesReturnGateway> _logger;
     private readonly bool _isDevelopment;
+    private readonly MoySkladDocumentChangeRetryOptions _retryOptions;
 
     public MoySkladSalesReturnGateway(
         HttpClient httpClient,
@@ -77,7 +80,8 @@ public sealed class MoySkladSalesReturnGateway : IMoySkladSalesReturnGateway
         IMoySkladRateLimiter rateLimiter,
         IMoySkladResponseHandler responseHandler,
         ILogger<MoySkladSalesReturnGateway> logger,
-        IHostEnvironment? environment = null)
+        IHostEnvironment? environment = null,
+        MoySkladDocumentChangeRetryOptions? retryOptions = null)
     {
         _httpClient = httpClient;
         _tokenClient = tokenClient;
@@ -85,9 +89,11 @@ public sealed class MoySkladSalesReturnGateway : IMoySkladSalesReturnGateway
         _responseHandler = responseHandler;
         _logger = logger;
         _isDevelopment = environment?.IsDevelopment() == true;
+        _retryOptions = retryOptions ?? MoySkladDocumentChangeRetryOptions.Disabled;
     }
 
     public const int BatchSize = 1000;
+    private const int GetByIdBatchSize = 40;
 
     public async Task<IReadOnlyDictionary<Guid, string>> GetAsync(
         Guid accountId,
@@ -98,8 +104,28 @@ public sealed class MoySkladSalesReturnGateway : IMoySkladSalesReturnGateway
     {
         ValidateIds(salesReturnIds);
 
+        var result = new Dictionary<Guid, string>(salesReturnIds.Count);
+        foreach (var batch in salesReturnIds.Chunk(GetByIdBatchSize))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var rows = await GetBatchAsync(
+                accountId, requestedByUserId, correlationId, batch, cancellationToken);
+            foreach (var row in rows)
+                result.Add(row.Key, row.Value);
+        }
+
+        return result;
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, string>> GetBatchAsync(
+        Guid accountId,
+        Guid requestedByUserId,
+        string correlationId,
+        IReadOnlyList<Guid> salesReturnIds,
+        CancellationToken cancellationToken)
+    {
         var filter = string.Join(';', salesReturnIds.Select(id => $"id={id:D}"));
-        var endpoint = $"entity/salesreturn?filter={Uri.EscapeDataString(filter)}&limit={BatchSize}";
+        var endpoint = $"entity/salesreturn?filter={Uri.EscapeDataString(filter)}&limit={GetByIdBatchSize}";
         var context = new MoySkladRequestContext(
             accountId, correlationId, null, null, HttpMethod.Get.Method, endpoint, "salesreturn", null);
         var stopwatch = Stopwatch.StartNew();
@@ -113,7 +139,7 @@ public sealed class MoySkladSalesReturnGateway : IMoySkladSalesReturnGateway
 
         _logger.LogInformation(
             "Sending MoySklad salesreturn request: account_id={AccountId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}, document_count={DocumentCount}, limit={Limit}",
-            accountId, requestedByUserId, correlationId, salesReturnIds.Count, BatchSize);
+            accountId, requestedByUserId, correlationId, salesReturnIds.Count, GetByIdBatchSize);
 
         HttpResponseMessage response;
         try
@@ -230,16 +256,24 @@ public sealed class MoySkladSalesReturnGateway : IMoySkladSalesReturnGateway
             throw new ArgumentException("A unique non-empty salesreturn creation batch is required.", nameof(documents));
 
         const string endpoint = "entity/salesreturn/batch";
-        var payload = "[" + string.Join(',', documents.Select(item => item.PayloadJson)) + "]";
-        if (_isDevelopment)
-        {
-            _logger.LogInformation(
-                "Sending MoySklad document recreation create request: account_id={AccountId}, correlation_id={CorrelationId}, document_type={DocumentType}, http_method={HttpMethod}, endpoint={Endpoint}, document_count={DocumentCount}, request_body={RequestBody}",
-                accountId, correlationId, "salesreturn", HttpMethod.Post.Method, endpoint, documents.Count, payload);
-        }
+        var response = await MoySkladBatchCreateTimeout1088Retry.SendAsync(
+            documents,
+            item => item.SyncId,
+            async (pending, token) =>
+            {
+                var payload = "[" + string.Join(',', pending.Select(item => item.PayloadJson)) + "]";
+                if (_isDevelopment)
+                {
+                    _logger.LogInformation(
+                        "Sending MoySklad document recreation create request: account_id={AccountId}, correlation_id={CorrelationId}, document_type={DocumentType}, http_method={HttpMethod}, endpoint={Endpoint}, document_count={DocumentCount}, request_body={RequestBody}",
+                        accountId, correlationId, "salesreturn", HttpMethod.Post.Method, endpoint, pending.Count, payload);
+                }
 
-        var response = await SendJsonAsync(
-            accountId, correlationId, HttpMethod.Post, endpoint, "salesreturn", null, payload, cancellationToken);
+                return await SendJsonAsync(
+                    accountId, correlationId, HttpMethod.Post, endpoint, "salesreturn", null, payload, token,
+                    captureBatchTimeout1088: true);
+            },
+            _retryOptions, _logger, accountId, correlationId, "salesreturn", cancellationToken);
         return ParseCreateResponse(accountId, correlationId, endpoint, response, documents);
     }
 
@@ -304,7 +338,8 @@ public sealed class MoySkladSalesReturnGateway : IMoySkladSalesReturnGateway
         string entityType,
         Guid? entityId,
         string? payload,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool captureBatchTimeout1088 = false)
     {
         var context = new MoySkladRequestContext(
             accountId, correlationId, null, null, method.Method, endpoint, entityType, entityId);
@@ -335,6 +370,9 @@ public sealed class MoySkladSalesReturnGateway : IMoySkladSalesReturnGateway
         using (response)
         {
             await _rateLimiter.ObserveAsync(accountId, MoySkladRateLimitObservationParser.Parse(response), cancellationToken);
+            if (captureBatchTimeout1088)
+                return await MoySkladBatchCreateTimeout1088Retry.ReadCreateResponseAsync(
+                    response, context, stopwatch.Elapsed, _responseHandler, cancellationToken);
             return await _responseHandler.ReadAsync(response, context, stopwatch.Elapsed, cancellationToken);
         }
     }

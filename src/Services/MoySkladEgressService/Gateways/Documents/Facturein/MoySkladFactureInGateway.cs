@@ -4,8 +4,10 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using MsContractor.MoySkladEgressService.Clients;
+using MsContractor.MoySkladEgressService.Gateways.Documents;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
+using MsContractor.MoySkladEgressService.Models.Options;
 using MsContractor.MoySkladEgressService.RateLimiting;
 using MsContractor.MoySkladEgressService.RateLimiting.Models;
 using MsContractor.MoySkladEgressService.ResponseHandling;
@@ -58,10 +60,12 @@ public sealed class MoySkladFactureInGateway : IMoySkladFactureInGateway
     private readonly IMoySkladResponseHandler _responseHandler;
     private readonly ILogger<MoySkladFactureInGateway> _logger;
     private readonly bool _isDevelopment;
+    private readonly MoySkladDocumentChangeRetryOptions _retryOptions;
 
     public MoySkladFactureInGateway(HttpClient httpClient, IVendorTokenClient tokenClient,
         IMoySkladRateLimiter rateLimiter, IMoySkladResponseHandler responseHandler,
-        ILogger<MoySkladFactureInGateway> logger, IHostEnvironment? environment = null)
+        ILogger<MoySkladFactureInGateway> logger, IHostEnvironment? environment = null,
+        MoySkladDocumentChangeRetryOptions? retryOptions = null)
     {
         _httpClient = httpClient;
         _tokenClient = tokenClient;
@@ -69,6 +73,7 @@ public sealed class MoySkladFactureInGateway : IMoySkladFactureInGateway
         _responseHandler = responseHandler;
         _logger = logger;
         _isDevelopment = environment?.IsDevelopment() == true;
+        _retryOptions = retryOptions ?? MoySkladDocumentChangeRetryOptions.Disabled;
     }
 
     public async Task<IReadOnlyDictionary<Guid, string>> GetAsync(Guid accountId, Guid requestedByUserId,
@@ -181,15 +186,24 @@ public sealed class MoySkladFactureInGateway : IMoySkladFactureInGateway
             throw new ArgumentException("A unique non-empty facturein creation batch is required.", nameof(documents));
 
         const string endpoint = "entity/facturein/batch";
-        var payload = "[" + string.Join(',', documents.Select(item => item.PayloadJson)) + "]";
-        if (_isDevelopment)
-        {
-            _logger.LogInformation(
-                "Sending MoySklad document recreation create request: account_id={AccountId}, correlation_id={CorrelationId}, document_type={DocumentType}, http_method={HttpMethod}, endpoint={Endpoint}, document_count={DocumentCount}, request_body={RequestBody}",
-                accountId, correlationId, "facturein", HttpMethod.Post.Method, endpoint, documents.Count, payload);
-        }
+        var response = await MoySkladBatchCreateTimeout1088Retry.SendAsync(
+            documents,
+            item => item.SyncId,
+            async (pending, token) =>
+            {
+                var payload = "[" + string.Join(',', pending.Select(item => item.PayloadJson)) + "]";
+                if (_isDevelopment)
+                {
+                    _logger.LogInformation(
+                        "Sending MoySklad document recreation create request: account_id={AccountId}, correlation_id={CorrelationId}, document_type={DocumentType}, http_method={HttpMethod}, endpoint={Endpoint}, document_count={DocumentCount}, request_body={RequestBody}",
+                        accountId, correlationId, "facturein", HttpMethod.Post.Method, endpoint, pending.Count, payload);
+                }
 
-        var response = await SendJsonAsync(accountId, correlationId, HttpMethod.Post, endpoint, "facturein", payload, cancellationToken);
+                return await SendJsonAsync(
+                    accountId, correlationId, HttpMethod.Post, endpoint, "facturein", payload, token,
+                    captureBatchTimeout1088: true);
+            },
+            _retryOptions, _logger, accountId, correlationId, "facturein", cancellationToken);
         try
         {
             using var document = JsonDocument.Parse(response.Body);
@@ -253,7 +267,8 @@ public sealed class MoySkladFactureInGateway : IMoySkladFactureInGateway
     }
 
     private async Task<MoySkladResponseBody> SendJsonAsync(Guid accountId, string correlationId,
-        HttpMethod method, string endpoint, string entityType, string? payload, CancellationToken cancellationToken)
+        HttpMethod method, string endpoint, string entityType, string? payload, CancellationToken cancellationToken,
+        bool captureBatchTimeout1088 = false)
     {
         var context = new MoySkladRequestContext(accountId, correlationId, null, null, method.Method, endpoint, entityType, null);
         var stopwatch = Stopwatch.StartNew();
@@ -274,6 +289,9 @@ public sealed class MoySkladFactureInGateway : IMoySkladFactureInGateway
         using (response)
         {
             await _rateLimiter.ObserveAsync(accountId, MoySkladRateLimitObservationParser.Parse(response), cancellationToken);
+            if (captureBatchTimeout1088)
+                return await MoySkladBatchCreateTimeout1088Retry.ReadCreateResponseAsync(
+                    response, context, stopwatch.Elapsed, _responseHandler, cancellationToken);
             return await _responseHandler.ReadAsync(response, context, stopwatch.Elapsed, cancellationToken);
         }
     }

@@ -4,8 +4,10 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using MsContractor.MoySkladEgressService.Clients;
+using MsContractor.MoySkladEgressService.Gateways.Documents;
 using MsContractor.MoySkladEgressService.Models;
 using MsContractor.MoySkladEgressService.Models.Exceptions;
+using MsContractor.MoySkladEgressService.Models.Options;
 using MsContractor.MoySkladEgressService.RateLimiting;
 using MsContractor.MoySkladEgressService.ResponseHandling;
 
@@ -74,6 +76,7 @@ public sealed class MoySkladPurchaseReturnGateway : IMoySkladPurchaseReturnGatew
     private readonly IMoySkladResponseHandler _responseHandler;
     private readonly ILogger<MoySkladPurchaseReturnGateway> _logger;
     private readonly bool _isDevelopment;
+    private readonly MoySkladDocumentChangeRetryOptions _retryOptions;
 
     public MoySkladPurchaseReturnGateway(
         HttpClient httpClient,
@@ -81,7 +84,8 @@ public sealed class MoySkladPurchaseReturnGateway : IMoySkladPurchaseReturnGatew
         IMoySkladRateLimiter rateLimiter,
         IMoySkladResponseHandler responseHandler,
         ILogger<MoySkladPurchaseReturnGateway> logger,
-        IHostEnvironment? environment = null)
+        IHostEnvironment? environment = null,
+        MoySkladDocumentChangeRetryOptions? retryOptions = null)
     {
         _httpClient = httpClient;
         _tokenClient = tokenClient;
@@ -89,9 +93,11 @@ public sealed class MoySkladPurchaseReturnGateway : IMoySkladPurchaseReturnGatew
         _responseHandler = responseHandler;
         _logger = logger;
         _isDevelopment = environment?.IsDevelopment() == true;
+        _retryOptions = retryOptions ?? MoySkladDocumentChangeRetryOptions.Disabled;
     }
 
     public const int BatchSize = 1000;
+    private const int GetByIdBatchSize = 40;
 
     public async Task<IReadOnlyDictionary<Guid, string>> GetAsync(
         Guid accountId,
@@ -103,7 +109,7 @@ public sealed class MoySkladPurchaseReturnGateway : IMoySkladPurchaseReturnGatew
         ValidateIds(purchaseReturnIds);
         var result = new Dictionary<Guid, string>();
 
-        foreach (var batch in purchaseReturnIds.Chunk(BatchSize))
+        foreach (var batch in purchaseReturnIds.Chunk(GetByIdBatchSize))
         {
             var rows = await GetBatchAsync(
                 accountId, requestedByUserId, correlationId, batch, cancellationToken);
@@ -126,7 +132,7 @@ public sealed class MoySkladPurchaseReturnGateway : IMoySkladPurchaseReturnGatew
         CancellationToken cancellationToken)
     {
         var filter = string.Join(';', purchaseReturnIds.Select(id => $"id={id:D}"));
-        var endpoint = $"entity/purchasereturn?filter={Uri.EscapeDataString(filter)}&limit={BatchSize}";
+        var endpoint = $"entity/purchasereturn?filter={Uri.EscapeDataString(filter)}&limit={GetByIdBatchSize}";
         var context = new MoySkladRequestContext(
             accountId, correlationId, null, null, HttpMethod.Get.Method, endpoint, "purchasereturn", null);
         var stopwatch = Stopwatch.StartNew();
@@ -140,7 +146,7 @@ public sealed class MoySkladPurchaseReturnGateway : IMoySkladPurchaseReturnGatew
 
         _logger.LogInformation(
             "Sending MoySklad purchasereturn request: account_id={AccountId}, requested_by_user_id={UserId}, correlation_id={CorrelationId}, document_count={DocumentCount}, limit={Limit}",
-            accountId, requestedByUserId, correlationId, purchaseReturnIds.Count, BatchSize);
+            accountId, requestedByUserId, correlationId, purchaseReturnIds.Count, GetByIdBatchSize);
 
         HttpResponseMessage response;
         try
@@ -346,16 +352,24 @@ public sealed class MoySkladPurchaseReturnGateway : IMoySkladPurchaseReturnGatew
                 $"A unique non-empty purchasereturn creation batch of 1 to {BatchSize} items is required.", nameof(documents));
 
         const string endpoint = "entity/purchasereturn/batch";
-        var payload = "[" + string.Join(',', documents.Select(item => item.PayloadJson)) + "]";
-        if (_isDevelopment)
-        {
-            _logger.LogInformation(
-                "Sending MoySklad document recreation create request: account_id={AccountId}, correlation_id={CorrelationId}, document_type={DocumentType}, http_method={HttpMethod}, endpoint={Endpoint}, document_count={DocumentCount}, request_body={RequestBody}",
-                accountId, correlationId, "purchasereturn", HttpMethod.Post.Method, endpoint, documents.Count, payload);
-        }
+        var response = await MoySkladBatchCreateTimeout1088Retry.SendAsync(
+            documents,
+            item => ReadPayloadSyncId(item.PayloadJson),
+            async (pending, token) =>
+            {
+                var payload = "[" + string.Join(',', pending.Select(item => item.PayloadJson)) + "]";
+                if (_isDevelopment)
+                {
+                    _logger.LogInformation(
+                        "Sending MoySklad document recreation create request: account_id={AccountId}, correlation_id={CorrelationId}, document_type={DocumentType}, http_method={HttpMethod}, endpoint={Endpoint}, document_count={DocumentCount}, request_body={RequestBody}",
+                        accountId, correlationId, "purchasereturn", HttpMethod.Post.Method, endpoint, pending.Count, payload);
+                }
 
-        var response = await SendJsonAsync(
-            accountId, correlationId, HttpMethod.Post, endpoint, payload, cancellationToken);
+                return await SendJsonAsync(
+                    accountId, correlationId, HttpMethod.Post, endpoint, payload, token,
+                    captureBatchTimeout1088: true);
+            },
+            _retryOptions, _logger, accountId, correlationId, "purchasereturn", cancellationToken);
         return ParseCreateResponse(accountId, correlationId, endpoint, response, documents);
     }
 
@@ -367,7 +381,8 @@ public sealed class MoySkladPurchaseReturnGateway : IMoySkladPurchaseReturnGatew
         string? payload,
         CancellationToken cancellationToken,
         string entityType = "purchasereturn",
-        Guid? entityId = null)
+        Guid? entityId = null,
+        bool captureBatchTimeout1088 = false)
     {
         var context = new MoySkladRequestContext(
             accountId, correlationId, null, null, method.Method, endpoint, entityType, entityId);
@@ -402,6 +417,9 @@ public sealed class MoySkladPurchaseReturnGateway : IMoySkladPurchaseReturnGatew
         {
             await _rateLimiter.ObserveAsync(
                 accountId, MoySkladRateLimitObservationParser.Parse(response), cancellationToken);
+            if (captureBatchTimeout1088)
+                return await MoySkladBatchCreateTimeout1088Retry.ReadCreateResponseAsync(
+                    response, context, stopwatch.Elapsed, _responseHandler, cancellationToken);
             return await _responseHandler.ReadAsync(
                 response, context, stopwatch.Elapsed, cancellationToken);
         }
@@ -514,6 +532,19 @@ public sealed class MoySkladPurchaseReturnGateway : IMoySkladPurchaseReturnGatew
         value.ValueKind == JsonValueKind.String && Guid.TryParse(value.GetString(), out var id)
             ? id
             : null;
+
+    private static Guid ReadPayloadSyncId(string payloadJson)
+    {
+        try
+        {
+            using var payload = JsonDocument.Parse(payloadJson);
+            return TryReadGuidProperty(payload.RootElement, "syncId") ?? Guid.Empty;
+        }
+        catch (JsonException)
+        {
+            return Guid.Empty;
+        }
+    }
 
     private static (string Code, string Message)? TryReadError(JsonElement row)
     {

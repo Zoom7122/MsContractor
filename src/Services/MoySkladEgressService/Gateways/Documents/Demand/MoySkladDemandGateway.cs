@@ -42,7 +42,7 @@ public sealed class MoySkladDemandGateway : IMoySkladDemandGateway
         _logger = logger;
     }
 
-    public const int BatchSize = 1000;
+    public const int BatchSize = 40;
 
     public async Task<IReadOnlyDictionary<Guid, MoySkladDemandReference>> GetAsync(
         Guid accountId,

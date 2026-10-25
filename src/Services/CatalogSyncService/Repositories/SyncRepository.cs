@@ -16,7 +16,7 @@ public interface ISyncRepository
     Task<bool> RenewRunLeaseAsync(Guid accountId, Guid syncRunId, Guid ownerToken, long leaseExpiresAtTicks, CancellationToken cancellationToken);
     Task RestartStagingAsync(Guid accountId, Guid syncRunId, Guid ownerToken, DateTimeOffset now, DateTimeOffset windowTo, long leaseExpiresAtTicks, CancellationToken cancellationToken);
     Task SetTotalCountAsync(Guid accountId, Guid syncRunId, Guid ownerToken, int totalCount, long leaseExpiresAtTicks, CancellationToken cancellationToken);
-    Task StagePageAsync(Guid accountId, Guid syncRunId, Guid ownerToken, IReadOnlyCollection<CounterpartySyncStage> rows, bool incremental, DateTimeOffset now, long leaseExpiresAtTicks, CancellationToken cancellationToken);
+    Task StagePageAsync(Guid accountId, Guid syncRunId, Guid ownerToken, IReadOnlyCollection<CounterpartySyncStage> rows, bool incremental, DateTimeOffset now, long leaseExpiresAtTicks, CancellationToken cancellationToken, IReadOnlyCollection<SyncRunError>? errors = null);
     Task<IReadOnlyList<Guid>> GetArchivedStagedCounterpartyIdsAsync(Guid accountId, Guid syncRunId, bool incremental, CancellationToken cancellationToken);
     Task<int> GetStagedProcessedCountAsync(Guid accountId, Guid syncRunId, bool incremental, CancellationToken cancellationToken);
     Task ValidateFullStagingAsync(Guid accountId, Guid syncRunId, int expectedCount, CancellationToken cancellationToken);
@@ -26,7 +26,7 @@ public interface ISyncRepository
     Task<bool> FailAsync(Guid accountId, Guid syncRunId, Guid ownerToken, string errorCode, string errorMessage, DateTimeOffset completedAt, InboxMessage inbox, SyncOutboxMessage outbox, CancellationToken cancellationToken);
 }
 
-public sealed class SyncRepository : ISyncRepository
+public sealed partial class SyncRepository : ISyncRepository
 {
     private const int PublishBatchSize = 500;
     private readonly CatalogSyncDbContext _dbContext;
@@ -46,14 +46,14 @@ public sealed class SyncRepository : ISyncRepository
     public async Task<SyncRun?> FindRunAsync(Guid accountId, Guid messageId, CancellationToken cancellationToken)
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
-        return await _dbContext.SyncRuns.SingleOrDefaultAsync(x => x.AccountId == accountId && x.MessageId == messageId, cancellationToken);
+        return await _dbContext.SyncRuns.AsNoTracking().SingleOrDefaultAsync(x => x.AccountId == accountId && x.MessageId == messageId, cancellationToken);
     }
 
     public async Task<SyncRun> ReloadRunAsync(Guid accountId, Guid messageId, CancellationToken cancellationToken)
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
         _dbContext.ChangeTracker.Clear();
-        return await _dbContext.SyncRuns.SingleAsync(x => x.AccountId == accountId && x.MessageId == messageId, cancellationToken);
+        return await _dbContext.SyncRuns.AsNoTracking().SingleAsync(x => x.AccountId == accountId && x.MessageId == messageId, cancellationToken);
     }
 
     public async Task<SyncWatermark?> FindWatermarkAsync(Guid accountId, CancellationToken cancellationToken)
@@ -68,6 +68,7 @@ public sealed class SyncRepository : ISyncRepository
         if (run.AccountId != accountId) throw new InvalidOperationException("Sync run belongs to another account.");
         if (_dbContext.Entry(run).State == EntityState.Detached) _dbContext.SyncRuns.Add(run);
         await SaveAsync(cancellationToken);
+        _dbContext.Entry(run).State = EntityState.Detached;
     }
 
     public async Task<bool> TryAcquireRunLeaseAsync(
@@ -156,17 +157,23 @@ public sealed class SyncRepository : ISyncRepository
         bool incremental,
         DateTimeOffset now,
         long leaseExpiresAtTicks,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<SyncRunError>? errors = null)
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
         if (rows.Any(item => item.AccountId != accountId || item.SyncRunId != syncRunId || item.Sequence < 0))
             throw new InvalidOperationException("Counterparty staging rows must belong to the active account and run.");
-
+        DetachRun(accountId, syncRunId);
+        RememberErrors(accountId, syncRunId, errors ?? []);
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
-        _dbContext.CounterpartySyncStaging.AddRange(rows);
-        await SaveAsync(cancellationToken);
-        foreach (var row in rows)
-            _dbContext.Entry(row).State = EntityState.Detached;
+        if (await RenewOwnedLeaseCoreAsync(accountId, syncRunId, ownerToken, leaseExpiresAtTicks, cancellationToken) != 1)
+            throw new SyncRunLeaseLostException("The sync run lease was lost before staging a page.");
+        await SaveWithIsolationAsync(rows.ToArray(), async (batch, token) =>
+        {
+            _dbContext.CounterpartySyncStaging.AddRange(batch);
+            await SaveAsync(token);
+        }, RejectStagingRowAsync, cancellationToken);
+        await FlushErrorsCoreAsync(accountId, syncRunId, cancellationToken);
         var processedCount = await GetStagedProcessedCountCoreAsync(accountId, syncRunId, incremental, cancellationToken);
         var updated = await _dbContext.SyncRuns
             .Where(item => item.AccountId == accountId && item.Id == syncRunId && item.Status == "running" &&
@@ -177,6 +184,7 @@ public sealed class SyncRepository : ISyncRepository
                 .SetProperty(item => item.ProcessingLeaseExpiresAtTicks, leaseExpiresAtTicks), cancellationToken);
         if (updated != 1) throw new SyncRunLeaseLostException("The sync run lease was lost while a page was being staged.");
         await transaction.CommitAsync(cancellationToken);
+        ForgetCommittedErrors(accountId, syncRunId);
     }
 
     public async Task<IReadOnlyList<Guid>> GetArchivedStagedCounterpartyIdsAsync(
@@ -226,6 +234,7 @@ public sealed class SyncRepository : ISyncRepository
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
         ValidateCompletion(accountId, syncRunId, documents, commissions, completion);
+        DetachRun(accountId, syncRunId);
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
         if (await RenewOwnedLeaseCoreAsync(accountId, syncRunId, ownerToken, leaseExpiresAtTicks, cancellationToken) != 1)
             throw new SyncRunLeaseLostException("The sync run lease was lost before publication.");
@@ -242,25 +251,28 @@ public sealed class SyncRepository : ISyncRepository
             var page = await _dbContext.CounterpartySyncStaging.AsNoTracking()
                 .Where(item => item.AccountId == accountId && item.SyncRunId == syncRunId &&
                                item.IsValidForStorage && item.Sequence > lastSequence)
-                .OrderBy(item => item.Sequence)
-                .Take(PublishBatchSize)
-                .ToListAsync(cancellationToken);
+                .OrderBy(item => item.Sequence).Take(PublishBatchSize).ToListAsync(cancellationToken);
             if (page.Count == 0) break;
-            var counterparties = page.Select(ToCounterparty).ToArray();
-            _dbContext.Counterparties.AddRange(counterparties);
-            await SaveAsync(cancellationToken);
-            foreach (var counterparty in counterparties)
-                _dbContext.Entry(counterparty).State = EntityState.Detached;
+            await SaveWithIsolationAsync(page, async (batch, token) =>
+            {
+                _dbContext.Counterparties.AddRange(batch.Select(ToCounterparty));
+                await SaveAsync(token);
+            }, RejectPublicationRowAsync, cancellationToken);
             lastSequence = page[^1].Sequence;
         }
 
-        _dbContext.CounterpartyDocuments.AddRange(documents);
-        _dbContext.DocumentAdditionalCommissions.AddRange(commissions);
+        var acceptedArchivedIds = (await GetArchivedStagedCounterpartyIdsAsync(
+            accountId, syncRunId, false, cancellationToken)).ToHashSet();
+        var acceptedDocuments = documents.Where(item => acceptedArchivedIds.Contains(item.CounterpartyId)).ToArray();
+        var acceptedDocumentIds = acceptedDocuments.Select(item => item.DocumentId).ToHashSet();
+        _dbContext.CounterpartyDocuments.AddRange(acceptedDocuments);
+        _dbContext.DocumentAdditionalCommissions.AddRange(
+            commissions.Where(item => acceptedDocumentIds.Contains(item.DocumentId)));
         await SaveCompletionAsync(completion, cancellationToken);
         await _dbContext.CounterpartySyncStaging
-            .Where(item => item.AccountId == accountId && item.SyncRunId == syncRunId)
-            .ExecuteDeleteAsync(cancellationToken);
+            .Where(item => item.AccountId == accountId && item.SyncRunId == syncRunId).ExecuteDeleteAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        ForgetCommittedErrors(accountId, syncRunId);
     }
 
     public async Task<(int Inserted, int Updated)> CompleteIncrementalFromStagingAsync(
@@ -276,6 +288,7 @@ public sealed class SyncRepository : ISyncRepository
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
         ValidateCompletion(accountId, syncRunId, documents, commissions, completion);
+        DetachRun(accountId, syncRunId);
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
         if (await RenewOwnedLeaseCoreAsync(accountId, syncRunId, ownerToken, leaseExpiresAtTicks, cancellationToken) != 1)
             throw new SyncRunLeaseLostException("The sync run lease was lost before publication.");
@@ -288,60 +301,51 @@ public sealed class SyncRepository : ISyncRepository
         var latestValidRows = LatestStageRows(accountId, syncRunId).Where(item => item.IsValidForStorage);
         while (true)
         {
-            var page = await latestValidRows
-                .Where(item => item.Sequence > lastSequence)
-                .OrderBy(item => item.Sequence)
-                .Take(PublishBatchSize)
-                .ToListAsync(cancellationToken);
+            var page = await latestValidRows.Where(item => item.Sequence > lastSequence)
+                .OrderBy(item => item.Sequence).Take(PublishBatchSize).ToListAsync(cancellationToken);
             if (page.Count == 0) break;
-
-            var incoming = page.Select(ToCounterparty).ToArray();
-            var ids = incoming.Select(item => item.Id).ToArray();
-            var existing = await _dbContext.Counterparties
-                .Where(item => item.AccountId == accountId && ids.Contains(item.Id))
-                .ToDictionaryAsync(item => item.Id, cancellationToken);
             var refreshedArchivedIds = new HashSet<Guid>();
-            var touchedCounterparties = new List<Counterparty>();
-            foreach (var row in incoming)
+            await SaveWithIsolationAsync(page, async (batch, token) =>
             {
-                if (!existing.TryGetValue(row.Id, out var current))
+                var incoming = batch.Select(ToCounterparty).ToArray();
+                var ids = incoming.Select(item => item.Id).ToArray();
+                var existing = await _dbContext.Counterparties
+                    .Where(item => item.AccountId == accountId && ids.Contains(item.Id))
+                    .ToDictionaryAsync(item => item.Id, token);
+                var batchInserted = 0;
+                var batchUpdated = 0;
+                var batchArchivedIds = new HashSet<Guid>();
+                foreach (var row in incoming)
                 {
-                    _dbContext.Counterparties.Add(row);
-                    touchedCounterparties.Add(row);
-                    inserted++;
-                    if (row.Archived) refreshedArchivedIds.Add(row.Id);
+                    if (!existing.TryGetValue(row.Id, out var current))
+                    {
+                        _dbContext.Counterparties.Add(row);
+                        batchInserted++;
+                        if (row.Archived) batchArchivedIds.Add(row.Id);
+                    }
+                    else if (applyIncoming(current, row))
+                    {
+                        batchUpdated++;
+                        if (row.Archived) batchArchivedIds.Add(row.Id);
+                    }
                 }
-                else if (applyIncoming(current, row))
-                {
-                    touchedCounterparties.Add(current);
-                    updated++;
-                    if (row.Archived) refreshedArchivedIds.Add(row.Id);
-                }
-            }
-
-            await SaveAsync(cancellationToken);
-            foreach (var counterparty in incoming)
-            {
-                var entry = _dbContext.Entry(counterparty);
-                if (entry.State != EntityState.Detached) entry.State = EntityState.Detached;
-            }
-            foreach (var counterparty in existing.Values)
-            {
-                var entry = _dbContext.Entry(counterparty);
-                if (entry.State != EntityState.Detached) entry.State = EntityState.Detached;
-            }
+                await SaveAsync(token);
+                // Count only writes that survived their savepoint.
+                inserted += batchInserted;
+                updated += batchUpdated;
+                refreshedArchivedIds.UnionWith(batchArchivedIds);
+            }, RejectPublicationRowAsync, cancellationToken);
 
             if (refreshedArchivedIds.Count > 0)
-                await ReplaceArchivedDocumentsAsync(
-                    accountId, refreshedArchivedIds, documents, commissions, cancellationToken);
+                await ReplaceArchivedDocumentsAsync(accountId, refreshedArchivedIds, documents, commissions, cancellationToken);
             lastSequence = page[^1].Sequence;
         }
 
         await SaveCompletionAsync(completion, cancellationToken);
         await _dbContext.CounterpartySyncStaging
-            .Where(item => item.AccountId == accountId && item.SyncRunId == syncRunId)
-            .ExecuteDeleteAsync(cancellationToken);
+            .Where(item => item.AccountId == accountId && item.SyncRunId == syncRunId).ExecuteDeleteAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        ForgetCommittedErrors(accountId, syncRunId);
         return (inserted, updated);
     }
 
@@ -392,15 +396,38 @@ public sealed class SyncRepository : ISyncRepository
         if (!await _dbContext.InboxMessages.AnyAsync(x => x.MessageId == inbox.MessageId && x.ConsumerName == inbox.ConsumerName, cancellationToken))
             _dbContext.InboxMessages.Add(inbox);
         _dbContext.OutboxMessages.Add(outbox);
+        RememberErrors(accountId, syncRunId,
+            [SyncRunError.Create(accountId, syncRunId, null, errorCode, errorMessage, completedAt)]);
+        await FlushErrorsCoreAsync(accountId, syncRunId, cancellationToken);
         await SaveAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        ForgetCommittedErrors(accountId, syncRunId);
         return true;
     }
 
     private async Task SaveCompletionAsync(SyncCompletion completion, CancellationToken cancellationToken)
     {
+        var run = completion.Run;
+        run.ProcessedCount = await GetStagedProcessedCountCoreAsync(
+            run.AccountId, run.Id, run.ExecutionMode == "incremental", cancellationToken);
+        await FlushErrorsCoreAsync(run.AccountId, run.Id, cancellationToken);
+        var completed = await _dbContext.SyncRuns
+            .Where(item => item.AccountId == run.AccountId && item.Id == run.Id && item.Status == "running")
+            .ExecuteUpdateAsync(update => update
+                .SetProperty(item => item.Status, "completed")
+                .SetProperty(item => item.ProcessedCount, run.ProcessedCount)
+                .SetProperty(item => item.TotalCount, run.TotalCount)
+                .SetProperty(item => item.CompletedAt, run.CompletedAt)
+                .SetProperty(item => item.UpdatedAt, run.UpdatedAt)
+                .SetProperty(item => item.ErrorCode, (string?)null)
+                .SetProperty(item => item.ErrorMessage, (string?)null)
+                .SetProperty(item => item.ProcessingOwnerToken, (Guid?)null)
+                .SetProperty(item => item.ProcessingLeaseExpiresAtTicks, (long?)null), cancellationToken);
+        if (completed != 1) throw new SyncRunLeaseLostException("The sync run was not running during completion.");
+        run.ErrorsCount = await _dbContext.SyncRuns.Where(item => item.AccountId == run.AccountId && item.Id == run.Id)
+            .Select(item => item.ErrorsCount).SingleAsync(cancellationToken);
         _dbContext.InboxMessages.Add(completion.Inbox);
-        _dbContext.OutboxMessages.Add(completion.Outbox);
+        _dbContext.OutboxMessages.Add(completion.CreateCompletedOutbox?.Invoke(run.ProcessedCount) ?? completion.Outbox);
         var incoming = completion.Watermark;
         var watermark = await _dbContext.SyncWatermarks.SingleOrDefaultAsync(x => x.AccountId == incoming.AccountId, cancellationToken);
         if (watermark is null) _dbContext.SyncWatermarks.Add(incoming);

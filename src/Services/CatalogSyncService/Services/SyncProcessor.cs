@@ -86,6 +86,14 @@ public sealed class SyncProcessor : ISyncProcessor
             else
                 await ProcessFullAsync(command, run, ownerToken, cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (SyncRunLeaseLostException)
+        {
+            throw;
+        }
         catch (Exception exception)
         {
             await MarkFailedAsync(command, ownerToken, exception, cancellationToken);
@@ -112,6 +120,7 @@ public sealed class SyncProcessor : ISyncProcessor
         await _repository.CompleteFullFromStagingAsync(
             command.AccountId, command.SyncRunId, ownerToken, documents, commissions, completion,
             LeaseExpiresAt(now).UtcTicks, cancellationToken);
+        processedCount = completion.Run.ProcessedCount;
 
         _logger.LogInformation(
             "Full counterparty sync completed: processed_count={ProcessedCount}, total_count={TotalCount}, active_count={ActiveCount}, archived_count={ArchivedCount}, archived_document_count={ArchivedDocumentCount}, window_to={WindowTo}",
@@ -150,6 +159,7 @@ public sealed class SyncProcessor : ISyncProcessor
         var (insertedCount, updatedCount) = await _repository.CompleteIncrementalFromStagingAsync(
             command.AccountId, command.SyncRunId, ownerToken, documents, commissions, completion,
             ApplyIncomingIfCurrent, LeaseExpiresAt(now).UtcTicks, cancellationToken);
+        processedCount = completion.Run.ProcessedCount;
 
         _logger.LogInformation(
             "Incremental counterparty sync completed: processed_count={ProcessedCount}, total_count={TotalCount}, inserted_count={InsertedCount}, updated_count={UpdatedCount}, active_count={ActiveCount}, archived_count={ArchivedCount}, archived_document_count={ArchivedDocumentCount}, window_from={WindowFrom}, window_to={WindowTo}",
@@ -310,6 +320,7 @@ public sealed class SyncProcessor : ISyncProcessor
                 throw SnapshotChanged();
             }
 
+            var errors = new List<SyncRunError>();
             var stageRows = new CounterpartySyncStage[parsed.Rows.Count];
             for (var index = 0; index < parsed.Rows.Count; index++)
             {
@@ -317,11 +328,11 @@ public sealed class SyncProcessor : ISyncProcessor
                 stageRows[index] = ToStage(
                     normalized,
                     sequenceBase + offset + index,
-                    IsValidForStorage(normalized));
+                    IsValidForStorage(normalized, errors, now));
             }
             await _repository.StagePageAsync(
                 command.AccountId, command.SyncRunId, ownerToken, stageRows, incremental, now,
-                LeaseExpiresAt(_timeProvider.GetUtcNow()).UtcTicks, cancellationToken);
+                LeaseExpiresAt(_timeProvider.GetUtcNow()).UtcTicks, cancellationToken, errors);
             loadedCount += parsed.Rows.Count;
         }
 
@@ -477,7 +488,8 @@ public sealed class SyncProcessor : ISyncProcessor
         return new SyncCompletion(run,
             new InboxMessage { MessageId = command.MessageId, ConsumerName = ConsumerName, ProcessedAt = now },
             CreateOutbox(new SyncCompleted(Guid.NewGuid(), command.SyncRunId, command.AccountId, processedCount, now), command.AccountId, now),
-            new SyncWatermark { AccountId = command.AccountId, Watermark = run.WindowTo.Value, LastSyncRunId = command.SyncRunId, UpdatedAt = now });
+            new SyncWatermark { AccountId = command.AccountId, Watermark = run.WindowTo.Value, LastSyncRunId = command.SyncRunId, UpdatedAt = now },
+            count => CreateOutbox(new SyncCompleted(Guid.NewGuid(), command.SyncRunId, command.AccountId, count, now), command.AccountId, now));
     }
 
     private async Task MarkFailedAsync(
@@ -542,11 +554,14 @@ public sealed class SyncProcessor : ISyncProcessor
         target.UpdatedAt = source.UpdatedAt;
     }
 
-    private bool IsValidForStorage(Counterparty counterparty)
+    private bool IsValidForStorage(Counterparty counterparty, ICollection<SyncRunError> errors, DateTimeOffset now)
     {
         if (CounterpartyStorageValidator.TryValidate(counterparty, out var field, out var length, out var maxLength))
             return true;
 
+        errors.Add(SyncRunError.Create(counterparty.AccountId, counterparty.LastSyncRunId, counterparty.Id,
+            "COUNTERPARTY_FIELD_TOO_LONG",
+            $"Поле {field} превышает допустимую длину: {length} символов при лимите {maxLength}.", now, field ?? string.Empty));
         _logger.LogWarning(
             "Counterparty skipped because a field exceeds its database limit: counterparty_id={CounterpartyId}, account_id={AccountId}, field={Field}, length={Length}, max_length={MaxLength}",
             counterparty.Id,

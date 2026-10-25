@@ -8,6 +8,7 @@ import MoyskladMergeView from '../views/MoyskladMergeView.vue'
 import MoyskladOverviewView from '../views/MoyskladOverviewView.vue'
 import MoyskladSettingsView from '../views/MoyskladSettingsView.vue'
 import MoyskladSyncView from '../views/MoyskladSyncView.vue'
+import MoyskladSyncRunErrorsView from '../views/MoyskladSyncRunErrorsView.vue'
 
 const moyskladChildren = [
   {
@@ -37,6 +38,13 @@ const moyskladChildren = [
     title: 'Синхронизация',
     subtitle: 'Управление полной и инкрементальной синхронизацией',
     component: MoyskladSyncView
+  },
+  {
+    path: 'sync/:syncRunId/errors',
+    name: 'moysklad-sync-errors',
+    title: 'Ошибки синхронизации',
+    subtitle: 'Ошибки выбранного запуска синхронизации',
+    component: MoyskladSyncRunErrorsView
   },
   {
     path: 'history',

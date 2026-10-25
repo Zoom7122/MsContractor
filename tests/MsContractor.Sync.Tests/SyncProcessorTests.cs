@@ -615,9 +615,55 @@ public sealed class SyncProcessorTests
         var saved = await dbContext.Counterparties.SingleAsync();
         var run = await dbContext.SyncRuns.SingleAsync(item => item.Id == command.SyncRunId);
         Assert.Equal(validId, saved.Id);
+        var error = await dbContext.SyncRunErrors.SingleAsync();
+        Assert.Equal(command.SyncRunId, error.SyncRunId);
+        Assert.Equal(accountId, error.AccountId);
+        Assert.NotEqual(validId, error.CounterpartyId);
+        Assert.Equal("COUNTERPARTY_FIELD_TOO_LONG", error.ReasonCode);
+        Assert.Contains("1025", error.ErrorMessage);
+        Assert.Equal(1, run.ErrorsCount);
         Assert.Equal(2, run.TotalCount);
         Assert.Equal(1, run.ProcessedCount);
         Assert.Equal("completed", run.Status);
+    }
+
+    [Fact]
+    public async Task Incremental_OversizedUpdateRecordsErrorAndKeepsPreviousCounterparty()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var dbContext = await CreateContextAsync(connection);
+        var accountId = Guid.NewGuid();
+        var existing = Existing(accountId, "Прежняя версия");
+        dbContext.Counterparties.Add(existing);
+        var watermark = new DateTimeOffset(2026, 3, 20, 9, 0, 0, TimeSpan.Zero);
+        dbContext.SyncWatermarks.Add(new SyncWatermark
+        {
+            AccountId = accountId, LastSyncRunId = existing.LastSyncRunId,
+            Watermark = watermark, UpdatedAt = watermark
+        });
+        await dbContext.SaveChangesAsync();
+        var validId = Guid.NewGuid();
+        var updated = watermark.AddMinutes(10);
+        var egress = new FakeEgressClient(request => request switch
+        {
+            { Archived: false, Limit: 1 } => Collection(2, 1, 0, []),
+            { Archived: true, Limit: 1 } => Collection(0, 1, 0, []),
+            _ => Collection(2, request.Limit, request.Offset,
+                [new Row(validId, "Новый", false, updated), new Row(existing.Id, new string('К', 1025), false, updated)])
+        });
+        var command = Command(accountId, SyncMode.Incremental);
+        await CreateProcessor(dbContext, egress, new FixedTimeProvider(watermark.AddMinutes(20)))
+            .ProcessAsync(command, CancellationToken.None);
+        var saved = await dbContext.Counterparties.AsNoTracking().Where(item => item.AccountId == accountId).ToArrayAsync();
+        Assert.Equal(2, saved.Length);
+        Assert.Equal("Прежняя версия", Assert.Single(saved, item => item.Id == existing.Id).Name);
+        Assert.Contains(saved, item => item.Id == validId);
+        var run = await dbContext.SyncRuns.SingleAsync(item => item.Id == command.SyncRunId);
+        Assert.Equal("completed", run.Status);
+        Assert.Equal(1, run.ErrorsCount);
+        Assert.Equal(1, run.ProcessedCount);
+        Assert.Equal(existing.Id, (await dbContext.SyncRunErrors.SingleAsync()).CounterpartyId);
     }
 
     [Theory]

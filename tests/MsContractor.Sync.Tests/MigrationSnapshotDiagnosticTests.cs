@@ -92,7 +92,8 @@ public sealed class MigrationSnapshotDiagnosticTests
             "20260914120000_RemoveSalesReturnRecreationRequest",
             "20260916120000_RemoveDocumentAdditionalData"
         ];
-        Assert.Equal([.. expected, "20260924120000_AddMergeCounterpartyLocks", "20260927120000_AddCounterpartySyncStaging", "20260927130000_AddCatalogSettings", "20260927140000_ReworkCatalogSettings", "20261019113834_AddDocumentsInOperationResponses"],
+        Assert.Equal([.. expected, "20260924120000_AddMergeCounterpartyLocks", "20260927120000_AddCounterpartySyncStaging", "20260927130000_AddCatalogSettings", "20260927140000_ReworkCatalogSettings", "20261019113834_AddDocumentsInOperationResponses",
+            "20261025121738_AddSyncRunErrors"],
             context.GetService<IMigrationsAssembly>().Migrations.Keys);
     }
 

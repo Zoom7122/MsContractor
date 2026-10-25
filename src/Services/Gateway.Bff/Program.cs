@@ -41,6 +41,11 @@ builder.Services.AddHttpClient<IMergeJobsClient, MergeJobsClient>(client =>
 });
 var catalogSyncBaseUrl = builder.Configuration["Services:CatalogSyncService:BaseUrl"]
     ?? "http://localhost:5013/";
+builder.Services.AddHttpClient<ISyncRunHistoryClient, SyncRunHistoryClient>(client =>
+{
+    client.BaseAddress = new Uri(catalogSyncBaseUrl.EndsWith('/') ? catalogSyncBaseUrl : $"{catalogSyncBaseUrl}/");
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
 builder.Services.AddHttpClient<ICatalogSyncClient, CatalogSyncClient>(client =>
 {
     client.BaseAddress = new Uri(

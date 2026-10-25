@@ -53,7 +53,7 @@ public interface IMoySkladFactureInGateway
 public sealed class MoySkladFactureInGateway : IMoySkladFactureInGateway
 {
     public const int BatchSize = 1000;
-    private const int GetByIdBatchSize = 40;
+    private const int GetByIdsBatchSize = 40;
     private readonly HttpClient _httpClient;
     private readonly IVendorTokenClient _tokenClient;
     private readonly IMoySkladRateLimiter _rateLimiter;
@@ -83,7 +83,7 @@ public sealed class MoySkladFactureInGateway : IMoySkladFactureInGateway
             throw new ArgumentOutOfRangeException(nameof(factureInIds), $"A facturein batch cannot exceed {BatchSize} documents.");
         ValidateIds(factureInIds, "facturein");
         var result = new Dictionary<Guid, string>();
-        foreach (var batch in factureInIds.Chunk(GetByIdBatchSize))
+        foreach (var batch in factureInIds.Chunk(GetByIdsBatchSize))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var documents = await GetBatchAsync(accountId, correlationId, batch, cancellationToken);
@@ -126,14 +126,17 @@ public sealed class MoySkladFactureInGateway : IMoySkladFactureInGateway
 
         var result = new HashSet<FactureInBaseReference>();
         foreach (var group in references.Distinct().GroupBy(item => item.Type, StringComparer.Ordinal))
-        foreach (var batch in group.Select(item => item.DocumentId).Chunk(BatchSize))
         {
-            var rows = await GetRowsAsync(accountId, correlationId, group.Key, batch, "id", cancellationToken);
-            foreach (var row in rows)
+            var batchSize = group.Key == "supply" ? GetByIdsBatchSize : BatchSize;
+            foreach (var batch in group.Select(item => item.DocumentId).Chunk(batchSize))
             {
-                var id = RequireId(row, group.Key);
-                RequireType(row, group.Key);
-                result.Add(new FactureInBaseReference(group.Key, id));
+                var rows = await GetRowsAsync(accountId, correlationId, group.Key, batch, "id", cancellationToken);
+                foreach (var row in rows)
+                {
+                    var id = RequireId(row, group.Key);
+                    RequireType(row, group.Key);
+                    result.Add(new FactureInBaseReference(group.Key, id));
+                }
             }
         }
         return result;

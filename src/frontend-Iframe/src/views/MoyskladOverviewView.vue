@@ -169,7 +169,9 @@ const syncState = computed(() => {
     return { label: 'Выполняется', tone: 'primary', spinning: true }
   }
   if (normalizedStatus === 'completed') {
-    return { label: 'Завершена', tone: 'success' }
+    return status.errorsCount > 0
+      ? { label: 'Завершена с ошибками', tone: 'warning' }
+      : { label: 'Завершена', tone: 'success' }
   }
   if (normalizedStatus === 'failed') {
     return { label: 'Ошибка', tone: 'danger' }
@@ -414,7 +416,7 @@ function mapCatalogState(state) {
       processedCounterparties: run?.status === 'completed' ? toOptionalNumber(run.processedCount) : null,
       newCounterparties: null,
       updatedCounterparties: null,
-      errorsCount: null,
+      errorsCount: acceptedRunPending ? 0 : (run ? toNumber(run.errorsCount, 0) : null),
       progressPercent: run?.status === 'completed' ? normalizeProgressPercent(null, toOptionalNumber(run.processedCount), totalCount) : 0,
       progressAvailable: run?.status === 'completed' && totalCount > 0,
       currentStep: acceptedRunPending || run?.status === 'queued'
@@ -630,7 +632,14 @@ function displayValue(value) {
           <dl class="sync-panel__stats">
             <div v-for="stat in syncStats" :key="stat.key" class="sync-panel__stat">
               <dt>{{ stat.label }}</dt>
-              <dd class="app-nums" :class="{ 'sync-panel__stat-value--danger': stat.danger }">{{ stat.value }}</dd>
+              <dd class="app-nums" :class="{ 'sync-panel__stat-value--danger': stat.danger }">
+                <RouterLink v-if="stat.key === 'errors' && stat.danger && catalogState?.latestSyncRun?.id"
+                  :to="{ name: 'moysklad-sync-errors', params: { syncRunId: catalogState.latestSyncRun.id } }"
+                  style="color: inherit; text-decoration: underline" aria-label="Открыть ошибки последнего запуска синхронизации">
+                  {{ stat.value }}
+                </RouterLink>
+                <template v-else>{{ stat.value }}</template>
+              </dd>
             </div>
           </dl>
 

@@ -58,6 +58,7 @@ builder.Services.AddHealthChecks()
 
 builder.Services.AddScoped<ISyncRequestService, SyncRequestService>();
 builder.Services.AddScoped<IStatePreparationService, StatePreparationService>();
+builder.Services.AddScoped<ISyncRunHistoryService, SyncRunHistoryService>();
 builder.Services.AddScoped<IDocumentsInOperationStateService, DocumentsInOperationStateService>();
 builder.Services.AddScoped<ICatalogSettingsService, CatalogSettingsService>();
 

@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using System.Linq.Expressions;
+using MsContractor.CatalogSyncService.Models;
 using MsContractor.Contracts.Internal;
 using MsContractor.CatalogSyncService.Persistence;
 
@@ -12,6 +14,9 @@ public interface ISyncRunStateRepository
 
 public sealed class SyncRunStateRepository : ISyncRunStateRepository
 {
+    internal static readonly Expression<Func<SyncRun, SyncRunState>> Projection = run => new SyncRunState(
+        run.Id, run.Status, run.ProcessedCount, run.TotalCount, run.CreatedAt, run.StartedAt,
+        run.UpdatedAt, run.ExecutionMode, run.ErrorCode, run.ErrorMessage, run.ErrorsCount, run.CompletedAt);
     private readonly CatalogSyncDbContext _dbContext;
 
     public SyncRunStateRepository(CatalogSyncDbContext dbContext)
@@ -29,17 +34,7 @@ public sealed class SyncRunStateRepository : ISyncRunStateRepository
             .Where(run => run.AccountId == accountId)
             .OrderByDescending(run => run.CreatedAt)
             .ThenByDescending(run => run.Id)
-            .Select(run => new SyncRunState(
-                run.Id,
-                run.Status,
-                run.ProcessedCount,
-                run.TotalCount,
-                run.CreatedAt,
-                run.StartedAt,
-                run.UpdatedAt,
-                run.ExecutionMode,
-                run.ErrorCode,
-                run.ErrorMessage))
+            .Select(Projection)
             .FirstOrDefaultAsync(cancellationToken);
     }
 

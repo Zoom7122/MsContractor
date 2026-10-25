@@ -37,6 +37,22 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml --env-file .env.d
 | Gateway и Swagger UI в режиме Development | `http://localhost:<GATEWAY_BFF_PORT>/swagger` |
 | RedisInsight | `http://localhost:<REDIS_INSIGHT_PORT>` |
 
+### AKHQ для локального Kafka
+
+AKHQ можно запустить отдельно от Compose, подключив его к сети Kafka проекта. Сначала поднимите dev-стек, затем запустите скрипт. При первом запуске он запросит логин и пароль и сохранит конфигурацию пользователя вне репозитория.
+
+```bash
+scripts/akhq.sh start
+```
+
+Откройте `http://127.0.0.1:8086`. Скрипт публикует интерфейс только на loopback, использует Basic Auth и подключает AKHQ к `kafka:9092` внутри сети `mscontractor_mscontractor-net`. AKHQ запускается отдельно и не добавляется в Compose или Nginx.
+
+- `scripts/akhq.sh stop`, `status`, `logs` — управление и просмотр логов.
+- `scripts/akhq.sh remove` — удалить только AKHQ-контейнер. Перед `make compose-down` выполните эту команду: даже остановленный AKHQ остаётся подключённым к Compose-сети. Локальный конфиг при удалении контейнера сохраняется.
+- Чтобы сменить логин или пароль, выполните `scripts/akhq.sh configure`, затем `scripts/akhq.sh recreate`.
+
+Конфигурация хранится вне репозитория в `~/.config/mscontractor/akhq/application.yml`; пароль хранится как SHA-256-хеш. Войти можно с ролью `admin`; Basic Auth защищает веб-интерфейс, но не добавляет авторизацию самому Kafka-брокеру.
+
 У iframe должна быть действующая сессия: МойСклад передаёт `contextKey` при открытии приложения. Для локальной разработки в `Development` у VendorService есть `POST /api/moysklad/session/dev`; он использует `DEV_ACCOUNT_ID`. Без сессии интерфейс показывает ошибку доступа, даже если контейнеры здоровы.
 
 Остановить стек разработки можно командой `make compose-down`. Команда `make compose-down-del` дополнительно удаляет тома dev-стека, включая данные PostgreSQL и Redis.

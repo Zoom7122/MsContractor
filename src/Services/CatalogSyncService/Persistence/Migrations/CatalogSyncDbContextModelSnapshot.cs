@@ -292,10 +292,6 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("RawJson")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
                     b.Property<Guid>("MergeJobId")
                         .HasColumnType("uuid");
 
@@ -303,6 +299,10 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<string>("RawJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
 
                     b.HasKey("Id");
 
@@ -541,6 +541,11 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)");
 
+                    b.Property<int>("ErrorsCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.Property<string>("ExecutionMode")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -595,7 +600,54 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
 
                     b.HasIndex("AccountId", "Status");
 
-                    b.ToTable("sync_runs", "catalog_sync");
+                    b.ToTable("sync_runs", "catalog_sync", t =>
+                        {
+                            t.HasCheckConstraint("CK_sync_runs_ErrorsCount", "\"ErrorsCount\" >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.SyncRunError", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("CounterpartyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ErrorKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ErrorMessage")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ReasonCode")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("SyncRunId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SyncRunId", "AccountId");
+
+                    b.HasIndex("AccountId", "SyncRunId", "ErrorKey")
+                        .IsUnique();
+
+                    b.HasIndex("AccountId", "SyncRunId", "CreatedAt", "Id");
+
+                    b.ToTable("sync_runs_error", "catalog_sync");
                 });
 
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.SyncWatermark", b =>
@@ -705,6 +757,16 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("MergeJob");
+                });
+
+            modelBuilder.Entity("MsContractor.CatalogSyncService.Models.SyncRunError", b =>
+                {
+                    b.HasOne("MsContractor.CatalogSyncService.Models.SyncRun", null)
+                        .WithMany()
+                        .HasForeignKey("SyncRunId", "AccountId")
+                        .HasPrincipalKey("Id", "AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.Counterparty", b =>

@@ -10,6 +10,7 @@ public static class CatalogRepositoryRegistration
         services.AddScoped<ISyncRepository, SyncRepository>();
         services.AddScoped<ISyncOutboxRepository, SyncOutboxRepository>();
         services.AddScoped<ISyncRunStateRepository, SyncRunStateRepository>();
+        services.AddScoped<ISyncRunHistoryRepository, SyncRunHistoryRepository>();
         services.AddScoped<IMergeJobStateRepository, MergeJobStateRepository>();
         services.AddScoped<IDocumentsInOperationStateRepository, DocumentsInOperationStateRepository>();
         services.AddScoped<ICatalogSettingsRepository, CatalogSettingsRepository>();

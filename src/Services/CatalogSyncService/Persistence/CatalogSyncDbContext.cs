@@ -9,6 +9,7 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
     private Guid? _tenantAccountId;
 
     public DbSet<SyncRun> SyncRuns => Set<SyncRun>();
+    public DbSet<SyncRunError> SyncRunErrors => Set<SyncRunError>();
     public DbSet<InboxMessage> InboxMessages => Set<InboxMessage>();
     public DbSet<Counterparty> Counterparties => Set<Counterparty>();
     public DbSet<CounterpartySyncStage> CounterpartySyncStaging => Set<CounterpartySyncStage>();
@@ -44,8 +45,10 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
 
         modelBuilder.Entity<SyncRun>(entity =>
         {
-            entity.ToTable("sync_runs");
+            entity.ToTable("sync_runs", table =>
+                table.HasCheckConstraint("CK_sync_runs_ErrorsCount", "\"ErrorsCount\" >= 0"));
             entity.HasKey(item => item.Id);
+            entity.Property(item => item.ErrorsCount).HasDefaultValue(0);
             entity.Property(item => item.Status).HasMaxLength(32).IsRequired();
             entity.Property(item => item.RequestedMode).HasMaxLength(16).IsRequired();
             entity.Property(item => item.ExecutionMode).HasMaxLength(16).IsRequired();
@@ -55,6 +58,21 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
             entity.HasIndex(item => new { item.AccountId, item.Status });
             entity.HasIndex(item => new { item.AccountId, item.CreatedAt });
             entity.HasAlternateKey(item => new { item.Id, item.AccountId });
+        });
+
+        modelBuilder.Entity<SyncRunError>(entity =>
+        {
+            entity.ToTable("sync_runs_error");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.ErrorMessage).IsRequired();
+            entity.Property(item => item.ReasonCode).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.ErrorKey).HasMaxLength(64).IsRequired();
+            entity.HasIndex(item => new { item.AccountId, item.SyncRunId, item.ErrorKey }).IsUnique();
+            entity.HasIndex(item => new { item.AccountId, item.SyncRunId, item.CreatedAt, item.Id });
+            entity.HasOne<SyncRun>().WithMany()
+                .HasForeignKey(item => new { item.SyncRunId, item.AccountId })
+                .HasPrincipalKey(item => new { item.Id, item.AccountId })
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<SyncWatermark>(entity =>

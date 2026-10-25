@@ -10,7 +10,18 @@ public sealed record SyncRunState(
     DateTimeOffset UpdatedAt,
     string ExecutionMode,
     string? ErrorCode,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    int ErrorsCount = 0,
+    DateTimeOffset? CompletedAt = null);
+
+public sealed record SyncRunHistoryResponse(
+    IReadOnlyList<SyncRunState> Items, int Total, int Page, int PageSize);
+
+public sealed record SyncRunErrorState(
+    Guid Id, Guid? CounterpartyId, string ErrorMessage, string ReasonCode, DateTimeOffset CreatedAt);
+
+public sealed record SyncRunErrorsResponse(
+    SyncRunState Run, IReadOnlyList<SyncRunErrorState> Items, int Total, int Page, int PageSize);
 
 public sealed record MergeOperationState(
     Guid Id,

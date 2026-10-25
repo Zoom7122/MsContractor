@@ -10,6 +10,7 @@ public sealed class SyncRun
     public string ExecutionMode { get; set; } = "full";
     public string Status { get; set; } = "queued";
     public int ProcessedCount { get; set; }
+    public int ErrorsCount { get; set; }
     public int TotalCount { get; set; }
     public DateTimeOffset? WindowFrom { get; set; }
     public DateTimeOffset? WindowTo { get; set; }

@@ -67,6 +67,43 @@ public sealed class FactureInGatewayTests
     }
 
     [Fact]
+    public async Task GetExistingBasesAsync_LimitsSupplyIdsTo40PerRequest()
+    {
+        var requestCounts = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        var gateway = new MoySkladFactureInGateway(
+            Client(request =>
+            {
+                var entityType = request.RequestUri!.AbsolutePath.Split('/').Last();
+                var query = Uri.UnescapeDataString(request.RequestUri.Query);
+                var filter = query.TrimStart('?').Split('&')
+                    .Single(part => part.StartsWith("filter=", StringComparison.Ordinal))[7..];
+                var count = filter.Split(';').Length;
+                if (!requestCounts.TryGetValue(entityType, out var counts))
+                {
+                    counts = [];
+                    requestCounts.Add(entityType, counts);
+                }
+                counts.Add(count);
+                return Response(HttpStatusCode.OK, "{\"rows\":[]}");
+            }),
+            new FakeTokenClient(),
+            new FakeRateLimiter(),
+            new MoySkladResponseHandler(NullLogger<MoySkladResponseHandler>.Instance),
+            NullLogger<MoySkladFactureInGateway>.Instance);
+        var references = Enumerable.Range(0, 85)
+            .Select(_ => new FactureInBaseReference("supply", Guid.NewGuid()))
+            .Concat(Enumerable.Range(0, 85)
+                .Select(_ => new FactureInBaseReference("paymentout", Guid.NewGuid())))
+            .ToArray();
+
+        await gateway.GetExistingBasesAsync(
+            Guid.NewGuid(), "correlation-id", references, CancellationToken.None);
+
+        Assert.Equal(new[] { 40, 40, 5 }, requestCounts["supply"]);
+        Assert.Equal(new[] { 85 }, requestCounts["paymentout"]);
+    }
+
+    [Fact]
     public async Task GetAsync_RejectsUnexpectedDocumentAndDuplicateRows()
     {
         var requestedId = Guid.NewGuid();

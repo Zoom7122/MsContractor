@@ -263,7 +263,7 @@ public sealed class MoySkladCounterpartyGateway : IMoySkladCounterpartyGateway
                     stopwatch.Elapsed);
             }
 
-            _logger.LogInformation(
+            _logger.LogDebug(
                 "MoySklad connection check completed: account_id={AccountId}, status={StatusCode}, correlation_id={CorrelationId}, duration_ms={DurationMs}",
                 accountId,
                 responseBody.HttpStatus,

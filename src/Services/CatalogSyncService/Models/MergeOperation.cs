@@ -18,8 +18,9 @@ public static class MergeOperationStatuses
     public const string Running = "running";
     public const string Completed = "completed";
     public const string Failed = "failed";
+    public const string NoContinue = "no_continue";
 
-    public static bool IsTerminal(string status) => status is Completed or Failed;
+    public static bool IsTerminal(string status) => status is Completed or Failed or NoContinue;
 }
 
 public sealed class MergeOperation

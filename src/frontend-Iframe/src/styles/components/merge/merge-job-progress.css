@@ -23,7 +23,8 @@
   background: var(--app-color-success);
 }
 
-.job-progress__segment--skipped {
+.job-progress__segment--skipped,
+.job-progress__segment--no_continue {
   background: #cfd5dc;
 }
 
@@ -151,7 +152,8 @@
   border-color: transparent;
 }
 
-.job-step--skipped .job-step__marker {
+.job-step--skipped .job-step__marker,
+.job-step--no_continue .job-step__marker {
   color: var(--app-color-text-muted);
   border-style: dashed;
 }
@@ -177,7 +179,8 @@
 }
 
 .job-step--pending .job-step__title,
-.job-step--skipped .job-step__title {
+.job-step--skipped .job-step__title,
+.job-step--no_continue .job-step__title {
   color: var(--app-color-text-secondary);
 }
 

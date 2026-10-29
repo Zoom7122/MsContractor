@@ -28,6 +28,9 @@ public sealed class MergeOperationStateService(
     ILogger<MergeOperationStateService> logger) : IMergeOperationStateService
 {
     private const string ConsumerName = "duplicates-merge-v1";
+    private const string NotContinuedErrorCode = "MERGE_NOT_CONTINUED";
+    private const string NotContinuedErrorMessage =
+        "The operation was not run because another operation in this merge job failed.";
     private int MaxAttempts => Math.Max(1, configuration.GetValue("Merge:MaxOperationAttempts", 5));
 
     public async Task EnsureDocumentChangeOperationAsync(MergeJob job, CancellationToken cancellationToken)
@@ -173,7 +176,13 @@ public sealed class MergeOperationStateService(
         }
         catch (Exception exception) when (IsOperationFailure(exception))
         {
-            if (await HandleFailureAsync(operation, exception, cancellationToken))
+            if (await HandleFailureAsync(
+                    job,
+                    operation,
+                    new HashSet<Guid> { operation.Id },
+                    markUnattemptedOperationsOnFinalFailure: true,
+                    exception,
+                    cancellationToken))
                 throw new MergeRetryableException(retryMessage, exception);
 
             await FailJobAsync(job, cancellationToken);
@@ -197,10 +206,20 @@ public sealed class MergeOperationStateService(
         catch (Exception exception) when (IsOperationFailure(exception))
         {
             var shouldRetry = false;
+            var attemptedOperationIds = operations.Select(item => item.Id).ToHashSet();
             foreach (var operation in operations)
-                shouldRetry |= await HandleFailureAsync(operation, exception, cancellationToken);
+                shouldRetry |= await HandleFailureAsync(
+                    job,
+                    operation,
+                    attemptedOperationIds,
+                    markUnattemptedOperationsOnFinalFailure: false,
+                    exception,
+                    cancellationToken);
             if (shouldRetry)
                 throw new MergeRetryableException(retryMessage, exception);
+
+            MarkNotContinuedOperations(job, attemptedOperationIds, timeProvider.GetUtcNow());
+            await repository.SaveProgressAsync(job.AccountId, cancellationToken);
         }
     }
 
@@ -226,7 +245,13 @@ public sealed class MergeOperationStateService(
         await repository.SaveProgressAsync(operation.AccountId, cancellationToken);
     }
 
-    private async Task<bool> HandleFailureAsync(MergeOperation operation, Exception exception, CancellationToken cancellationToken)
+    private async Task<bool> HandleFailureAsync(
+        MergeJob job,
+        MergeOperation operation,
+        IReadOnlySet<Guid> attemptedOperationIds,
+        bool markUnattemptedOperationsOnFinalFailure,
+        Exception exception,
+        CancellationToken cancellationToken)
     {
         var retryable = IsRetryable(exception);
         operation.AttemptCount++;
@@ -248,10 +273,37 @@ public sealed class MergeOperationStateService(
             ? LimitErrorMessage($"The Egress retry policy was exhausted. {SafeMessage(exception)}")
             : SafeMessage(exception);
         operation.CompletedAt = operation.UpdatedAt;
+        if (markUnattemptedOperationsOnFinalFailure)
+            MarkNotContinuedOperations(job, attemptedOperationIds, operation.UpdatedAt);
         await repository.SaveProgressAsync(operation.AccountId, cancellationToken);
         logger.LogError(exception, "Merge operation failed: operation_id={OperationId}, operation_type={OperationType}, counterparty_id={CounterpartyId}, status={Status}, error_code={ErrorCode}, error_message={ErrorMessage}",
             operation.Id, operation.OperationType, operation.CounterpartyId, operation.Status, operation.ErrorCode, operation.ErrorMessage);
         return false;
+    }
+
+    private void MarkNotContinuedOperations(
+        MergeJob job,
+        IReadOnlySet<Guid> attemptedOperationIds,
+        DateTimeOffset completedAt)
+    {
+        foreach (var operation in job.Operations.Where(item =>
+                     item.AccountId == job.AccountId &&
+                     item.MergeJobId == job.Id &&
+                     !attemptedOperationIds.Contains(item.Id) &&
+                     (item.Status is MergeOperationStatuses.Pending or MergeOperationStatuses.Running)))
+        {
+            operation.Status = MergeOperationStatuses.NoContinue;
+            operation.ErrorCode = NotContinuedErrorCode;
+            operation.ErrorMessage = NotContinuedErrorMessage;
+            operation.CompletedAt = completedAt;
+            operation.UpdatedAt = completedAt;
+            logger.LogInformation(
+                "Merge operation will not continue after another operation failed: operation_id={OperationId}, operation_type={OperationType}, merge_job_id={MergeJobId}, account_id={AccountId}",
+                operation.Id,
+                operation.OperationType,
+                operation.MergeJobId,
+                operation.AccountId);
+        }
     }
 
     private async Task FailJobAsync(MergeJob job, CancellationToken cancellationToken)

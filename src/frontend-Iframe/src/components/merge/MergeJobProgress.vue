@@ -23,7 +23,8 @@ const caption = computed(() => {
   const list = stages.value
   const failed = list.filter((stage) => stage.key !== 'finish' && (stage.status === 'failed' || stage.status === 'partial'))
   const running = list.find((stage) => stage.status === 'running')
-  const doneCount = list.filter((stage) => stage.status === 'completed' || stage.status === 'skipped').length
+  const doneCount = list.filter((stage) =>
+    stage.status === 'completed' || stage.status === 'skipped' || stage.status === 'no_continue').length
 
   if (jobStatus.value === 'pending') {
     return 'Ожидает запуска'
@@ -48,6 +49,7 @@ const markerIcons = {
   failed: CircleCloseFilled,
   partial: WarningFilled,
   running: Loading,
+  no_continue: Minus,
   skipped: Minus
 }
 
@@ -128,6 +130,9 @@ function operationError(operation) {
               <span class="job-step__operation-title">{{ operationTitle(operation) }}</span>
               <StatusBadge size="sm" variant="plain" :meta="STEP_STATUS[operation.status] || STEP_STATUS.pending" />
             </div>
+            <p v-if="operation.status === 'no_continue'" class="job-step__hint">
+              Merge остановлен на предыдущем этапе
+            </p>
             <ErrorNotice
               v-if="operation.status === 'failed'"
               class="job-step__error"

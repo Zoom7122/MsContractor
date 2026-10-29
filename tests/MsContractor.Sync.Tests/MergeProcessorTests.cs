@@ -727,6 +727,27 @@ public sealed class MergeProcessorTests
         Assert.Equal(MergeJobStatuses.Failed, job.Status);
         Assert.Equal(MergeOperationStatuses.Failed,
             job.Operations.Single(item => item.OperationType == MergeOperationTypes.RecreateSalesReturns).Status);
+        Assert.Equal(MergeOperationStatuses.Completed,
+            job.Operations.Single(item => item.OperationType == MergeOperationTypes.DiscoverDocuments).Status);
+        Assert.Equal(MergeOperationStatuses.Completed,
+            job.Operations.Single(item => item.OperationType == MergeOperationTypes.UpdateMainCounterparty).Status);
+        Assert.Equal(MergeOperationStatuses.Completed,
+            job.Operations.Single(item => item.OperationType == MergeOperationTypes.ChangeDocumentCounterparties).Status);
+        Assert.Equal(MergeOperationStatuses.NoContinue,
+            job.Operations.Single(item => item.OperationType == MergeOperationTypes.RecreatePurchaseReturns).Status);
+        Assert.Equal(MergeOperationStatuses.NoContinue,
+            job.Operations.Single(item => item.OperationType == MergeOperationTypes.RecreateFactureIns).Status);
+        Assert.Equal(MergeOperationStatuses.NoContinue,
+            job.Operations.Single(item => item.OperationType == MergeOperationTypes.RecreateFactureOuts).Status);
+        Assert.All(job.Operations.Where(item => item.OperationType == MergeOperationTypes.ArchiveDuplicate),
+            item => Assert.Equal(MergeOperationStatuses.NoContinue, item.Status));
+        Assert.All(job.Operations.Where(item => item.Status == MergeOperationStatuses.NoContinue), item =>
+        {
+            Assert.Equal("MERGE_NOT_CONTINUED", item.ErrorCode);
+            Assert.NotNull(item.ErrorMessage);
+            Assert.NotNull(item.CompletedAt);
+        });
+        Assert.True(MergeOperationStatuses.IsTerminal(MergeOperationStatuses.NoContinue));
         Assert.Empty(fixture.PurchaseReturns.Calls);
     }
 
@@ -747,6 +768,10 @@ public sealed class MergeProcessorTests
         Assert.Equal(MergeJobStatuses.Failed, job.Status);
         Assert.Equal(MergeOperationStatuses.Failed,
             job.Operations.Single(item => item.OperationType == MergeOperationTypes.UpdateMainCounterparty).Status);
+        Assert.All(job.Operations.Where(item => item.OperationType != MergeOperationTypes.UpdateMainCounterparty), item =>
+            Assert.Equal(item.OperationType == MergeOperationTypes.DiscoverDocuments
+                ? MergeOperationStatuses.Completed
+                : MergeOperationStatuses.NoContinue, item.Status));
         Assert.Empty(fixture.Egress.ArchiveCalls);
     }
 
@@ -898,6 +923,23 @@ public sealed class MergeProcessorTests
     {
         await using var fixture = await Fixture.CreateAsync(duplicateCount: 2);
         var command = await fixture.CreateJobAsync();
+        var jobBeforeRun = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
+        var now = DateTimeOffset.UtcNow;
+        var notAttempted = new MergeOperation
+        {
+            Id = Guid.NewGuid(),
+            MergeJobId = jobBeforeRun.Id,
+            MergeJob = jobBeforeRun,
+            AccountId = jobBeforeRun.AccountId,
+            Sequence = jobBeforeRun.Operations.Max(item => item.Sequence) + 1,
+            OperationType = "future_test_operation",
+            CounterpartyId = fixture.Main.Id,
+            Status = MergeOperationStatuses.Pending,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        fixture.Db.MergeOperations.Add(notAttempted);
+        await fixture.Db.SaveChangesAsync();
         fixture.Egress.ArchiveExceptions[fixture.Duplicates[0].Id] = new MergeEgressException(
             "MOYSKLAD_FORBIDDEN", "MoySklad denied access.", 403);
 
@@ -916,6 +958,10 @@ public sealed class MergeProcessorTests
         Assert.Equal(MergeJobStatuses.PartiallyCompleted, job.Status);
         Assert.Empty(await fixture.Db.MergeCounterpartyLocks.ToListAsync());
         Assert.Equal(2, job.Operations.Count(item => item.Status == MergeOperationStatuses.Failed));
+        Assert.Equal(MergeOperationStatuses.NoContinue,
+            job.Operations.Single(item => item.OperationType == "future_test_operation").Status);
+        Assert.Equal(MergeOperationStatuses.Completed,
+            job.Operations.Single(item => item.OperationType == MergeOperationTypes.DiscoverDocuments).Status);
     }
 
     [Fact]
@@ -936,7 +982,33 @@ public sealed class MergeProcessorTests
         Assert.Equal(2, await fixture.Db.MergeCounterpartyLocks.CountAsync());
         Assert.Equal(MergeOperationStatuses.Pending, update.Status);
         Assert.Equal(1, update.AttemptCount);
+        Assert.DoesNotContain(job.Operations, item => item.Status == MergeOperationStatuses.NoContinue);
         Assert.Empty(await fixture.Db.InboxMessages.ToListAsync());
+    }
+
+    [Fact]
+    public async Task ProcessAsync_RetryExhaustionMarksUnattemptedOperationsNoContinue()
+    {
+        await using var fixture = await Fixture.CreateAsync(duplicateCount: 1, maxAttempts: 2);
+        var command = await fixture.CreateJobAsync();
+        fixture.Egress.UpdateException = new MergeEgressException(
+            "MOYSKLAD_UNAVAILABLE", "MoySklad is unavailable.", 503);
+
+        await Assert.ThrowsAsync<MergeRetryableException>(() =>
+            fixture.Processor.ProcessAsync(command, CancellationToken.None));
+        await fixture.Processor.ProcessAsync(command, CancellationToken.None);
+
+        fixture.Db.ChangeTracker.Clear();
+        var job = await fixture.Db.MergeJobs.Include(item => item.Operations).SingleAsync();
+        var update = job.Operations.Single(item => item.OperationType == MergeOperationTypes.UpdateMainCounterparty);
+        Assert.Equal(MergeJobStatuses.Failed, job.Status);
+        Assert.Equal(MergeOperationStatuses.Failed, update.Status);
+        Assert.Equal(2, update.AttemptCount);
+        Assert.Equal(MergeOperationStatuses.Completed,
+            job.Operations.Single(item => item.OperationType == MergeOperationTypes.DiscoverDocuments).Status);
+        Assert.All(job.Operations.Where(item => item.OperationType != MergeOperationTypes.DiscoverDocuments &&
+                                               item.OperationType != MergeOperationTypes.UpdateMainCounterparty),
+            item => Assert.Equal(MergeOperationStatuses.NoContinue, item.Status));
     }
 
     [Fact]

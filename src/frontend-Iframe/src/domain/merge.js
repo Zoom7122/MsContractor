@@ -118,6 +118,7 @@ export const STEP_STATUS = {
   completed: { label: 'Готово', tone: 'success', icon: CircleCheckFilled },
   partial: { label: 'Частично', tone: 'warning', icon: WarningFilled },
   failed: { label: 'Ошибка', tone: 'danger', icon: CircleCloseFilled },
+  no_continue: { label: 'Не запускалась', tone: 'neutral', icon: Remove },
   skipped: { label: 'Не требуется', tone: 'neutral', icon: Remove }
 }
 
@@ -194,6 +195,7 @@ export function buildJobStages(job) {
     const items = operations.filter((operation) => stage.operations.includes(operation.type))
     const done = items.filter((item) => item.status === 'completed').length
     const failed = items.filter((item) => item.status === 'failed').length
+    const notContinued = items.filter((item) => item.status === 'no_continue').length
     const running = items.some((item) => item.status === 'running')
 
     let status = 'pending'
@@ -205,6 +207,10 @@ export function buildJobStages(job) {
     } else if (failed && failed === items.length) {
       status = 'failed'
     } else if (failed) {
+      status = 'partial'
+    } else if (notContinued === items.length) {
+      status = 'no_continue'
+    } else if (notContinued) {
       status = 'partial'
     } else if (done === items.length) {
       status = 'completed'
@@ -244,7 +250,8 @@ export function jobProgress(job) {
     return normalizeJobStatus(job?.status) === 'completed' ? 100 : 0
   }
 
-  const finished = operations.filter((item) => item.status === 'completed' || item.status === 'failed').length
+  const finished = operations.filter((item) =>
+    item.status === 'completed' || item.status === 'failed' || item.status === 'no_continue').length
   return Math.round((finished / operations.length) * 100)
 }
 

@@ -264,10 +264,11 @@ public sealed partial class SyncRepository : ISyncRepository
         var acceptedArchivedIds = (await GetArchivedStagedCounterpartyIdsAsync(
             accountId, syncRunId, false, cancellationToken)).ToHashSet();
         var acceptedDocuments = documents.Where(item => acceptedArchivedIds.Contains(item.CounterpartyId)).ToArray();
-        var acceptedDocumentIds = acceptedDocuments.Select(item => item.DocumentId).ToHashSet();
+        var acceptedDocumentKeys = acceptedDocuments.Select(item => (item.DocumentType, item.DocumentId)).ToHashSet();
         _dbContext.CounterpartyDocuments.AddRange(acceptedDocuments);
         _dbContext.DocumentAdditionalCommissions.AddRange(
-            commissions.Where(item => acceptedDocumentIds.Contains(item.DocumentId)));
+            commissions.Where(item => item.AccountId == accountId &&
+                                      acceptedDocumentKeys.Contains((item.DocumentType, item.DocumentId))));
         await SaveCompletionAsync(completion, cancellationToken);
         await _dbContext.CounterpartySyncStaging
             .Where(item => item.AccountId == accountId && item.SyncRunId == syncRunId).ExecuteDeleteAsync(cancellationToken);
@@ -513,14 +514,15 @@ public sealed partial class SyncRepository : ISyncRepository
         IReadOnlyCollection<DocumentAdditionalCommission> commissions,
         SyncCompletion completion)
     {
-        var documentIds = documents.Select(item => item.DocumentId).ToHashSet();
+        var documentKeys = documents.Select(item => (item.DocumentType, item.DocumentId)).ToHashSet();
         if (completion.Run.AccountId != accountId || completion.Run.Id != syncRunId ||
             completion.Watermark.AccountId != accountId ||
             completion.Watermark.LastSyncRunId != syncRunId ||
             documents.Any(item => item.AccountId != accountId || item.DocumentId == Guid.Empty) ||
-            documentIds.Count != documents.Count ||
-            commissions.Any(item => !documentIds.Contains(item.DocumentId)) ||
-            commissions.Select(item => item.DocumentId).Distinct().Count() != commissions.Count)
+            documentKeys.Count != documents.Count ||
+            commissions.Any(item => item.AccountId != accountId ||
+                                    !documentKeys.Contains((item.DocumentType, item.DocumentId))) ||
+            commissions.Select(item => (item.DocumentType, item.DocumentId)).Distinct().Count() != commissions.Count)
             throw new InvalidOperationException("Sync completion data belongs to another account or run.");
     }
 
@@ -546,36 +548,40 @@ public sealed partial class SyncRepository : ISyncRepository
         CancellationToken cancellationToken)
     {
         var replacementDocuments = documents.Where(item => counterpartyIds.Contains(item.CounterpartyId)).ToArray();
-        var replacementDocumentIds = replacementDocuments.Select(item => item.DocumentId).ToHashSet();
-        var oldDocumentIds = await _dbContext.CounterpartyDocuments.AsNoTracking()
+        var replacementDocumentKeys = replacementDocuments
+            .Select(item => (item.DocumentType, item.DocumentId)).ToHashSet();
+        var oldDocumentKeys = (await _dbContext.CounterpartyDocuments.AsNoTracking()
             .Where(item => item.AccountId == accountId && counterpartyIds.Contains(item.CounterpartyId))
-            .Select(item => item.DocumentId)
-            .ToArrayAsync(cancellationToken);
-        var documentIdsToReplace = oldDocumentIds.Concat(replacementDocumentIds).ToHashSet();
+            .Select(item => new { item.DocumentType, item.DocumentId })
+            .ToArrayAsync(cancellationToken))
+            .Select(item => (item.DocumentType, item.DocumentId)).ToHashSet();
+        var documentKeysToReplace = oldDocumentKeys.Concat(replacementDocumentKeys).ToHashSet();
         foreach (var entry in _dbContext.ChangeTracker.Entries<DocumentAdditionalCommission>()
-                     .Where(entry => documentIdsToReplace.Contains(entry.Entity.DocumentId)).ToArray())
+                     .Where(entry => entry.Entity.AccountId == accountId &&
+                                     documentKeysToReplace.Contains((entry.Entity.DocumentType, entry.Entity.DocumentId))).ToArray())
             entry.State = EntityState.Detached;
         foreach (var entry in _dbContext.ChangeTracker.Entries<CounterpartyDocument>()
                      .Where(entry => entry.Entity.AccountId == accountId &&
                                      (counterpartyIds.Contains(entry.Entity.CounterpartyId) ||
-                                      replacementDocumentIds.Contains(entry.Entity.DocumentId))).ToArray())
+                                      replacementDocumentKeys.Contains((entry.Entity.DocumentType, entry.Entity.DocumentId)))).ToArray())
             entry.State = EntityState.Detached;
 
         await _dbContext.CounterpartyDocuments
             .Where(item => item.AccountId == accountId && counterpartyIds.Contains(item.CounterpartyId))
             .ExecuteDeleteAsync(cancellationToken);
-        if (replacementDocumentIds.Count > 0)
+        foreach (var keyGroup in replacementDocumentKeys.GroupBy(key => key.DocumentType))
         {
-            // Discovery is authoritative by document ID. Remove any prior same-account link,
-            // even when it belonged to a different counterparty, before inserting the new link.
+            var documentIds = keyGroup.Select(key => key.DocumentId).ToArray();
             await _dbContext.CounterpartyDocuments
-                .Where(item => item.AccountId == accountId && replacementDocumentIds.Contains(item.DocumentId))
+                .Where(item => item.AccountId == accountId && item.DocumentType == keyGroup.Key &&
+                               documentIds.Contains(item.DocumentId))
                 .ExecuteDeleteAsync(cancellationToken);
         }
 
         _dbContext.CounterpartyDocuments.AddRange(replacementDocuments);
         _dbContext.DocumentAdditionalCommissions.AddRange(
-            commissions.Where(item => replacementDocumentIds.Contains(item.DocumentId)));
+            commissions.Where(item => item.AccountId == accountId &&
+                                      replacementDocumentKeys.Contains((item.DocumentType, item.DocumentId))));
         await SaveAsync(cancellationToken);
     }
 
@@ -606,9 +612,8 @@ public sealed partial class SyncRepository : ISyncRepository
     {
         var trackedDocuments = _dbContext.ChangeTracker.Entries<CounterpartyDocument>()
             .Where(entry => entry.Entity.AccountId == accountId).ToArray();
-        var documentIds = trackedDocuments.Select(entry => entry.Entity.DocumentId).ToHashSet();
         foreach (var entry in _dbContext.ChangeTracker.Entries<DocumentAdditionalCommission>()
-                     .Where(entry => documentIds.Contains(entry.Entity.DocumentId)).ToArray())
+                     .Where(entry => entry.Entity.AccountId == accountId).ToArray())
             entry.State = EntityState.Detached;
         foreach (var entry in trackedDocuments)
             entry.State = EntityState.Detached;

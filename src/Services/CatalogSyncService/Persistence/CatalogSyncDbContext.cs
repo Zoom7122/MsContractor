@@ -204,7 +204,6 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
         {
             entity.ToTable("counterparty_documents");
             entity.HasKey(item => new { item.AccountId, item.DocumentType, item.DocumentId });
-            entity.HasAlternateKey(item => item.DocumentId);
             entity.Property(item => item.DocumentType).HasMaxLength(64).IsRequired();
             entity.HasIndex(item => new { item.AccountId, item.CounterpartyId });
             entity.HasOne(item => item.Counterparty)
@@ -217,12 +216,13 @@ public sealed class CatalogSyncDbContext(DbContextOptions<CatalogSyncDbContext> 
         modelBuilder.Entity<DocumentAdditionalCommission>(entity =>
         {
             entity.ToTable("document_additional_commission");
-            entity.HasKey(item => item.DocumentId);
+            entity.HasKey(item => new { item.AccountId, item.DocumentType, item.DocumentId });
+            entity.Property(item => item.DocumentType).HasMaxLength(64).IsRequired();
             entity.Property(item => item.Contract).HasColumnType("uuid");
             entity.HasOne<CounterpartyDocument>()
                 .WithOne()
-                .HasForeignKey<DocumentAdditionalCommission>(item => item.DocumentId)
-                .HasPrincipalKey<CounterpartyDocument>(item => item.DocumentId)
+                .HasForeignKey<DocumentAdditionalCommission>(item => new { item.AccountId, item.DocumentType, item.DocumentId })
+                .HasPrincipalKey<CounterpartyDocument>(item => new { item.AccountId, item.DocumentType, item.DocumentId })
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

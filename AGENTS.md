@@ -263,6 +263,12 @@ Check the implementation and tests first, then authoritative upstream documentat
 
 For Merge changes, preserve preview -> durable pending job/ordered operations + outbox -> Kafka consumer -> update main -> update local main -> archive duplicates -> update each local result -> terminal/partial state. A failed main update must not archive duplicates. Model attempts and idempotency durably; archive only after prerequisite document/other operations succeed. Locks, document operations, and compensation are required design concerns for extensions, but are not implemented by the current merge schema/processor—do not pretend they exist or add ad-hoc in-memory substitutes.
 
+## Multi-agent Review
+
+- Do not spawn subagents automatically. Use `coder`, `reviewer`, and `architect` only when the user explicitly requests multi-agent work or names one of these agents.
+- When the user says `full agent`, run the full pipeline: `coder -> reviewer -> architect`. Send actionable reviewer findings back to the coder; after fixes, rerun reviewer and architect.
+- After the full pipeline passes, run Crit on the final code diff as an additional review step. Let the global Codex Stop hook open Crit; if it does not open, invoke `$crit` manually from the project root. Do not start a second Crit session while the automatic review is open. Address inline comments and continue the Crit review loop until the user approves or finishes a round without new comments.
+
 ## Definition of Done
 
 - The intended projects compile and `dotnet build MsContractor.sln` succeeds.

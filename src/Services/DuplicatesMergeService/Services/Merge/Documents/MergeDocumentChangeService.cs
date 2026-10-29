@@ -31,12 +31,12 @@ public sealed class MergeDocumentChangeService(
         var commissionRows = rows.Where(item => IsCommissionReport(item.DocumentType)).ToArray();
         if (commissionRows.Length > 0)
         {
-            var commissionIds = commissionRows.Select(item => item.DocumentId).ToArray();
-            var contracts = await documentSnapshots.GetCommissionsAsync(job.AccountId, commissionIds, cancellationToken);
+            var commissionKeys = commissionRows.Select(item => (item.DocumentType, item.DocumentId)).ToArray();
+            var contracts = await documentSnapshots.GetCommissionsAsync(job.AccountId, commissionKeys, cancellationToken);
             foreach (var chunk in commissionRows.Chunk(CommissionReportBatchSize))
             {
                 var documents = chunk.Select(item => new MoySkladDocumentChangeAgentAndContractItem(item.DocumentType,
-                    item.DocumentId, contracts.GetValueOrDefault(item.DocumentId))).ToArray();
+                    item.DocumentId, contracts.GetValueOrDefault((item.DocumentType, item.DocumentId)))).ToArray();
                 var egressResponse = await documentChangeClient.ChangeAgentAndContractAsync(job.AccountId, job.MainCounterpartyId,
                     documents, job.Id, operation.Id, job.RequestedByUserId, job.CorrelationId, cancellationToken);
                 await documentsInOperation.AppendEgressResponseAsync(

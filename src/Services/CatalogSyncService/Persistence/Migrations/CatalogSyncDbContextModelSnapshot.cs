@@ -269,13 +269,20 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
 
             modelBuilder.Entity("MsContractor.CatalogSyncService.Models.DocumentAdditionalCommission", b =>
                 {
+                    b.Property<Guid>("AccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DocumentType")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<Guid>("DocumentId")
                         .HasColumnType("uuid");
 
                     b.Property<Guid?>("Contract")
                         .HasColumnType("uuid");
 
-                    b.HasKey("DocumentId");
+                    b.HasKey("AccountId", "DocumentType", "DocumentId");
 
                     b.ToTable("document_additional_commission", "catalog_sync");
                 });
@@ -717,8 +724,7 @@ namespace MsContractor.CatalogSyncService.Persistence.Migrations
                 {
                     b.HasOne("MsContractor.CatalogSyncService.Models.CounterpartyDocument", null)
                         .WithOne()
-                        .HasForeignKey("MsContractor.CatalogSyncService.Models.DocumentAdditionalCommission", "DocumentId")
-                        .HasPrincipalKey("MsContractor.CatalogSyncService.Models.CounterpartyDocument", "DocumentId")
+                        .HasForeignKey("MsContractor.CatalogSyncService.Models.DocumentAdditionalCommission", "AccountId", "DocumentType", "DocumentId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

@@ -185,7 +185,7 @@ public sealed class SyncProcessor : ISyncProcessor
             return ([], []);
 
         var knownCounterpartyIds = archivedIds.ToHashSet();
-        var seenDocumentIds = new HashSet<Guid>();
+        var seenDocumentKeys = new HashSet<(string DocumentType, Guid DocumentId)>();
         var documents = new List<CounterpartyDocument>();
         var commissions = new List<DocumentAdditionalCommission>();
         foreach (var batch in archivedIds.Chunk(DocumentDiscoveryBatchSize))
@@ -210,7 +210,7 @@ public sealed class SyncProcessor : ISyncProcessor
                     document.DocumentId == Guid.Empty ||
                     !batchCounterpartyIds.Contains(document.CounterpartyId) ||
                     !knownCounterpartyIds.Contains(document.CounterpartyId) ||
-                    !seenDocumentIds.Add(document.DocumentId))
+                    !seenDocumentKeys.Add((document.DocumentType, document.DocumentId)))
                 {
                     throw InvalidDiscoveryResponse();
                 }
@@ -228,6 +228,8 @@ public sealed class SyncProcessor : ISyncProcessor
                 {
                     commissions.Add(new DocumentAdditionalCommission
                     {
+                        AccountId = command.AccountId,
+                        DocumentType = document.DocumentType,
                         DocumentId = document.DocumentId,
                         Contract = document.ContractId
                     });

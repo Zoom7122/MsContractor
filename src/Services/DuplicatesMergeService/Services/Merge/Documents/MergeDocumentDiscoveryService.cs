@@ -51,13 +51,11 @@ public sealed class MergeDocumentDiscoveryService : IMergeDocumentDiscoveryServi
     {
         var knownCounterpartyIds = counterpartyIds.ToHashSet();
         var uniqueDocumentKeys = new HashSet<(string DocumentType, Guid DocumentId)>();
-        var uniqueDocumentIds = new HashSet<Guid>();
         foreach (var document in documents)
         {
             if (string.IsNullOrWhiteSpace(document.DocumentType) || document.DocumentId == Guid.Empty ||
                 document.CounterpartyId == Guid.Empty || !knownCounterpartyIds.Contains(document.CounterpartyId) ||
-                !uniqueDocumentKeys.Add((document.DocumentType, document.DocumentId)) ||
-                !uniqueDocumentIds.Add(document.DocumentId))
+                !uniqueDocumentKeys.Add((document.DocumentType, document.DocumentId)))
             {
                 throw new JsonException("MoySklad document discovery response is inconsistent.");
             }
@@ -73,7 +71,13 @@ public sealed class MergeDocumentDiscoveryService : IMergeDocumentDiscoveryServi
             DocumentId = document.DocumentId, UpdatedAt = now
         }).ToArray();
         var commissions = supportedDocuments.Where(document => IsCommissionReport(document.DocumentType))
-            .Select(document => new DocumentAdditionalCommission { DocumentId = document.DocumentId, Contract = document.ContractId })
+            .Select(document => new DocumentAdditionalCommission
+            {
+                AccountId = accountId,
+                DocumentType = document.DocumentType,
+                DocumentId = document.DocumentId,
+                Contract = document.ContractId
+            })
             .ToArray();
         await _documentSnapshots.ReplaceAsync(accountId, counterpartyIds, rows, commissions, cancellationToken);
     }

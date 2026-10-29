@@ -15,8 +15,9 @@ public interface IDocumentSnapshotRepository
     /// <param name="cancellationToken"></param>
     /// <returns></returns>
     Task<IReadOnlyList<CounterpartyDocument>> GetForCounterpartiesAsync(Guid accountId, IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
-    Task<IReadOnlyDictionary<Guid, Guid?>> GetCommissionsAsync(Guid accountId, IReadOnlyCollection<Guid> documentIds, CancellationToken cancellationToken);
-    Task ReplaceDocumentRowsAsync(Guid accountId, IReadOnlyCollection<Guid> sourceDocumentIds,
+    Task<IReadOnlyDictionary<(string DocumentType, Guid DocumentId), Guid?>> GetCommissionsAsync(
+        Guid accountId, IReadOnlyCollection<(string DocumentType, Guid DocumentId)> documentKeys, CancellationToken cancellationToken);
+    Task ReplaceDocumentRowsAsync(Guid accountId, IReadOnlyCollection<(string DocumentType, Guid DocumentId)> sourceDocumentKeys,
         IReadOnlyCollection<CounterpartyDocument> rows, CancellationToken cancellationToken);
     Task ReplaceAsync(Guid accountId, IReadOnlyCollection<Guid> counterpartyIds, IReadOnlyCollection<CounterpartyDocument> rows, IReadOnlyCollection<DocumentAdditionalCommission> commissions, CancellationToken cancellationToken);
     Task SaveProgressAsync(Guid accountId, CancellationToken cancellationToken);
@@ -38,28 +39,47 @@ public sealed class DocumentSnapshotRepository : IDocumentSnapshotRepository
         return await _dbContext.CounterpartyDocuments.Where(x => x.AccountId == accountId && ids.Contains(x.CounterpartyId))
             .OrderBy(x => x.DocumentType).ThenBy(x => x.DocumentId).ToListAsync(cancellationToken);
     }
-    public async Task<IReadOnlyDictionary<Guid, Guid?>> GetCommissionsAsync(Guid accountId, IReadOnlyCollection<Guid> documentIds, CancellationToken cancellationToken)
+    public async Task<IReadOnlyDictionary<(string DocumentType, Guid DocumentId), Guid?>> GetCommissionsAsync(
+        Guid accountId, IReadOnlyCollection<(string DocumentType, Guid DocumentId)> documentKeys, CancellationToken cancellationToken)
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
-        return await _dbContext.DocumentAdditionalCommissions
-            .Where(x => documentIds.Contains(x.DocumentId) && _dbContext.CounterpartyDocuments.Any(d => d.AccountId == accountId && d.DocumentId == x.DocumentId))
-            .ToDictionaryAsync(x => x.DocumentId, x => x.Contract, cancellationToken);
+        var requestedKeys = documentKeys.ToHashSet();
+        var rows = new List<DocumentAdditionalCommission>();
+        foreach (var keyGroup in requestedKeys.GroupBy(key => key.DocumentType))
+        {
+            var documentIds = keyGroup.Select(key => key.DocumentId).ToArray();
+            rows.AddRange(await _dbContext.DocumentAdditionalCommissions
+                .Where(x => x.AccountId == accountId && x.DocumentType == keyGroup.Key &&
+                            documentIds.Contains(x.DocumentId))
+                .ToListAsync(cancellationToken));
+        }
+        return rows
+            .Where(x => requestedKeys.Contains((x.DocumentType, x.DocumentId)))
+            .ToDictionary(x => (x.DocumentType, x.DocumentId), x => x.Contract);
     }
 
-    public async Task ReplaceDocumentRowsAsync(Guid accountId, IReadOnlyCollection<Guid> sourceDocumentIds,
+    public async Task ReplaceDocumentRowsAsync(Guid accountId,
+        IReadOnlyCollection<(string DocumentType, Guid DocumentId)> sourceDocumentKeys,
         IReadOnlyCollection<CounterpartyDocument> rows, CancellationToken cancellationToken)
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
-        if (sourceDocumentIds.Distinct().Count() != sourceDocumentIds.Count ||
-            rows.Count > sourceDocumentIds.Count ||
+        if (sourceDocumentKeys.Distinct().Count() != sourceDocumentKeys.Count ||
+            rows.Count > sourceDocumentKeys.Count ||
             rows.Any(x => x.AccountId != accountId) ||
-            rows.Select(x => x.DocumentId).Distinct().Count() != rows.Count)
+            rows.Select(x => (x.DocumentType, x.DocumentId)).Distinct().Count() != rows.Count)
             throw new InvalidOperationException("Document snapshot replacement is invalid.");
 
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
-        await _dbContext.CounterpartyDocuments
-            .Where(x => x.AccountId == accountId && sourceDocumentIds.Contains(x.DocumentId))
-            .ExecuteDeleteAsync(cancellationToken);
+        var keysToDelete = sourceDocumentKeys
+            .Concat(rows.Select(row => (row.DocumentType, row.DocumentId)))
+            .ToHashSet();
+        foreach (var keyGroup in keysToDelete.GroupBy(key => key.DocumentType))
+        {
+            var ids = keyGroup.Select(key => key.DocumentId).ToArray();
+            await _dbContext.CounterpartyDocuments
+                .Where(x => x.AccountId == accountId && x.DocumentType == keyGroup.Key && ids.Contains(x.DocumentId))
+                .ExecuteDeleteAsync(cancellationToken);
+        }
         _dbContext.CounterpartyDocuments.AddRange(rows);
         await _dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -68,12 +88,23 @@ public sealed class DocumentSnapshotRepository : IDocumentSnapshotRepository
     public async Task ReplaceAsync(Guid accountId, IReadOnlyCollection<Guid> counterpartyIds, IReadOnlyCollection<CounterpartyDocument> rows, IReadOnlyCollection<DocumentAdditionalCommission> commissions, CancellationToken cancellationToken)
     {
         await _dbContext.SetTenantAsync(accountId, cancellationToken);
-        var documentIds = rows.Select(x => x.DocumentId).ToHashSet();
+        var documentKeys = rows.Select(x => (x.DocumentType, x.DocumentId)).ToHashSet();
         if (rows.Any(x => x.AccountId != accountId || !counterpartyIds.Contains(x.CounterpartyId)) ||
-            commissions.Any(x => !documentIds.Contains(x.DocumentId)))
+            rows.Select(x => (x.DocumentType, x.DocumentId)).Distinct().Count() != rows.Count ||
+            commissions.Any(x => x.AccountId != accountId || !documentKeys.Contains((x.DocumentType, x.DocumentId))) ||
+            commissions.Select(x => (x.DocumentType, x.DocumentId)).Distinct().Count() != commissions.Count)
             throw new InvalidOperationException("Document snapshot belongs to another account or selection.");
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
-        await _dbContext.CounterpartyDocuments.Where(x => x.AccountId == accountId && counterpartyIds.Contains(x.CounterpartyId)).ExecuteDeleteAsync(cancellationToken);
+        await _dbContext.CounterpartyDocuments
+            .Where(x => x.AccountId == accountId && counterpartyIds.Contains(x.CounterpartyId))
+            .ExecuteDeleteAsync(cancellationToken);
+        foreach (var keyGroup in documentKeys.GroupBy(key => key.DocumentType))
+        {
+            var ids = keyGroup.Select(key => key.DocumentId).ToArray();
+            await _dbContext.CounterpartyDocuments
+                .Where(x => x.AccountId == accountId && x.DocumentType == keyGroup.Key && ids.Contains(x.DocumentId))
+                .ExecuteDeleteAsync(cancellationToken);
+        }
         _dbContext.CounterpartyDocuments.AddRange(rows);
         _dbContext.DocumentAdditionalCommissions.AddRange(commissions);
         await _dbContext.SaveChangesAsync(cancellationToken);

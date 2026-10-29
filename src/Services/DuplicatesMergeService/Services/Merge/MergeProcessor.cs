@@ -221,7 +221,7 @@ public sealed class MergeProcessor(
 
         await documentSnapshots.ReplaceDocumentRowsAsync(
             job.AccountId,
-            salesReturns.Select(row => row.DocumentId).ToArray(),
+            salesReturns.Select(row => (row.DocumentType, row.DocumentId)).ToArray(),
             replacements,
             cancellationToken);
 
@@ -346,8 +346,8 @@ public sealed class MergeProcessor(
         if (changedRows.Length > 0 || removedRows.Length > 0)
         {
             await documentSnapshots.ReplaceDocumentRowsAsync(job.AccountId,
-                changedRows.Select(row => row.DocumentId)
-                    .Concat(removedRows.Select(row => row.DocumentId))
+                changedRows.Select(row => (row.DocumentType, row.DocumentId))
+                    .Concat(removedRows.Select(row => (row.DocumentType, row.DocumentId)))
                     .Distinct()
                     .ToArray(),
                 changedRows.Select(row => new CounterpartyDocument
@@ -418,9 +418,9 @@ public sealed class MergeProcessor(
             transferredMappings.Any(item => !mappingBySource.TryGetValue(item.SourceDocumentId, out var newId) || newId != item.NewDocumentId) ||
             invoices.Select(item => item.SourceDocumentId).Distinct().Count() != invoices.Count ||
             invoices.Any(item => item.SourceDocumentId == Guid.Empty || item.NewDocumentId == Guid.Empty || item.NewDocumentId == item.SourceDocumentId ||
-                requested.Contains(item.SourceDocumentId) || !createdIds.Contains(item.SourcePurchaseReturnId)) ||
-            mappings.Select(item => item.NewDocumentId).Concat(invoices.Select(item => item.NewDocumentId)).Distinct().Count() !=
-                mappings.Count + invoices.Count)
+                !createdIds.Contains(item.SourcePurchaseReturnId)) ||
+            mappings.Select(item => item.NewDocumentId).Distinct().Count() != mappings.Count ||
+            invoices.Select(item => item.NewDocumentId).Distinct().Count() != invoices.Count)
             throw Invalid();
     }
 
@@ -483,8 +483,8 @@ public sealed class MergeProcessor(
         {
             await documentSnapshots.ReplaceDocumentRowsAsync(
                 job.AccountId,
-                changedRows.Select(item => item.DocumentId)
-                    .Concat(removedRows.Select(item => item.DocumentId))
+                changedRows.Select(item => (item.DocumentType, item.DocumentId))
+                    .Concat(removedRows.Select(item => (item.DocumentType, item.DocumentId)))
                     .Distinct()
                     .ToArray(),
                 changedRows.Select(item => new CounterpartyDocument
@@ -613,8 +613,8 @@ public sealed class MergeProcessor(
         {
             await documentSnapshots.ReplaceDocumentRowsAsync(
                 job.AccountId,
-                changedRows.Select(item => item.DocumentId)
-                    .Concat(removedRows.Select(item => item.DocumentId))
+                changedRows.Select(item => (item.DocumentType, item.DocumentId))
+                    .Concat(removedRows.Select(item => (item.DocumentType, item.DocumentId)))
                     .Distinct()
                     .ToArray(),
                 changedRows.Select(item => new CounterpartyDocument

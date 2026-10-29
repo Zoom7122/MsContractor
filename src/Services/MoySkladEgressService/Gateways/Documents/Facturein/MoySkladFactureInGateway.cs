@@ -127,7 +127,7 @@ public sealed class MoySkladFactureInGateway : IMoySkladFactureInGateway
         var result = new HashSet<FactureInBaseReference>();
         foreach (var group in references.Distinct().GroupBy(item => item.Type, StringComparer.Ordinal))
         {
-            var batchSize = group.Key == "supply" ? GetByIdsBatchSize : BatchSize;
+            var batchSize = group.Key is "supply" or "cashout" ? GetByIdsBatchSize : BatchSize;
             foreach (var batch in group.Select(item => item.DocumentId).Chunk(batchSize))
             {
                 var rows = await GetRowsAsync(accountId, correlationId, group.Key, batch, "id", cancellationToken);

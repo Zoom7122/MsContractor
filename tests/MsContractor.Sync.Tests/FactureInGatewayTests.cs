@@ -67,7 +67,7 @@ public sealed class FactureInGatewayTests
     }
 
     [Fact]
-    public async Task GetExistingBasesAsync_LimitsSupplyIdsTo40PerRequest()
+    public async Task GetExistingBasesAsync_LimitsSupplyAndCashoutIdsTo40PerRequest()
     {
         var requestCounts = new Dictionary<string, List<int>>(StringComparer.Ordinal);
         var gateway = new MoySkladFactureInGateway(
@@ -93,6 +93,8 @@ public sealed class FactureInGatewayTests
         var references = Enumerable.Range(0, 85)
             .Select(_ => new FactureInBaseReference("supply", Guid.NewGuid()))
             .Concat(Enumerable.Range(0, 85)
+                .Select(_ => new FactureInBaseReference("cashout", Guid.NewGuid())))
+            .Concat(Enumerable.Range(0, 85)
                 .Select(_ => new FactureInBaseReference("paymentout", Guid.NewGuid())))
             .ToArray();
 
@@ -100,6 +102,7 @@ public sealed class FactureInGatewayTests
             Guid.NewGuid(), "correlation-id", references, CancellationToken.None);
 
         Assert.Equal(new[] { 40, 40, 5 }, requestCounts["supply"]);
+        Assert.Equal(new[] { 40, 40, 5 }, requestCounts["cashout"]);
         Assert.Equal(new[] { 85 }, requestCounts["paymentout"]);
     }
 
